@@ -46,6 +46,8 @@ static const hrc_dmr_board_t dmr_board = {
 #if DB25D_DMR_TX
 	.burst = &rf_board, .tx_end = db25d_dmr_tx_end,
 #endif
+	// P25 and NXDN receive checked on air; transmit unconfirmed (hardware-db25d.md)
+	.air_verified_rx = (1u << AIR_PROFILE_P25) | (1u << AIR_PROFILE_NXDN48) | (1u << AIR_PROFILE_NXDN96),
 };
 
 // The speaker source for the modem's PCM (audio_pcm.c): the ring (prompt FIFO) on, or off. The modem's FM audio path

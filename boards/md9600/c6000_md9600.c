@@ -422,6 +422,8 @@ static const stm32_hrc_dmr_board_t dmr_board = {
 #if CONFIG_AIR
 	// the chip demodulates the IF itself, so its FM copy is the discriminator (hardware-md9600.md 19.11)
 	.air_tap = true,
+	// P25 and NXDN receive checked on air; transmit not yet (hardware-md9600.md 19.11)
+	.air_verified_rx = (1u << AIR_PROFILE_P25) | (1u << AIR_PROFILE_NXDN48) | (1u << AIR_PROFILE_NXDN96),
 #endif
 };
 

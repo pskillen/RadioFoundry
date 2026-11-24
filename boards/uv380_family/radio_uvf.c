@@ -634,9 +634,10 @@ static const stm32_hrc_dmr_board_t dmr_board = {
 	// The AT1846S's DMR set-up gives the HR_C6000 the low-frequency baseband with its audio filters off
 	// (hardware-dm1701.md, Air interface)
 	.air_tap = true,
-	// P25 and NXDN checked on air both ways on a radio of the family (hardware-dm1701.md, Air interface): the same
-	// chips and code on every one
-	.air_verified = true,
+	// P25, NXDN 4800 and 9600 checked on air both ways on a radio of the family (hardware-dm1701.md, Air
+	// interface): the same chips and code on every one
+	.air_verified_rx = (1u << AIR_PROFILE_P25) | (1u << AIR_PROFILE_NXDN48) | (1u << AIR_PROFILE_NXDN96),
+	.air_verified_tx = (1u << AIR_PROFILE_P25) | (1u << AIR_PROFILE_NXDN48) | (1u << AIR_PROFILE_NXDN96),
 #endif
 	// rf_to_rx() puts the AT1846S on the RX frequency after every burst and rf_key() back on TX for the next, so the
 	// slots between hear the repeater's outbound on a split channel too

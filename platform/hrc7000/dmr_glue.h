@@ -32,9 +32,9 @@ typedef struct {
 	// The RF is back on the receive frequency after every burst, so a transmission can listen between its bursts on
 	// a split channel too (the modem's tx_listen_split)
 	bool listen_split;
-	// The air interface provider (hrc_air) has been checked on air on this board, receive and transmit: its fits lose
-	// AIR_FIT_UNTESTED
-	bool air_verified;
+	// Profiles checked on air on this board (1u << air_profile_id_t); fit directions without a bit keep AIR_FIT_UNTESTED
+	uint16_t air_verified_rx;
+	uint16_t air_verified_tx;
 } hrc_dmr_board_t;
 
 #if CONFIG_DMR

@@ -942,7 +942,18 @@ static const hrc_chip_t *air_chip(void)
 static uint32_t air_fit(const air_profile_t *p)
 {
 	uint32_t f = hrc6000_air_fit_tap(p, air_chip(), air_tap());
-	if (f != 0 && (hooks == NULL || !hooks->air_verified)) {
+	uint8_t id = p->id;
+
+	if (f == 0) {
+		return 0;
+	}
+	if (hooks == NULL || id == 0) {
+		return f | AIR_FIT_UNTESTED;
+	}
+	if ((f & AIR_FIT_RX) && !(hooks->air_verified_rx & (1u << id))) {
+		f |= AIR_FIT_UNTESTED;
+	}
+	if ((f & AIR_FIT_TX) && !(hooks->air_verified_tx & (1u << id))) {
 		f |= AIR_FIT_UNTESTED;
 	}
 	return f;
