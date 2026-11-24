@@ -137,6 +137,12 @@ run-nxdn-scramble: nxdnScrambleTest
 .PHONY: run-nxdn-scramble
 nxdnTest: nxdnTest.c $(NXDN) $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_framer.c $(FEC) $(CORE)/dmr/ambe/ambeFec.c
 	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -o $@ nxdnTest.c $(NXDN) $(CORE)/air/air_framer.c $(FEC) $(CORE)/dmr/ambe/ambeFec.c
+
+# M17 frame codec (core/m17): CRC, addresses, puncturing, interleaving, and frame round trips
+M17FEC  := $(CORE)/m17/m17_frame.c $(CORE)/fec/conv.c $(CORE)/fec/golay.c
+TESTS   += m17FrameTest
+m17FrameTest: m17FrameTest.c $(M17FEC) $(wildcard $(CORE)/m17/*.h) $(CORE)/fec/conv.h $(CORE)/fec/golay.h
+	$(CC) $(CFLAGS) -Wshadow -o $@ m17FrameTest.c $(M17FEC)
 nxdnEngineTest: nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC)
 	$(CC) $(CFLAGS) -DCONFIG_NXDN_SCRAMBLER=1 -I$(ROOT)/hal -Wshadow -o $@ nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC) -lm
 
@@ -259,6 +265,7 @@ run: $(TESTS)
 	./airSoftmodemTest | tail -1
 	./p25EngineTest
 	./nxdnTest | tail -1
+	./m17FrameTest
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest
 	./p25VoiceTest

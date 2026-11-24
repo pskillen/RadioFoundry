@@ -6,6 +6,7 @@
 #define RFOUNDRY_M17_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "../fec/conv.h"
@@ -60,6 +61,7 @@
 #define M17_LICH_CODED_BITS	96
 #define M17_STREAM_PAYLOAD_BITS	144	// frame number + 128 payload
 #define M17_STREAM_VOICE_BITS	128
+#define M17_STREAM_AIR_BITS	272		// punctured conv payload in a stream frame (96 + 272 = 368)
 #define M17_LICH_COUNT_MAX	5
 
 // ── Packet (spec 3.3) ──
@@ -73,5 +75,42 @@
 #define M17_ADDR_CHARS_MAX	9
 #define M17_ADDR_BASE		40
 #define M17_ADDR_BROADCAST	0xFFFFFFFFFFFFull
+
+// Example from the spec (7): AB1CD
+#define M17_ADDR_AB1CD		0x0000009FDD51ull
+
+// Viterbi workspace (m17_frame.c). The caller owns it.
+typedef struct {
+	int8_t soft[M17_LSF_CODED_BITS * 2];
+	uint16_t dec[256];
+} m17_fec_work_t;
+
+uint16_t m17_crc16(const uint8_t *data, uint16_t len);
+
+uint16_t m17_interleave_qpp(uint16_t x);
+void m17_interleave(const uint8_t *in, uint8_t *out);
+void m17_deinterleave(const uint8_t *in, uint8_t *out);
+uint16_t m17_puncture(const uint8_t *pat, uint8_t plen, const uint8_t *coded, uint16_t ncoded, uint8_t *out);
+uint16_t m17_puncture_drop_last(const uint8_t *pat, uint8_t plen, const uint8_t *coded, uint16_t ncoded,
+				uint8_t *out);
+
+bool m17_addr_encode(const char *text, uint8_t out[M17_ADDR_BYTES]);
+bool m17_addr_decode(const uint8_t in[M17_ADDR_BYTES], char *out, size_t outsz);
+
+void m17_lsf_encode(uint8_t lsf[M17_LSF_BYTES], uint8_t payload[M17_PAYLOAD_BYTES]);
+int m17_lsf_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t lsf[M17_LSF_BYTES]);
+
+void m17_stream_encode(const uint8_t lsf[M17_LSF_BYTES], uint8_t lich_count, uint16_t frame_num,
+		       const uint8_t stream_pl[M17_STREAM_VOICE_BITS / 8], uint8_t payload[M17_PAYLOAD_BYTES]);
+int m17_stream_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t *lich_count,
+		      uint16_t *frame_num, uint8_t stream_pl[M17_STREAM_VOICE_BITS / 8], int *lich_errs);
+
+void m17_packet_encode(const uint8_t data[25], uint8_t frame_num, bool last, uint8_t valid_bytes,
+		       uint8_t payload[M17_PAYLOAD_BYTES]);
+int m17_packet_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t data[25],
+		      uint8_t *frame_num, bool *last, uint8_t *valid_bytes);
+
+void m17_bert_encode(uint8_t payload[M17_PAYLOAD_BYTES]);
+int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BITS / 8]);
 
 #endif
