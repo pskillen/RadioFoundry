@@ -98,6 +98,21 @@ switch = "NXDN_SCRAMBLER"
 spec = "docs/spec/nxdn.md"
 source = ["core/nxdn/nxdn_scramble.c", "core/nxdn/nxdn_call.c", "core/nxdn/nxdn_engine.c"]
 
+[feature.m17]
+switch = "M17"
+spec = "docs/spec/m17.md"
+source = ["core/m17", "tools/bench/m17", "tools/bench/m17tool.py"]
+
+[feature.m17_packet]
+switch = "M17_PACKET"
+spec = "docs/spec/m17.md"
+source = ["core/m17"]
+
+[feature.m17_voice]
+switch = "M17_VOICE"
+spec = "docs/spec/m17.md"
+source = ["core/m17"]
+
 [feature.dmr_voice]
 switch = "DMR"
 spec = "docs/spec/dmr-voice.md"
