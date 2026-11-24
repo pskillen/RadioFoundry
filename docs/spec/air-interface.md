@@ -49,6 +49,8 @@ byte, `AIR_SOFT_OUTER` (96) for a +3 symbol at the profile's deviation.
 | `sync[]` | the fixed patterns the mode puts on air, most useful first: symbols, length (8 to 24), errors tolerated, where the frame starts relative to the pattern, whether it is only at the start of a transmission |
 | `sync_every_syms` | the longest run of symbols between two 24-symbol patterns inside a transmission; 0 when none recurs |
 | `sync_any_syms` | the longest run between two patterns of any length (a mode whose recurring sync is shorter than 24 symbols); 0 = `sync_every_syms`. The soft modem holds its timing this long |
+| `sync_period_syms` | symbols from one sync to the next when every unit is that long; 0 when there is no fixed period. The soft modem may search only near those boundaries while locked |
+| `id` | which standard profile this is (`AIR_PROFILE_xxx` in `hal/hal_air.h`); 0 on a bench or host-built profile |
 | `idle` | four dibits a provider sends when a continuous transmission runs dry |
 
 ## 3. The provider (`hal_air_t`)

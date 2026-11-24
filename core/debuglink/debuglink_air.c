@@ -250,8 +250,13 @@ static bool profile(const uint8_t *b, uint16_t len, air_profile_t *p)
 	p->sync_every_syms = get16(b + 11);
 	p->idle = b[13];
 	p->nsyncs = b[14];
-	if (p->nsyncs > AIR_SYNCS_MAX || len != PROF_HDR + p->nsyncs * PROF_SYNC) {
-		return false;
+	{
+		uint16_t need = PROF_HDR + (uint16_t)p->nsyncs * PROF_SYNC;
+
+		if (p->nsyncs > AIR_SYNCS_MAX || len < need)
+			return false;
+		if (len >= need + 2u)
+			p->sync_period_syms = get16(b + need);
 	}
 	for (uint8_t i = 0; i < p->nsyncs; i++) {
 		const uint8_t *s = b + PROF_HDR + i * PROF_SYNC;

@@ -13,6 +13,8 @@
 #include "air/air_syms.h"
 #include "p25/p25.h"
 
+#define NXDN_FRAME_SYMS_LOCK	192u
+
 static int failures, checks;
 #define CHECK(c, ...) do { checks++; if (!(c)) { failures++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
@@ -663,6 +665,148 @@ static void testCall(void)
 }
 
 // Samples lost between two calls: the modem starts over and says so
+// M17-style negated 8-symbol sync pair: same lock id as each pattern alone
+static void test_pair_same_as_both(void)
+{
+	static uint8_t ref_hard[OUT_MAX];
+	static int8_t ref_soft[OUT_MAX];
+	static struct { uint32_t at; uint8_t id; } ref_sync[64];
+	air_profile_t pair;
+	air_softmodem_t m;
+	uint32_t ref_nsync, i;
+
+	memset(&pair, 0, sizeof(pair));
+	pair.sym_rate = 4800;
+	pair.levels = 4;
+	pair.shape = AIR_SHAPE_C4FM;
+	pair.shape_param = 20;
+	pair.dev_outer_hz = 1800;
+	pair.nsyncs = 2;
+	pair.sync[0].id = 0;
+	pair.sync[0].nsyms = 8;
+	memcpy(pair.sync[0].syms, (uint8_t[]){ 0x55, 0xF7 }, 2);
+	pair.sync[1].id = 0;
+	pair.sync[1].nsyms = 8;
+	memcpy(pair.sync[1].syms, (uint8_t[]){ 0xFF, 0x5D }, 2);
+	for (uint8_t s = 0; s < 2; s++) {
+		air_profile_t solo;
+
+		air_stream(&pair, s, 2500, 80, 192);
+		modulate(&pair, 0);
+		sample_tap(8000, 7, 3600, 2000, 0, 0);
+		CHECK(air_softmodem_rx_open(&m, &pair, 8000, 2000, on_chunk, NULL), "pair open");
+		out_reset();
+		feed(&m, 8000, 0, tap_n, 256);
+		memcpy(ref_hard, out_hard, out_n);
+		memcpy(ref_soft, out_soft, out_n);
+		ref_nsync = out_nsync;
+		for (i = 0; i < ref_nsync; i++) {
+			ref_sync[i].at = out_sync[i].at;
+			ref_sync[i].id = out_sync[i].id;
+		}
+		CHECK(ref_nsync >= 3, "pair %u: %u syncs", s, ref_nsync);
+		solo = pair;
+		solo.nsyncs = 1;
+		memcpy(&solo.sync[0], &pair.sync[s], sizeof(solo.sync[0]));
+		air_stream(&solo, 0, 2500, 80, 192);
+		modulate(&solo, 0);
+		sample_tap(8000, 7, 3600, 2000, 0, 0);
+		CHECK(air_softmodem_rx_open(&m, &solo, 8000, 2000, on_chunk, NULL), "solo open");
+		out_reset();
+		feed(&m, 8000, 0, tap_n, 256);
+		CHECK(out_nsync >= 3, "solo %u: %u syncs", s, out_nsync);
+		for (i = 0; i < out_nsync && i < ref_nsync; i++)
+			CHECK(out_sync[i].id == ref_sync[i].id, "pattern %u sync %u id %u want %u", s, i,
+			      out_sync[i].id, ref_sync[i].id);
+	}
+}
+
+static air_profile_t nxdn_period_profile(void)
+{
+	air_profile_t p;
+
+	memset(&p, 0, sizeof(p));
+	p.sym_rate = 4800;
+	p.levels = 4;
+	p.shape = AIR_SHAPE_RRC;
+	p.shape_param = 20;
+	p.dev_outer_hz = 2400;
+	p.timing = AIR_TIMING_CONTINUOUS;
+	p.sync_every_syms = 0;
+	p.sync_any_syms = NXDN_FRAME_SYMS_LOCK;
+	p.sync_period_syms = NXDN_FRAME_SYMS_LOCK;
+	p.id = AIR_PROFILE_NXDN96;
+	p.nsyncs = 2;
+	p.sync[0].id = 0;
+	p.sync[0].nsyms = 10;
+	p.sync[0].max_errs = 2;
+	p.sync[0].frame_at = 0;
+	memcpy(p.sync[0].syms, (uint8_t[]){ 0xCD, 0xF5, 0x90 }, 3);
+	p.sync[1].id = 1;
+	p.sync[1].nsyms = 19;
+	p.sync[1].max_errs = 3;
+	p.sync[1].flags = AIR_SYNC_START_ONLY;
+	p.sync[1].frame_at = 9;
+	memcpy(p.sync[1].syms, (uint8_t[]){ 0xDD, 0x7F, 0x73, 0x7D, 0x64 }, 5);
+	return p;
+}
+
+static void test_lock_window_same_symbols(void)
+{
+	air_profile_t p = nxdn_period_profile(), q = p;
+	air_softmodem_t m;
+	uint32_t nerr, ncmp;
+	double rms;
+
+	air_stream(&p, 0, 5000, 100, NXDN_FRAME_SYMS_LOCK);
+	modulate(&p, 0);
+	sample_tap(8000, 9, 3600, 2000, 0, 0);
+	CHECK(air_softmodem_rx_open(&m, &p, 8000, 2000, on_chunk, NULL), "period open");
+	out_reset();
+	feed(&m, 8000, 0, tap_n, 256);
+	CHECK(compare(&p, 100, NXDN_FRAME_SYMS_LOCK, &nerr, &ncmp, &rms) && nerr == 0 && ncmp > 3000, "period clean %u err", nerr);
+	q.sync_period_syms = 0;
+	air_stream(&q, 0, 5000, 100, NXDN_FRAME_SYMS_LOCK);
+	modulate(&q, 0);
+	sample_tap(8000, 9, 3600, 2000, 0, 0);
+	CHECK(air_softmodem_rx_open(&m, &q, 8000, 2000, on_chunk, NULL), "no period open");
+	out_reset();
+	feed(&m, 8000, 0, tap_n, 256);
+	CHECK(compare(&q, 100, NXDN_FRAME_SYMS_LOCK, &nerr, &ncmp, &rms) && nerr == 0 && ncmp > 3000, "no period clean %u err", nerr);
+	CHECK(out_nsync >= 8, "window same: %u syncs", out_nsync);
+}
+
+static void test_lock_window_skips_middle(void)
+{
+	air_profile_t p = nxdn_period_profile();
+	air_softmodem_t m;
+	uint32_t from;
+
+	air_stream(&p, 0, 3000, 100, NXDN_FRAME_SYMS_LOCK);
+	modulate(&p, 0);
+	sample_tap(8000, 11, 3600, 2000, 0, 0);
+	CHECK(air_softmodem_rx_open(&m, &p, 8000, 2000, on_chunk, NULL), "window skip open");
+	out_reset();
+	for (from = 0; from < tap_n / 3; from += 64)
+		air_softmodem_rx(&m, tap + from, 64, T0 + (uint32_t)(((uint64_t)from * 1000000) / 8000));
+	CHECK(m.locked, "locked before window probe");
+	m.since_sync = (uint16_t)(NXDN_FRAME_SYMS_LOCK / 2);
+	m.cand_q = 0xFFFFu;
+	air_softmodem_search_calls = 0;
+	air_softmodem_rx(&m, tap + from, 8, T0 + (uint32_t)(((uint64_t)from * 1000000) / 8000));
+	CHECK(air_softmodem_search_calls == 0, "mid-frame search calls %u", air_softmodem_search_calls);
+	m.since_sync = (uint16_t)(NXDN_FRAME_SYMS_LOCK - 2);
+	m.cand_q = 0xFFFFu;
+	air_softmodem_search_calls = 0;
+	air_softmodem_rx(&m, tap + from, 8, T0 + (uint32_t)(((uint64_t)from * 1000000) / 8000));
+	CHECK(air_softmodem_search_calls > 0, "near-period search calls %u", air_softmodem_search_calls);
+	m.since_sync = (uint16_t)(NXDN_FRAME_SYMS_LOCK + 50);
+	m.cand_q = 0xFFFFu;
+	air_softmodem_search_calls = 0;
+	air_softmodem_rx(&m, tap + from, 64, T0 + (uint32_t)(((uint64_t)from * 1000000) / 8000));
+	CHECK(air_softmodem_search_calls > 0, "past period searches %u", air_softmodem_search_calls);
+}
+
 static void testHole(void)
 {
 	air_profile_t p = p25_air_mode.profile;
@@ -693,6 +837,9 @@ int main(void)
 	testGate();
 	testShapes();
 	testCall();
+	test_pair_same_as_both();
+	test_lock_window_same_symbols();
+	test_lock_window_skips_middle();
 	testHole();
 	printf("airSoftmodemTest: %d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;

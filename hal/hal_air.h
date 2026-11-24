@@ -20,6 +20,14 @@
 typedef enum { AIR_SHAPE_RRC, AIR_SHAPE_C4FM, AIR_SHAPE_GAUSS, AIR_SHAPE_NRZ } air_shape_t;
 typedef enum { AIR_TIMING_CONTINUOUS, AIR_TIMING_TDMA } air_timing_t;
 
+typedef enum {
+	AIR_PROFILE_BENCH = 0,
+	AIR_PROFILE_P25 = 1,
+	AIR_PROFILE_NXDN48 = 2,
+	AIR_PROFILE_NXDN96 = 3,
+	AIR_PROFILE_M17 = 4,
+} air_profile_id_t;
+
 // air_sync_t.flags
 #define AIR_SYNC_START_ONLY	0x01	// on air only at the start of a transmission (a preamble's tail + the first sync)
 
@@ -53,6 +61,8 @@ typedef struct {
 	// The longest run of symbols between two syncs of any length inside a transmission (a mode whose recurring
 	// sync is shorter than 24 symbols); 0 = sync_every_syms. The soft modem holds its timing this long
 	uint16_t sync_any_syms;
+	uint16_t sync_period_syms;	// symbols from one sync to the next when every unit is that long; 0 = none
+	uint8_t id;			// air_profile_id_t; 0 = a bench or debug-link profile
 	uint8_t idle;			// four dibits a provider sends when a continuous transmission runs dry
 	uint8_t nsyncs;
 	air_sync_t sync[AIR_SYNCS_MAX];
