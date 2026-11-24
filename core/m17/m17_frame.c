@@ -89,6 +89,8 @@ static void unpuncture_soft(const m17_conv_path_t *path, const uint8_t *keep, ui
 {
 	uint16_t y = 0;
 
+	(void)nkeep;
+
 	for (uint16_t i = 0; i < path->ncoded; i++) {
 		if (path->pat[i % path->plen]) {
 			soft[i] = bit_get(keep, y++) ? 32 : -32;
