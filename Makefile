@@ -122,6 +122,9 @@ endif
 ifeq ($(CONFIG_NXDN),y)
 CORE_DIRS += core/nxdn
 endif
+ifeq ($(CONFIG_M17),y)
+CORE_DIRS += core/m17
+endif
 ifeq ($(CONFIG_MBE),y)
 CORE_DIRS += core/mbe
 endif
