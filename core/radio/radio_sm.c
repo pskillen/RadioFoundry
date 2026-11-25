@@ -36,7 +36,7 @@
 #include "radio/sigtone.h"
 #include "radio/vibe.h"	// vibe_t (vibe_play only with CONFIG_VIBRATE)
 #include "radio/tx_limit.h"	// the test TX limit (radio-features.md 3.1)
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_AIR
 #include "air/air_session.h"	// air_tx_state_t
 #endif
 #if CONFIG_P25
@@ -6493,11 +6493,42 @@ static uint32_t p25_own_id(const radio_sm_t *sm)
 #endif
 
 #if CONFIG_AIR
+#include "radio/radio_air.h"
+
+// M17 alone in a build: the frame codec is in core/m17; radio_sm's air TX path is not wired yet (feat/m17-air-sync).
+#if CONFIG_M17 && !CONFIG_P25 && !CONFIG_NXDN
+static bool m17_air_false(void)
+{
+	return false;
+}
+
+static void m17_air_void(void)
+{
+}
+
+static uint8_t m17_air_state(void)
+{
+	return 0;
+}
+
+static const radio_air_ops_t radio_m17_air_stub = {
+	.running = m17_air_false,
+	.tx_prepare = m17_air_false,
+	.tx_go = m17_air_false,
+	.tx_stop = m17_air_void,
+	.tx_abort = m17_air_void,
+	.tx_state = m17_air_state,
+	.tx_clear = m17_air_void,
+};
+#endif
+
+#if CONFIG_P25 || CONFIG_NXDN
 // The stored channel an air mode runs on, 0 in the VFO: its tag gives the parameters (radio_p25_params, radio_nxdn.c)
 static uint16_t air_number(const radio_sm_t *sm)
 {
 	return sm->view.vfo ? 0u : sm->view.channel_number;
 }
+#endif
 #endif
 
 #if CONFIG_AIR
@@ -6524,9 +6555,12 @@ static const radio_air_ops_t *air_ops(const radio_sm_t *sm)
 #elif CONFIG_NXDN
 	(void)sm;
 	return &radio_nxdn_air;
-#else
+#elif CONFIG_P25
 	(void)sm;
 	return &radio_p25_air;
+#else
+	(void)sm;
+	return &radio_m17_air_stub;
 #endif
 }
 

@@ -103,7 +103,12 @@ int m17_lsf_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, 
 void m17_stream_encode(const uint8_t lsf[M17_LSF_BYTES], uint8_t lich_count, uint16_t frame_num,
 		       const uint8_t stream_pl[M17_STREAM_VOICE_BITS / 8], uint8_t payload[M17_PAYLOAD_BYTES]);
 int m17_stream_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t *lich_count,
-		      uint16_t *frame_num, uint8_t stream_pl[M17_STREAM_VOICE_BITS / 8], int *lich_errs);
+		      uint8_t lich_chunk[5], uint16_t *frame_num, uint8_t stream_pl[M17_STREAM_VOICE_BITS / 8],
+		      int *lich_errs);
+
+void m17_packet_pack(const uint8_t data[25], uint8_t frame_num, bool last, uint8_t valid_bytes, uint8_t bits[26]);
+void m17_packet_unpack(const uint8_t bits[26], uint8_t data[25], uint8_t *frame_num, bool *last,
+		       uint8_t *valid_bytes);
 
 void m17_packet_encode(const uint8_t data[25], uint8_t frame_num, bool last, uint8_t valid_bytes,
 		       uint8_t payload[M17_PAYLOAD_BYTES]);

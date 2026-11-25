@@ -55,6 +55,8 @@ def cmd_selftest(_a):
         out = run(["decode", p("stream.dibits")])
         if "LSF CRC ok" not in out:
             fails.append("LSF crc")
+        if "AB1CD" not in out or "ALL" not in out:
+            fails.append("LSF addresses")
         nums = [int(line.split()[-1]) for line in out.splitlines() if line.startswith("stream frame")]
         if nums != [0, 1, 2]:
             fails.append("stream frame numbers %r" % nums)
@@ -89,6 +91,10 @@ def cmd_decode(a):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["--self-test"]:
+        sys.exit(cmd_selftest(None) or 0)
+
     ap = argparse.ArgumentParser(description="M17 bench symbol generator (core/m17)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

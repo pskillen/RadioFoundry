@@ -61,7 +61,7 @@ static void write_frame(uint8_t *out, uint8_t s0, uint8_t s1, const uint8_t pay[
 
 static int cmd_selftest(void)
 {
-	uint8_t lsf[M17_LSF_BYTES], pay[M17_PAYLOAD_BYTES], pl[16], pkt[25];
+	uint8_t lsf[M17_LSF_BYTES], pay[M17_PAYLOAD_BYTES], pl[16], pkt[25], chunk[5];
 	m17_fec_work_t w;
 	uint8_t cnt;
 	uint16_t fn;
@@ -75,7 +75,7 @@ static int cmd_selftest(void)
 	}
 	memset(pl, 0x5a, sizeof(pl));
 	m17_stream_encode(lsf, 0, 0, pl, pay);
-	if (m17_stream_decode(pay, &w, &cnt, &fn, pl, &le) < 0) {
+	if (m17_stream_decode(pay, &w, &cnt, chunk, &fn, pl, &le) < 0) {
 		fprintf(stderr, "m17tool: stream round trip failed\n");
 		errs++;
 	}
@@ -239,11 +239,11 @@ static int cmd_decode(int argc, char **argv)
 			decoded = 1;
 		} else if (k == FT_STREAM) {
 			uint8_t pl[16];
-			uint8_t cnt;
+			uint8_t cnt, chunk[5];
 			uint16_t fn;
 			int le;
 
-			if (m17_stream_decode(pay, &w, &cnt, &fn, pl, &le) >= 0) {
+			if (m17_stream_decode(pay, &w, &cnt, chunk, &fn, pl, &le) >= 0) {
 				printf("stream frame %u\n", (unsigned)fn);
 				stream_frames++;
 				decoded = 1;

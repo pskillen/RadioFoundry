@@ -251,7 +251,7 @@ bool m17_addr_decode(const uint8_t in[M17_ADDR_BYTES], char *out, size_t outsz)
 	if (n >= outsz)
 		return false;
 	for (unsigned i = 0; i < n; i++)
-		out[i] = rev[n - 1 - i];
+		out[i] = rev[i];
 	out[n] = '\0';
 	return true;
 }
@@ -399,7 +399,8 @@ void m17_stream_encode(const uint8_t lsf[M17_LSF_BYTES], uint8_t lich_count, uin
 }
 
 int m17_stream_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t *lich_count,
-		      uint16_t *frame_num, uint8_t stream_pl[M17_STREAM_VOICE_BITS / 8], int *lich_errs)
+		      uint8_t lich_chunk[5], uint16_t *frame_num, uint8_t stream_pl[M17_STREAM_VOICE_BITS / 8],
+		      int *lich_errs)
 {
 	uint8_t plain[M17_PAYLOAD_BYTES];
 	uint8_t dec[20];
@@ -414,6 +415,7 @@ int m17_stream_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *
 	*lich_errs = degolay_lich(lich96, lich48);
 	if (*lich_errs < 0)
 		return -1;
+	bytes_from_bits(lich48, 40, lich_chunk);
 	*lich_count = 0;
 	for (uint8_t i = 0; i < 3; i++)
 		*lich_count = (uint8_t)(*lich_count << 1 | bit_get(lich48, (uint16_t)(40 + i)));
@@ -430,21 +432,38 @@ int m17_stream_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *
 }
 
 // ── Packet ──
+void m17_packet_pack(const uint8_t data[25], uint8_t frame_num, bool last, uint8_t valid_bytes, uint8_t bits[26])
+{
+	uint8_t field5;
+
+	memset(bits, 0, 26);
+	bits_from_bytes(data, 200, bits);
+	bit_put(bits, 200, last ? 1 : 0);
+	field5 = last ? valid_bytes : frame_num;
+	for (uint8_t i = 0; i < 5; i++)
+		bit_put(bits, (uint16_t)(201 + i), (uint8_t)((field5 >> (4 - i)) & 1));
+}
+
+void m17_packet_unpack(const uint8_t bits[26], uint8_t data[25], uint8_t *frame_num, bool *last,
+		       uint8_t *valid_bytes)
+{
+	uint8_t field5 = 0;
+
+	bytes_from_bits(bits, 200, data);
+	*last = bit_get(bits, 200) != 0;
+	for (uint8_t i = 0; i < 5; i++)
+		field5 = (uint8_t)(field5 << 1 | bit_get(bits, (uint16_t)(201 + i)));
+	*frame_num = *last ? 0 : field5;
+	*valid_bytes = *last ? field5 : 0;
+}
+
 void m17_packet_encode(const uint8_t data[25], uint8_t frame_num, bool last, uint8_t valid_bytes,
 		       uint8_t payload[M17_PAYLOAD_BYTES])
 {
 	uint8_t in[28] = { 0 };
 	uint8_t plain[M17_PAYLOAD_BYTES];
-	bits_from_bytes(data, 200, in);
-	if (last) {
-		for (uint8_t i = 0; i < 5; i++)
-			bit_put(in, (uint16_t)(200 + i), (uint8_t)((valid_bytes >> (4 - i)) & 1));
-		bit_put(in, 205, 1);
-	} else {
-		for (uint8_t i = 0; i < 5; i++)
-			bit_put(in, (uint16_t)(200 + i), (uint8_t)((frame_num >> (4 - i)) & 1));
-		bit_put(in, 205, 0);
-	}
+
+	m17_packet_pack(data, frame_num, last, valid_bytes, in);
 	memset(plain, 0, sizeof(plain));
 	conv_plain(&path_packet, in, 0, plain);
 	airify(plain);
@@ -462,19 +481,7 @@ int m17_packet_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *
 	errs = conv_decode(&path_packet, plain, 0, w, dec);
 	if (errs < 0)
 		return errs;
-	memset(data, 0, 25);
-	for (uint16_t i = 0; i < 200; i++)
-		bit_put(data, i, bit_get(dec, i));
-	*last = bit_get(dec, 205) != 0;
-	*frame_num = 0;
-	*valid_bytes = 0;
-	if (*last) {
-		for (uint8_t i = 0; i < 5; i++)
-			*valid_bytes = (uint8_t)(*valid_bytes << 1 | bit_get(dec, (uint16_t)(200 + i)));
-	} else {
-		for (uint8_t i = 0; i < 5; i++)
-			*frame_num = (uint8_t)(*frame_num << 1 | bit_get(dec, (uint16_t)(200 + i)));
-	}
+	m17_packet_unpack(dec, data, frame_num, last, valid_bytes);
 	return errs;
 }
 

@@ -37,6 +37,7 @@ static void test_crc(void)
 
 		memset(lsf, 0xA5, sizeof(lsf));
 		m17_lsf_encode(lsf, pay);
+		CHECK(m17_crc16(lsf, 30) == 0, "LSF post-encode CRC");
 		CHECK(m17_lsf_decode(pay, &w, lsf) >= 0, "LSF CRC");
 	}
 }
@@ -47,6 +48,8 @@ static void test_addr(void)
 	char text[16];
 
 	CHECK(m17_addr_encode("AB1CD", b), "AB1CD encode");
+	CHECK(m17_addr_decode(b, text, sizeof(text)), "AB1CD decode");
+	CHECK(!strcmp(text, "AB1CD"), "AB1CD text");
 	CHECK(b[3] == 0x9F && b[4] == 0xDD && b[5] == 0x51, "AB1CD bytes");
 	CHECK(m17_addr_encode("ABC", b) && m17_addr_encode("ABC   ", b), "spaces");
 	{
@@ -117,6 +120,21 @@ static void flip_payload_bit(uint8_t *pay, uint16_t bit)
 	pay[bit >> 3] ^= (uint8_t)(0x80u >> (bit & 7));
 }
 
+static uint16_t tx_bit_for_deint_pos(uint16_t deint_pos)
+{
+	uint8_t in[M17_PAYLOAD_BYTES], out[M17_PAYLOAD_BYTES];
+	uint16_t i;
+
+	memset(in, 0, sizeof(in));
+	flip_payload_bit(in, deint_pos);
+	m17_deinterleave(in, out);
+	for (i = 0; i < M17_PAYLOAD_BITS; i++) {
+		if (out[i >> 3] & (uint8_t)(0x80u >> (i & 7)))
+			return i;
+	}
+	return 0;
+}
+
 static void test_lsf_roundtrip(void)
 {
 	uint8_t lsf[M17_LSF_BYTES], lsf2[M17_LSF_BYTES], pay[M17_PAYLOAD_BYTES];
@@ -141,35 +159,54 @@ static void test_lsf_roundtrip(void)
 
 static void test_stream_roundtrip(void)
 {
-	uint8_t lsf[M17_LSF_BYTES], pl[16], pay[M17_PAYLOAD_BYTES], pl2[16];
+	uint8_t lsf[M17_LSF_BYTES], pl[16], pay[M17_PAYLOAD_BYTES], pl2[16], chunk[5];
 	m17_fec_work_t w;
 	uint8_t cnt;
 	uint16_t fn;
-	int le;
+	int le, dec_ret;
+	uint16_t flip_lich, flip_conv;
 
-	memset(lsf, 0x11, sizeof(lsf));
+	for (uint8_t i = 0; i < M17_LSF_BYTES; i++)
+		lsf[i] = i;
 	memset(pl, 0x5A, sizeof(pl));
 	m17_stream_encode(lsf, 3, 7, pl, pay);
-	flip_payload_bit(pay, 120);
-	flip_payload_bit(pay, 200);
-	CHECK(m17_stream_decode(pay, &w, &cnt, &fn, pl2, &le) >= 0, "decode");
+	flip_lich = tx_bit_for_deint_pos(10);
+	flip_conv = tx_bit_for_deint_pos(200);
+	flip_payload_bit(pay, flip_lich);
+	flip_payload_bit(pay, flip_conv);
+	dec_ret = m17_stream_decode(pay, &w, &cnt, chunk, &fn, pl2, &le);
+	CHECK(dec_ret >= 1, "Viterbi corrected");
+	CHECK(le == 1, "lich golay errs");
 	CHECK(cnt == 3, "LICH 3");
 	CHECK(fn == 7, "fn");
+	CHECK(!memcmp(chunk, lsf + 15, 5), "lich chunk");
 	CHECK(!memcmp(pl, pl2, sizeof(pl)), "payload");
 }
 
 static void test_packet_bert_roundtrip(void)
 {
-	uint8_t data[25], data2[25], pay[M17_PAYLOAD_BYTES], bert[M17_BERT_BITS / 8], bert2[M17_BERT_BITS / 8];
+	uint8_t data[25], data2[25], bits[26], pay[M17_PAYLOAD_BYTES], bert[M17_BERT_BITS / 8], bert2[M17_BERT_BITS / 8];
 	m17_fec_work_t w;
-	uint8_t fnum;
+	uint8_t fnum, vb;
 	bool last;
-	uint8_t vb;
 
+	memset(data, 0x42, sizeof(data));
+	m17_packet_pack(data, 0, true, 25, bits);
+	CHECK(bits[25] == 0xE4, "last pack byte");
+	m17_packet_unpack(bits, data2, &fnum, &last, &vb);
+	CHECK(!memcmp(data, data2, 25) && last && vb == 25 && !fnum, "last unpack");
+	m17_packet_pack(data, 2, false, 0, bits);
+	CHECK(bits[25] == 0x08, "mid pack byte");
+	m17_packet_unpack(bits, data2, &fnum, &last, &vb);
+	CHECK(!memcmp(data, data2, 25) && fnum == 2 && !last, "mid unpack");
 	memset(data, 0x42, sizeof(data));
 	m17_packet_encode(data, 2, false, 0, pay);
 	CHECK(m17_packet_decode(pay, &w, data2, &fnum, &last, &vb) >= 0, "packet");
 	CHECK(!memcmp(data, data2, 25) && fnum == 2 && !last, "packet data");
+	memset(data, 0x33, sizeof(data));
+	m17_packet_encode(data, 0, true, 7, pay);
+	CHECK(m17_packet_decode(pay, &w, data2, &fnum, &last, &vb) >= 0, "last packet");
+	CHECK(last && vb == 7, "last valid");
 	m17_bert_encode(pay);
 	CHECK(m17_bert_decode(pay, &w, bert2) >= 0, "bert");
 	m17_bert_encode(pay);
