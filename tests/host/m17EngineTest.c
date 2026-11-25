@@ -295,6 +295,24 @@ static void emit_stream(const uint8_t lsf[M17_LSF_BYTES], uint8_t counter, uint1
 	emit_stream_pl(lsf, counter, fn, pl);
 }
 
+// The 8-symbol sync at the start of the frame just emitted, every symbol negated.
+static void invert_last_sync(void)
+{
+	uint32_t at = sn - M17_FRAME_SYMS;
+
+	for (uint8_t i = 0; i < M17_SYNC_SYMS; i++)
+		sym[at + i] ^= 2;
+}
+
+// Wipe that sync. Negating a BERT sync is the packet sync, so a coast has to be a miss, not another word.
+static void blank_last_sync(void)
+{
+	uint32_t at = sn - M17_FRAME_SYMS;
+
+	for (uint8_t i = 0; i < M17_SYNC_SYMS; i++)
+		sym[at + i] = 0;
+}
+
 static void begin_hooks(void)
 {
 	hk_start = hk_voice = hk_lost = hk_end = hk_npkt = 0;
@@ -738,10 +756,66 @@ static void test_rx_hooks_call(void)
 	}
 }
 
+static void test_rx_coast(void)
+{
+	uint8_t lsf[M17_LSF_BYTES], pay[M17_PAYLOAD_BYTES], pl[16];
+	uint16_t fns[3] = { 0, 1, 0x8002 };
+
+	begin_hooks();
+	make_lsf(lsf, "AB1CD", 0);
+	m17_lsf_encode(lsf, pay);
+	emit_frame(M17_SYNC_ID_LSF, pay);
+	for (int i = 0; i < 3; i++) {
+		memset(pl, (uint8_t)(0xA0 + i), sizeof pl);
+		emit_stream_pl(lsf, (uint8_t)i, fns[i], pl);
+		if (i == 1)
+			invert_last_sync();
+	}
+	feed();
+	CHECK(hk_end == 0, "end before the marker %d", hk_end);
+	CHECK(hk_voice == 2, "rx_voice %d", hk_voice);
+	CHECK(hk_lost == 1, "rx_lost %d", hk_lost);
+	if (hk_voice >= 1)
+		CHECK(hk_fn[0] == 0, "frame 0 number %04X", hk_fn[0]);
+	if (hk_voice >= 2)
+		CHECK(hk_fn[1] == 0x8002, "last frame number %04X", hk_fn[1]);
+	emit_eot();
+	feed();
+	CHECK(hk_end == 1, "rx_end %d", hk_end);
+}
+
 static void emit_packed(const uint8_t *buf, uint16_t nbytes)
 {
 	for (uint16_t i = 0; i < (uint16_t)(nbytes * 4); i++)
 		sym[sn++] = air_sym_get(buf, i);
+}
+
+static void test_rx_packet_one_frame(void)
+{
+	m17_engine_t e;
+	uint8_t data[22], buf[8 * 48], expect[23];
+	uint16_t n;
+
+	for (int i = 0; i < 22; i++)
+		data[i] = (uint8_t)(i + 1);
+	expect[0] = 0x05;
+	memcpy(expect + 1, data, 22);
+	engine_of(&e, M17_TX_PACKET, NULL);
+	CHECK(m17_engine_tx_start(&e, 0x05, data, 22), "one frame starts");
+	n = pull(&e, buf, sizeof buf);
+	CHECK(n == 4 * 48, "one-frame air %u", n);
+
+	begin_hooks();
+	emit_packed(buf, n);
+	feed();
+	CHECK(hk_npkt == 1, "rx_packet %d", hk_npkt);
+	CHECK(hk_pkt_len == 23, "len %u", hk_pkt_len);
+	CHECK(memcmp(hk_pkt, expect, 23) == 0, "one-frame bytes");
+
+	begin_hooks();
+	emit_packed(buf, (uint16_t)(n - 48));
+	feed();
+	CHECK(hk_npkt == 0, "no end marker, rx_packet %d", hk_npkt);
 }
 
 static void test_rx_packet_two_frames(void)
@@ -789,6 +863,17 @@ static void test_rx_bert_count(void)
 	emit_bert(false);
 	feed();
 	CHECK(rx.bert.bits == 591 && rx.bert.errors == 0, "clean bits %u errors %u", rx.bert.bits, rx.bert.errors);
+	CHECK(rx.bert.lost == 0, "clean lost %u", rx.bert.lost);
+
+	begin_hooks();
+	m17_prbs9_init(&bert_g);
+	emit_bert(true);
+	emit_bert(false);
+	blank_last_sync();
+	emit_bert(false);
+	feed();
+	CHECK(rx.bert.lost == 1, "coasted lost %u", rx.bert.lost);
+	CHECK(rx.bert.bits == 394 && rx.bert.errors == 0, "coasted bits %u errors %u", rx.bert.bits, rx.bert.errors);
 }
 
 // ── The soft modem's tap, copied from airSoftmodemTest.c. Sizes fit one call; the noise run never builds a wave. ──
@@ -1066,8 +1151,11 @@ static void test_noise_two_hours(void)
 		air_softmodem_rx(&m, buf, 256, at);
 		at += 256u * 125u;
 	}
+	CHECK(framer.stats.rejects > 0, "noise rejects %u", framer.stats.rejects);
 	CHECK(framer.stats.frames == 0, "noise accepted %u frames in %u symbols (%u rejects)", framer.stats.frames,
 	      noise_syms, framer.stats.rejects);
+	if (framer.stats.frames == 0 && framer.stats.rejects > 0)
+		printf("noise: %u symbols, %u rejects, 0 frames\n", noise_syms, framer.stats.rejects);
 }
 
 int main(void)
@@ -1088,6 +1176,8 @@ int main(void)
 	test_bert_count();
 	test_bert_prbs_recurrence();
 	test_rx_hooks_call();
+	test_rx_coast();
+	test_rx_packet_one_frame();
 	test_rx_packet_two_frames();
 	test_rx_bert_count();
 	test_call_through_modem();

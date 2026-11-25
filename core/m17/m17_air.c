@@ -15,8 +15,9 @@
 #include "../fec/golay.h"
 #include "../../hal/hal_radio.h"
 
-// How many frame-starts with no sync drop the lock when the head hook was not asked. A coasted frame still
-// reaches the hook, which refuses it: the signal ends there (5.2 takes a frame only on proof).
+// How many frame-starts with no sync drop the lock when the head hook was not asked. While a stream call or a
+// BERT run is on, a frame with no sync is kept: the framer is coasting (spec 5.5) and the frame hook reports it.
+// Outside a call the hook still refuses it, and the signal ends there.
 #define M17_LOST_FRAMES		5
 
 static void payload_of(const air_frame_t *f, uint8_t pay[M17_PAYLOAD_BYTES])
@@ -87,6 +88,30 @@ static bool frame_later(const air_frame_t *f, uint32_t t)
 	return d >= 39000 && d <= 41000;
 }
 
+static bool coast_ok(const m17_rx_t *rx)
+{
+#if CONFIG_M17_PACKET
+	if (rx->pkt_pend)
+		return false;
+#endif
+	return rx->bert_run > 0 || rx->in_call;
+}
+
+// A preamble is one outer symbol and its negation, for the whole frame. That is a new transmission's lead-in,
+// not a gap in the call: the link-setup sync is start-only, so it is found only after the lock drops.
+static bool preamble_run(const air_frame_t *f)
+{
+	uint8_t a = air_sym_get(f->hard, 0);
+	uint8_t b = air_sym_get(f->hard, 1);
+
+	if (a == b || f->nsyms < 2)
+		return false;
+	for (uint16_t i = 2; i < f->nsyms; i++)
+		if (air_sym_get(f->hard, i) != ((i & 1) ? b : a))
+			return false;
+	return true;
+}
+
 #if CONFIG_M17_PACKET
 static bool packet_crc_ok(const m17_rx_t *rx)
 {
@@ -106,6 +131,7 @@ static void give_packet(m17_rx_t *rx)
 	if (rx->hooks && rx->hooks->rx_packet)
 		rx->hooks->rx_packet(rx->pkt, (uint16_t)(rx->pkt_len - 2), rx->ctx);
 	rx->pkt_pend = false;
+	rx->pkt_last = false;
 }
 #endif
 
@@ -129,7 +155,14 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 	m17_rx_t *rx = ctx;
 	uint8_t pay[M17_PAYLOAD_BYTES];
 
-	if ((f->flags & AIR_FRAME_NO_SYNC) || f->nsyms < M17_FRAME_SYMS) {
+	if (f->nsyms < M17_FRAME_SYMS) {
+		rx->bert_run = 0;
+		return 0;
+	}
+	// Placed by counting. A stream call or a BERT run keeps a gap; a preamble, or anything outside a call, does not.
+	if (f->flags & AIR_FRAME_NO_SYNC) {
+		if (!preamble_run(f) && coast_ok(rx))
+			return M17_FRAME_SYMS;
 		rx->bert_run = 0;
 		return 0;
 	}
@@ -176,12 +209,14 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 		n = last ? vb : 25;
 		if (n == 0 || n > 25) {
 			rx->pkt_pend = false;
+			rx->pkt_last = false;
 			return 0;
 		}
 		follow = rx->pkt_pend && frame_later(f, rx->pkt_t);
 		if (!follow || (!last && fn != rx->pkt_next) || (uint32_t)rx->pkt_len + n > sizeof rx->pkt) {
 			if (!last && fn != 0) {
 				rx->pkt_pend = false;
+				rx->pkt_last = false;
 				return 0;
 			}
 			memcpy(rx->pkt, data, n);
@@ -189,16 +224,21 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 			rx->pkt_next = 1;
 			rx->pkt_t = f->t_us;
 			rx->pkt_pend = true;
+			// A one-frame packet never sees a second packet sync. The end marker is what confirms it.
+			rx->pkt_last = last;
 			return 0;
 		}
 		memcpy(rx->pkt + rx->pkt_len, data, n);
 		rx->pkt_len = (uint16_t)(rx->pkt_len + n);
 		rx->pkt_t = f->t_us;
 		rx->pkt_next++;
-		if (!last)
+		if (!last) {
+			rx->pkt_last = false;
 			return 0;
+		}
 		if (!packet_crc_ok(rx)) {
 			rx->pkt_pend = false;
+			rx->pkt_last = false;
 			return 0;
 		}
 		give_packet(rx);
@@ -215,6 +255,11 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 		m17_rx_on_lock(rx);
 		return M17_FRAME_SYMS;
 	case M17_SYNC_ID_EOT:
+		// A one-frame packet is still pending: the end marker one frame later, its second word, and the CRC.
+#if CONFIG_M17_PACKET
+		if (rx->pkt_pend && rx->pkt_last && frame_later(f, rx->pkt_t) && end_word_at(f, M17_SYNC_SYMS))
+			give_packet(rx);
+#endif
 		// Only while a call is locked, and only when the next word is an end word too.
 		if (!rx->in_call || !end_word_at(f, M17_SYNC_SYMS))
 			return 0;
@@ -229,6 +274,13 @@ static void rx_frame(const air_frame_t *f, void *ctx)
 {
 	m17_rx_t *rx = ctx;
 
+	if (f->flags & AIR_FRAME_NO_SYNC) {
+		if (rx->bert_run > 0)
+			rx->bert.lost++;
+		else if (rx->hooks && rx->hooks->rx_lost)
+			rx->hooks->rx_lost(rx->ctx);
+		return;
+	}
 	if (f->sync_id == M17_SYNC_ID_STREAM) {
 		uint8_t pay[M17_PAYLOAD_BYTES];
 		uint8_t lich, chunk[5], pl[16];

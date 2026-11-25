@@ -39,9 +39,10 @@ typedef struct m17_rx {
 	bool bert_have;
 	m17_bert_count_t bert;
 #if CONFIG_M17_PACKET
-	// A packet sync is not a frame by itself. The bytes wait for the next packet sync one frame later, and the
-	// CRC over all of them (spec 5.2).
+	// A packet sync is not a frame by itself. The bytes wait for the next packet sync one frame later, or,
+	// when this frame is the whole packet (pkt_last), for the end marker. The CRC covers all of them (spec 5.2).
 	bool pkt_pend;
+	bool pkt_last;
 	uint32_t pkt_t;
 	uint16_t pkt_len;
 	uint8_t pkt_next;

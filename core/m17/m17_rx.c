@@ -40,6 +40,7 @@ static void finish(m17_rx_t *rx)
 	rx->bert_have = false;
 #if CONFIG_M17_PACKET
 	rx->pkt_pend = false;
+	rx->pkt_last = false;
 #endif
 	memset(rx->have, 0, sizeof rx->have);
 	memset(rx->lsf, 0, sizeof rx->lsf);

@@ -22,10 +22,12 @@ void m17_prbs9_init(m17_prbs9_t *g);
 void m17_prbs9_bits(m17_prbs9_t *g, uint8_t *bits, uint16_t n);
 
 // One decoded frame against the sequence locked from its first 9 bits. A later flipped bit counts once.
+// lost is a frame placed by counting: no bits, the Viterbi output was never there.
 typedef struct {
 	uint32_t bits;
 	uint32_t errors;
 	uint32_t frames;
+	uint32_t lost;
 } m17_bert_count_t;
 
 void m17_bert_count_init(m17_bert_count_t *c);
