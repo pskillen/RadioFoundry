@@ -363,9 +363,8 @@ static void commit(air_softmodem_t *m, uint8_t back, uint16_t q_next)
 
 // Fit the symbol-spaced samples that end `back` samples before the line's newest to every pattern; returns the
 // least error (past Q_MAX too: the sides of a peak place its bottom), Q_NONE when no pattern's slope is there
-static bool fit_pattern(const air_softmodem_t *m, int32_t n, int32_t sxe, int32_t s1, int32_t s2, int32_t det,
-			int32_t num, int32_t sx, int32_t sxx, int32_t lvl_min, uint16_t *best, uint8_t *which,
-			int16_t *lvl, int16_t *off)
+static bool fit_pattern(int32_t n, int32_t sxe, int32_t s1, int32_t det, int32_t num, int32_t sx, int32_t sxx,
+			int32_t lvl_min, uint16_t *best, int16_t *lvl, int16_t *off)
 {
 	int32_t a, b, r, a2;
 	uint32_t q;
@@ -416,7 +415,6 @@ static uint16_t search(const air_softmodem_t *m, unsigned back, uint8_t *which, 
 	for (unsigned i = 0; valid >> i; i++) {
 		const air_sync_t *s = &p->sync[i];
 		int32_t n = s->nsyms, sxe = 0, s1 = 0, s2 = 0, det, num;
-		uint8_t w = (uint8_t)i;
 
 		if (!(valid >> i & 1))
 			continue;
@@ -458,7 +456,7 @@ static uint16_t search(const air_softmodem_t *m, unsigned back, uint8_t *which, 
 			cache_num[i] = num;
 			cache_len[i] = s->nsyms;
 		}
-		if (fit_pattern(m, n, sxe, s1, s2, det, num, sx, sxx, lvl_min, &best, &w, lvl, off))
+		if (fit_pattern(n, sxe, s1, det, num, sx, sxx, lvl_min, &best, lvl, off))
 			*which = (uint8_t)i;
 	}
 	return best;

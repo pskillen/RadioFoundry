@@ -1031,7 +1031,8 @@ unavailable (4).
 
 The profile is `air_profile_t` packed: sym_rate u16, levels u8, shape u8, shape_param u8, dev_outer_hz u16, timing u8,
 bw u8, slot_syms u16, sync_every_syms u16, idle u8, nsyncs u8 (15 bytes), then per sync 11 bytes: id u8, nsyms u8,
-max_errs u8, flags u8, frame_at i8, syms 6 bytes. A request carries at most 64 bytes, so at most 4 syncs.
+max_errs u8, flags u8, frame_at i8, syms 6 bytes, then, optionally, sync_period_syms u16 (0 when absent). A request
+carries at most 64 bytes, so at most 4 syncs.
 
 A receive record: t_us u32, nsyms u16, flags u8 (`AIR_CHUNK_*`; bit 7: soft values follow), sync_at i16, sync_id u8,
 the hard symbols ((nsyms + 3) / 4 bytes, packed as `hal_air.h` says), then nsyms soft values (int8) when bit 7 is set.
