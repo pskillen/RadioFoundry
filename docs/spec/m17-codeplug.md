@@ -113,8 +113,8 @@ The Codeplug Editor writes kind 6 channels. A writer for kind 6 on the radio is 
 | Stored kind 6 | The channel's parameter block (2) | The radio-wide callsign (1) |
 | VFO in M17 | The M17 settings ([m17.md](m17.md) 10) | The radio-wide callsign (1) |
 
-The radio gives the CAN and squelch to the engine. Sending the CAN in the link setup frame and applying CAN
-squelch on receive are pending. [m17.md](m17.md) 3.5 lists the TYPE fields without their bit positions.
+The engine sends the channel's CAN in the link setup frame and uses the CAN squelch setting for receive
+delivery. See [M17 CAN behavior](m17.md#83-channel-access-number-can).
 
 ## 4. Sharing
 
