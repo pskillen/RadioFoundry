@@ -144,11 +144,12 @@ TESTS   += m17FrameTest
 m17FrameTest: m17FrameTest.c $(M17FEC) $(wildcard $(CORE)/m17/*.h) $(CORE)/fec/conv.h $(CORE)/fec/golay.h
 	$(CC) $(CFLAGS) -Wshadow -o $@ m17FrameTest.c $(M17FEC)
 
-# M17 receive on the framer: sync confirmation and a call rebuilt from the LICH (core/m17)
-M17ENG  := $(M17FEC) $(CORE)/m17/m17_air.c $(CORE)/m17/m17_rx.c $(CORE)/air/air_framer.c
+# M17 engine: sync confirmation, a call rebuilt from the LICH, and a transmission (core/m17)
+M17ENG  := $(M17FEC) $(CORE)/m17/m17_air.c $(CORE)/m17/m17_rx.c $(CORE)/m17/m17_engine.c \
+	$(CORE)/m17/m17_bert.c $(CORE)/m17/m17_packet.c $(CORE)/air/air_framer.c
 TESTS   += m17EngineTest
 m17EngineTest: m17EngineTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_framer.h
-	$(CC) $(CFLAGS) -DCONFIG_M17=1 -I$(ROOT)/hal -Wshadow -o $@ m17EngineTest.c $(M17ENG)
+	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17EngineTest.c $(M17ENG)
 nxdnEngineTest: nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC)
 	$(CC) $(CFLAGS) -DCONFIG_NXDN_SCRAMBLER=1 -I$(ROOT)/hal -Wshadow -o $@ nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC) -lm
 

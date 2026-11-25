@@ -119,6 +119,8 @@ int m17_packet_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *
 		      uint8_t *frame_num, bool *last, uint8_t *valid_bytes);
 
 void m17_bert_encode(uint8_t payload[M17_PAYLOAD_BYTES]);
+// The same coding as m17_bert_encode, for 197 bits the caller supplies (a running PRBS). The four tail bits stay 0.
+void m17_bert_encode_bits(const uint8_t bits[], uint8_t payload[M17_PAYLOAD_BYTES]);
 int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BITS / 8]);
 
 #endif

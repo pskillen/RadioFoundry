@@ -500,23 +500,31 @@ int m17_packet_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *
 }
 
 // ── BERT ──
-void m17_bert_encode(uint8_t payload[M17_PAYLOAD_BYTES])
+void m17_bert_encode_bits(const uint8_t bits[], uint8_t payload[M17_PAYLOAD_BYTES])
 {
-	uint8_t in[28] = { 0 };
+	uint8_t in[28];
 	uint8_t plain[M17_PAYLOAD_BYTES];
 	uint8_t enc[512];
 	uint8_t keep[400];
-	uint16_t n;
 
-	prbs9_bits(in, M17_BERT_BITS, 0x1FF);
-	memset(plain, 0, sizeof(plain));
+	memset(in, 0, sizeof in);
+	for (uint16_t i = 0; i < M17_BERT_BITS; i++)
+		bit_put(in, i, bit_get(bits, i));
+	memset(plain, 0, sizeof plain);
 	fec_conv_encode(&M17_CONV_CODE, in, path_bert.nbits, enc);
-	n = puncture_bits(&path_bert, enc, keep);
+	puncture_bits(&path_bert, enc, keep);
 	for (uint16_t i = 0; i < M17_PAYLOAD_BITS; i++)
 		bit_put(plain, i, bit_get(keep, i));
-	(void)n;
 	airify(plain);
 	pack_bits(plain, payload);
+}
+
+void m17_bert_encode(uint8_t payload[M17_PAYLOAD_BYTES])
+{
+	uint8_t in[28] = { 0 };
+
+	prbs9_bits(in, M17_BERT_BITS, 0x1FF);
+	m17_bert_encode_bits(in, payload);
 }
 
 int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BITS / 8])
