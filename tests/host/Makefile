@@ -394,7 +394,8 @@ radioCoreTestP25Nxdn: $(RCP25NX) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE
 
 # M17 only (no P25, no NXDN): the air-mode table has one row, and PTT does not ask for the DMR vocoder
 TESTS   += radioCoreTestM17
-RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c
+RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c \
+           $(CORE)/hostlink/build_info.c $(CORE)/debuglink/debuglink_view_m17.c
 radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/call/*.h) $(CORE)/dmr/dmrDataService.h \
                   $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
@@ -1618,6 +1619,18 @@ run: run-nxdncp
 run-nxdncp: nxdnCodeplugTest
 	./nxdnCodeplugTest
 .PHONY: run-nxdncp
+
+# M17 in the codeplug (core/m17/m17_codeplug.c): the shared vectors, a channel's parameters, and the callsign
+TESTS   += m17CodeplugTest
+M17CP   := $(CPTAG) $(CORE)/codeplug/codeplug_tag.c $(CORE)/codeplug/codeplug_records.c $(CORE)/m17/m17_codeplug.c $(M17FEC)
+
+m17CodeplugTest: m17CodeplugTest.c $(M17CP) $(wildcard $(CORE)/codeplug/*.h $(CORE)/m17/*.h) ../vectors/channel-modes.txt
+	$(CC) $(CFLAGS) -I$(ROOT)/hal -I. -Wshadow -DCONFIG_AIR=1 -DCONFIG_M17=1 -o $@ m17CodeplugTest.c $(M17CP)
+
+run: run-m17cp
+run-m17cp: m17CodeplugTest
+	./m17CodeplugTest
+.PHONY: run-m17cp
 
 # Zone editing (core/codeplug/zone_edit.c) on the real codeplug over a simulated flash: add, move, remove, copy,
 # rename, delete, a new channel added in one step, the limits

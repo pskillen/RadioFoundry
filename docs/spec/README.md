@@ -33,6 +33,12 @@ Past bugs, by subsystem: [gotchas.md](gotchas.md). Contributors read [docs/dev](
 | [sfr.md](sfr.md) | Single frequency repeater |
 | [split-duplex.md](split-duplex.md) | Two radios as one duplex MMDVM modem |
 
+## M17
+
+| Spec | Covers |
+|---|---|
+| [m17.md](m17.md) | M17: frames, receive, transmit, BERT, the channel mode |
+
 ## DMR modem chips
 
 | Spec | Covers |
@@ -74,6 +80,7 @@ Past bugs, by subsystem: [gotchas.md](gotchas.md). Contributors read [docs/dev](
 | [p25-codeplug.md](p25-codeplug.md) | P25 conventional and trunked channels and systems in the codeplug |
 | [ham-trunking.md](ham-trunking.md) | The recommended ham Tier III and P25 trunked systems, and their templates |
 | [nxdn-codeplug.md](nxdn-codeplug.md) | NXDN conventional channels in the codeplug |
+| [m17-codeplug.md](m17-codeplug.md) | M17 channels and the M17 callsign in the codeplug |
 | [settings-store.md](settings-store.md) | Settings store and safe flash writes |
 | [nand-sectors.md](nand-sectors.md) | NOR-like 4 KB sectors over NAND, for the settings store on NAND radios |
 

@@ -22,7 +22,7 @@ The chapters below name the command line tools as alternatives.
 1. [Introduction](01-introduction.md): what RadioFoundry is, project status, conventions
 2. [Installing](02-installing.md): the web installer first, then the advanced rfoundry command line; updating, backups, going back
 3. [First boot](03-first-boot.md): built-in channels, the first checks
-4. [Programming the radio](04-programming.md): the Codeplug Editor (P25 and NXDN channels, trunked systems), qdmr, RadioID contacts
+4. [Programming the radio](04-programming.md): the Codeplug Editor (P25, NXDN and M17 channels, trunked systems), qdmr, RadioID contacts
 
 ### Use the radio
 

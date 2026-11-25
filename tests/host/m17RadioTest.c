@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "board.h"
+#include "m17/m17_codeplug.h"
 #include "radio/radio_m17.h"
 
 static int failures, checks;
@@ -69,6 +70,21 @@ static const hal_air_t fake_air = {
 };
 
 const board_t board = { .name = "m17-lend", .air = &fake_air, .vocoder = &fake_vocoder };
+
+bool m17_chan_load(uint16_t number, const channel_t *ch, m17_chan_t *out)
+{
+	(void)number;
+	(void)ch;
+	(void)out;
+	return false;
+}
+
+bool m17_callsign_load(const char *radio_name, char out[M17_CP_CALL_LEN])
+{
+	(void)radio_name;
+	out[0] = '\0';
+	return false;
+}
 
 // P25's own block, stood in for here: the firmware's returns NULL while P25 itself is running
 void *radio_p25_idle_mem(size_t *len)
