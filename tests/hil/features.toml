@@ -101,7 +101,7 @@ source = ["core/nxdn/nxdn_scramble.c", "core/nxdn/nxdn_call.c", "core/nxdn/nxdn_
 [feature.m17]
 switch = "M17"
 spec = "docs/spec/m17.md"
-source = ["core/m17", "tools/bench/m17", "tools/bench/m17tool.py"]
+source = ["core/m17", "core/radio/radio_m17.c", "core/radio/radio_m17.h", "core/debuglink/debuglink_view_m17.c"]
 
 [feature.m17_packet]
 switch = "M17_PACKET"

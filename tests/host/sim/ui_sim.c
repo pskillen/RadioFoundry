@@ -1741,9 +1741,11 @@ static uint16_t n_inbox;
 static bool soft_volume;
 // The broadcast receiver (Settings > Talk & listen > FM broadcast step) only with the "bcast" token, the same way
 static bool bcast_rx;
-// P25 on this radio (UI_FEAT_P25: the VFO's mode tile offers it) only with the "p25" token; NXDN with "nxdn"
+// P25 on this radio (UI_FEAT_P25: the VFO's mode tile offers it) only with the "p25" token; NXDN with "nxdn";
+// M17 with "m17". The feature word starts as every bit, so a new mode stays off until its token
 static bool p25_radio;
 static bool nxdn_radio;
+static bool m17_radio;
 // Hardware options (Settings > Advanced > Hardware, hal_hwopt.h) only with the "hwopt" token: a revision that starts
 // unset and a plain option
 static int8_t hwopt_val[2];
@@ -1768,7 +1770,7 @@ uint32_t ui_svc_features(void)
 	return 0xFFFFFFFFu & ~(soft_volume ? 0 : UI_FEAT_VOLUME) & ~(bcast_rx ? 0 : UI_FEAT_BCAST) &
 	       ~(ref_trim ? 0 : UI_FEAT_REF_TRIM) &
 	       ~(knob_radio ? 0 : UI_FEAT_VOLUME_KNOB) & ~(p25_radio ? 0 : UI_FEAT_P25) &
-	       ~(nxdn_radio ? 0 : UI_FEAT_NXDN);
+	       ~(nxdn_radio ? 0 : UI_FEAT_NXDN) & ~(m17_radio ? 0 : UI_FEAT_M17);
 }
 // My radio's names (ui_svc_name_*): placeholders, as the user's own would be; a save writes at once
 static char sim_names[UI_NAME_COUNT][17];
@@ -2731,6 +2733,7 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 	bcast_rx = false;
 	p25_radio = false;
 	nxdn_radio = false;
+	m17_radio = false;
 #if CONFIG_NXDN
 	memset(&view.nxdn, 0, sizeof view.nxdn);
 	view.nxdn.flags = RADIO_NXDN_9600;	// the NXDN settings' defaults (radio_nxdn.c): 9600 bit/s, RAN 1, group 1
@@ -2945,7 +2948,8 @@ static bool check(const char *kv, char *err, size_t len)
 #endif
 	else if (strcmp(key, "mode") == 0) snprintf(got, sizeof got, "%s", view.ch.mode == RADIO_MODE_DMR ? "dmr" :
 								     view.ch.mode == RADIO_MODE_P25 ? "p25" :
-								     view.ch.mode == RADIO_MODE_NXDN ? "nxdn" : "fm");
+								     view.ch.mode == RADIO_MODE_NXDN ? "nxdn" :
+								     view.ch.mode == RADIO_MODE_M17 ? "m17" : "fm");
 	else if (strcmp(key, "tx") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.tx_count);
 	else if (strcmp(key, "txid") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.tx_id);
 	else if (strcmp(key, "txpriv") == 0) snprintf(got, sizeof got, "%u", sim_rec.tx_private);
@@ -3429,9 +3433,10 @@ static bool run_token(char *t, char *err, size_t len)
 		advance(100);
 		return true;
 	}
-	if (strcmp(t, "dlmode") == 0 && arg != NULL) {	// the debug link sets the mode (DMR_FIELDS): fm, dmr, p25 or nxdn
+	if (strcmp(t, "dlmode") == 0 && arg != NULL) {	// the debug link sets the mode (DMR_FIELDS): fm, dmr, p25, nxdn or m17
 		ui_svc_mode(strcmp(arg, "p25") == 0 ? RADIO_MODE_P25 : strcmp(arg, "nxdn") == 0 ? RADIO_MODE_NXDN :
-			    strcmp(arg, "dmr") == 0 ? RADIO_MODE_DMR : RADIO_MODE_FM);
+			    strcmp(arg, "m17") == 0 ? RADIO_MODE_M17 : strcmp(arg, "dmr") == 0 ? RADIO_MODE_DMR :
+			    RADIO_MODE_FM);
 		advance(100);
 		return true;
 	}
@@ -3814,6 +3819,10 @@ static bool run_token(char *t, char *err, size_t len)
 	}
 	if (strcmp(t, "nxdn") == 0) {		// this radio runs NXDN
 		nxdn_radio = true;
+		return true;
+	}
+	if (strcmp(t, "m17") == 0) {		// this radio runs M17
+		m17_radio = true;
 		return true;
 	}
 	if (strcmp(t, "hwopt") == 0) {		// this radio has hardware options (sim_hwopts)

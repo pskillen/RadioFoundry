@@ -214,6 +214,7 @@ static size_t cmd_reset(uint8_t *out)
 	debuglink_dmr_data_reset();
 	debuglink_p25_reset();
 	debuglink_nxdn_reset();
+	debuglink_m17_reset();
 	uint32_t now = hal_millis();
 	dlog("debuglink: counters reset");
 	out[0] = DL_ST_OK;

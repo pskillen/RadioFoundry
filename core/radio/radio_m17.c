@@ -11,6 +11,7 @@
 #include "radio/radio_lend.h"
 #include "m17/m17_engine.h"
 #include "m17/m17_rx.h"
+#include "m17/m17_bert.h"
 #include "air/air_session.h"
 
 // Kind 6 is the stored M17 channel (docs/spec/m17.md 10). The codeplug row that names it is a later step;
@@ -35,6 +36,7 @@ static const radio_m17_settings_t defaults = {
 static radio_m17_settings_t set;
 static radio_m17_settings_t applied;	// what the running engine was given
 static m17_block_t *blk;
+static bool bert_on;			// a BERT count or transmission was asked for; cleared when the session ends
 static radio_m17_stats_t stats;
 static air_session_stats_t air_base;
 static m17_bert_count_t bert_done;	// sessions already closed; the open one's counters sit on its receiver
@@ -214,6 +216,7 @@ void radio_m17_end(void)
 {
 	m17_block_t *b = blk;
 
+	bert_on = false;
 	if (b == NULL)
 		return;
 	// The provider is closed before the pointer goes: nothing it calls can touch the block after this
@@ -230,6 +233,39 @@ void radio_m17_end(void)
 bool radio_m17_running(void)
 {
 	return blk != NULL;
+}
+
+void radio_m17_bert(uint8_t cmd)
+{
+	if (cmd == 3) {
+		bert_on = false;
+		if (blk != NULL)
+			blk->tx.cfg.tx_kind = M17_TX_VOICE;
+		return;
+	}
+	if (blk == NULL)
+		return;
+	if (cmd == 1) {
+		// Keep what this session already counted, then count from here
+		bert_on = true;
+		bert_done.bits += blk->rx.bert.bits;
+		bert_done.errors += blk->rx.bert.errors;
+		bert_done.frames += blk->rx.bert.frames;
+		bert_done.lost += blk->rx.bert.lost;
+		m17_bert_count_init(&blk->rx.bert);
+		if (air_session_tx_state(&blk->session) == AIR_TX_IDLE)
+			blk->tx.cfg.tx_kind = M17_TX_VOICE;
+		return;
+	}
+	if (cmd == 2 && air_session_tx_state(&blk->session) == AIR_TX_IDLE) {
+		bert_on = true;
+		blk->tx.cfg.tx_kind = M17_TX_BERT;
+	}
+}
+
+bool radio_m17_bert_on(void)
+{
+	return bert_on;
 }
 
 void radio_m17_retuned(void)

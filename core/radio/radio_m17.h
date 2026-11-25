@@ -83,6 +83,11 @@ bool radio_m17_poll(radio_m17_view_t *v);
 void radio_m17_stats(radio_m17_stats_t *out);
 void radio_m17_reset_stats(void);
 
+// Radio task. 1: count received BERT from here, 2: the next transmission is BERT, 3: stop and return to voice.
+// The flag is what the debug link shows; any task may read it
+void radio_m17_bert(uint8_t cmd);
+bool radio_m17_bert_on(void);
+
 // The block the engine runs in, while it runs (8-byte aligned); NULL otherwise. Its size is the lend the
 // session needs
 const void *radio_m17_engine_mem(void);

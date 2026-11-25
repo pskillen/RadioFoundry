@@ -199,6 +199,8 @@ typedef enum {
 	RREQ_AIR_BENCH,		// the air interface bench (CONFIG_AIR_RAW): arg 1 take the modem, 0 give it back
 	RREQ_AIR_TX,		// ... arg 1 key (arg2: the longest time in ms), 0 unkey
 	RREQ_NXDN_SET,		// radio_task.c: the pending NXDN settings were copied (radio_nxdn_set_settings); applied here
+	RREQ_M17_SET,		// radio_task.c: the pending M17 settings were copied (radio_m17_set_settings); applied here
+	RREQ_M17_BERT,		// arg: 1 count received BERT, 2 transmit BERT, 3 stop
 	// New request types go above
 
 	RREQ_COUNT		// KEEP LAST: sizes req_flags[] (radio_sm.c)

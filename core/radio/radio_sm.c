@@ -9135,6 +9135,45 @@ static void nxdn_set_request(radio_sm_t *sm)
 }
 #endif
 
+#if CONFIG_M17
+// The settings, taken now when the engine is idle. No rate to restart on
+static void m17_set_request(radio_sm_t *sm)
+{
+	if (radio_m17_running())
+		radio_m17_apply(&sm->view.ch, air_number(sm));
+	radio_m17_poll(&sm->view.m17);
+	changed(sm);
+}
+
+// BERT: count, or key a BERT transmission on an M17 channel that is already running, or stop
+static void m17_bert_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms)
+{
+	uint8_t cmd = (uint8_t)req->arg;
+
+	if (cmd == 3) {
+		if (sm->ptt && sm->view.ch.mode == RADIO_MODE_M17)
+			ptt_release(sm, false, now_ms);
+		radio_m17_bert(3);
+		radio_m17_poll(&sm->view.m17);
+		changed(sm);
+		return;
+	}
+	if (sm->view.ch.mode != RADIO_MODE_M17 || !radio_m17_running())
+		return;
+	radio_m17_bert(cmd);
+	if (cmd == 2) {
+		ptt_down(sm, now_ms);
+		if (sm->view.state != RS_TX) {
+			radio_m17_bert(3);	// a refusal must not leave the next voice PTT as BERT
+			if (sm->ptt)
+				ptt_release(sm, false, now_ms);
+		}
+	}
+	radio_m17_poll(&sm->view.m17);
+	changed(sm);
+}
+#endif
+
 #if CONFIG_AIR_RAW
 // RREQ_AIR_BENCH and RREQ_AIR_TX: arg bit 0 on or off, bits 15:8 the debug link's sequence number (0 = none)
 static void bench_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms)
@@ -9305,6 +9344,10 @@ void radio_sm_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms)
 #endif
 #if CONFIG_NXDN
 	case RREQ_NXDN_SET: nxdn_set_request(sm); break;
+#endif
+#if CONFIG_M17
+	case RREQ_M17_SET: m17_set_request(sm); break;
+	case RREQ_M17_BERT: m17_bert_request(sm, req, now_ms); break;
 #endif
 #if CONFIG_AIR_RAW
 	case RREQ_AIR_BENCH:

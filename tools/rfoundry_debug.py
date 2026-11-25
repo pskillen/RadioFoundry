@@ -15,7 +15,7 @@
     rfoundry_debug.py wake                           backlight on without a key event
     rfoundry_debug.py ptt --seconds S                key PTT for S seconds (at most 10; the firmware also times out)
     rfoundry_debug.py radio OP [ARG...]              channel +1, pos 3, zone 0, vfo on, freq MHZ, power lowest|LEVEL|+1, copy-vfo, ...
-    rfoundry_debug.py radio mode fm|dmr|p25|nxdn     the channel's mode for now (the VFO's own in the VFO)
+    rfoundry_debug.py radio mode fm|dmr|p25|nxdn|m17  the channel's mode for now (the VFO's own in the VFO)
     rfoundry_debug.py radio p25 [nac=N] [tg=N|unit=N] [rx_tgid=N] [talkaround=auto|on|off] [unit_id=N]
                                                 the P25 settings (CONFIG_P25; RAM only, view section p25)
     rfoundry_debug.py radio nxdn [rate=9600|4800] [ran=N] [rx_ran=N] [tx_ran=N] [rx_gid=N] [tg=N|unit=N]
@@ -203,7 +203,7 @@ PRESS, LONG, REPEAT, DOWN, UP = range(5)
 VIEW_SECTIONS = ["core", "channel", "dmr", "dmr_call", "dmr_stats", "hotspot", "link", "features", "dmr_data",
                  "storage", "dmr_ext", "dmr_data_stats", "roam", "aprs", "aprs_set", "dmr_ip", "net", "snmp", "usrp",
                  "sfr", "tasks", "crash", "watchdog", "reset", "air", "net_svc", "net_link", "cps", "board", "audio", "t3",
-                 "t3_svc", "t3_roam", "voice_cap", "t3_msg", "t3_ra", "p25", "p25_trunk", "nxdn"]
+                 "t3_svc", "t3_roam", "voice_cap", "t3_msg", "t3_ra", "p25", "p25_trunk", "nxdn", "m17"]
 
 OP_CHANNEL_STEP, OP_ZONE_POS, OP_ZONE, OP_VFO, OP_VFO_SET, OP_VFO_STEP, OP_POWER, OP_SQUELCH, OP_BANDWIDTH, \
     OP_TONE, OP_MONITOR, OP_CLEAR_TEMP, OP_REPLY_CANCEL, OP_HOTSPOT_EXIT, OP_DMR_TARGET, OP_DMR_CONTACT, \
@@ -228,8 +228,9 @@ OP_PA_KEYUP = 37
 OP_VFO_SFR = 38
 OP_P25 = 42
 OP_NXDN = 43
+OP_M17 = 44
 P25_TALKAROUND = {"auto": 0, "on": 1, "off": 2}
-CHANNEL_MODES = {"fm": 0, "dmr": 1, "p25": 2, "nxdn": 3}
+CHANNEL_MODES = {"fm": 0, "dmr": 1, "p25": 2, "nxdn": 3, "m17": 4}
 # The VFO's SFR role names (sfrRole_t, docs/spec/sfr.md 4): off, user, user of an ERDM repeater, repeater, ERDM style
 SFR_ROLES = {"off": 0, "user": 1, "user-erdm": 2, "rpt": 3, "rpt-erdm": 4}
 OP_PA_SWEEP = 39
@@ -1340,7 +1341,7 @@ class DebugLink:
         self.radio(OP_VOLUME, bytes([VOLUME_KNOB if step == "knob" else int(step)]))
 
     def dmr_fields(self, mode=None, cc=None, ts=None):
-        """Mode ("fm" / "dmr" / "p25" / "nxdn"), color code 0..15 and timeslot 1 / 2, each None to keep it. On a channel these
+        """Mode ("fm" / "dmr" / "p25" / "nxdn" / "m17"), color code 0..15 and timeslot 1 / 2, each None to keep it. On a channel these
         are temporary changes, in the VFO the VFO's own settings (RADIO op 31). A mode the build lacks raises
         DebugLinkError "unavailable"."""
         m = 0xFF if mode is None else CHANNEL_MODES[mode]
@@ -1394,6 +1395,46 @@ class DebugLink:
                "emergency": v["nxdn.tx_emergency"] == "1"}
         cur.update(kw)
         self.nxdn_settings(**cur)
+
+    @staticmethod
+    def _m17_addr(text):
+        """Six base-40 bytes, the same coding as m17_addr_encode. All-0xFF (the broadcast address) is sent as six
+        zero bytes: the radio stores 0 as broadcast, and six 0xFF bytes mean 'keep'."""
+        alpha = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/."
+        if len(text) > 9:
+            raise ValueError("m17 address is at most 9 characters")
+        v = 0
+        for i, c in enumerate(text.upper()):
+            d = alpha.find(c)
+            if d < 0:
+                raise ValueError("m17 address: A-Z, 0-9, space, - / .")
+            v += d * (40 ** i)
+        raw = v.to_bytes(6, "big")
+        return b"\x00" * 6 if raw == b"\xff" * 6 else raw
+
+    def m17_settings(self, can=None, squelch=None, dst=None, call=None):
+        """The M17 settings (RADIO op 44, cmd 0; debuglink.md 3.8; RAM only). Each argument None keeps the radio's
+        value: CAN 0..15, squelch, destination callsign (ALL is broadcast), our callsign. The engine takes them when
+        it isn't transmitting."""
+        if can is not None and not 0 <= int(can) <= 15:
+            raise ValueError("m17_settings: CAN 0..15")
+        if squelch is not None and squelch not in (0, 1, False, True):
+            raise ValueError("m17_settings: squelch 0 or 1")
+        payload = bytearray([0, 0xFF if can is None else int(can), 0xFF if squelch is None else (1 if squelch else 0)])
+        payload += b"\xff" * 6 if dst is None else (self._m17_addr(dst) if isinstance(dst, str) else bytes(dst))
+        if call is None:
+            payload += b"\x00" * 9
+        else:
+            raw = call.encode("ascii")
+            if len(raw) > 9 or any(c not in " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/." for c in call.upper()):
+                raise ValueError("m17_settings: callsign is at most 9 of A-Z, 0-9, space, - / .")
+            payload += raw + b"\x00" * (9 - len(raw))
+        self.radio(OP_M17, bytes(payload))
+
+    def m17_bert(self, which):
+        """BERT on the M17 channel (RADIO op 44): 'rx' counts, 'tx' keys a BERT transmission, 'stop' releases it."""
+        cmd = {"rx": 1, "tx": 2, "stop": 3}[which]
+        self.radio(OP_M17, bytes([cmd]))
 
     def vfo_sfr(self, role, inbound_ts=1, framing=0, hang=0):
         """The VFO's SFR role (RADIO op 38; sfr.md 4), saved with the VFO: role a SFR_ROLES name or 0..4, the inbound
@@ -1989,7 +2030,7 @@ def cmd_radio(link, a):
         link.vibrate(args[0] if args else "message")
     elif op == "copy-vfo":            # the channel's settings into the VFO, and open it
         link.vfo_copy()
-    elif op == "mode":                # mode fm|dmr|p25|nxdn (the VFO's own in the VFO, else temporary)
+    elif op == "mode":                # mode fm|dmr|p25|nxdn|m17 (the VFO's own in the VFO, else temporary)
         if not args or args[0] not in CHANNEL_MODES:
             raise SystemExit("mode " + "|".join(CHANNEL_MODES))
         link.dmr_fields(mode=args[0])
@@ -2030,6 +2071,25 @@ def cmd_radio(link, a):
             else:
                 raise SystemExit(usage)
         link.nxdn_settings_update(**kw)
+    elif op == "m17":                 # m17 [can=N] [squelch=0|1] [dst=CALL] [call=CALL] | m17 bert rx|tx|stop
+        usage = "m17 [can=N] [squelch=0|1] [dst=CALL] [call=CALL] | m17 bert rx|tx|stop"
+        if args[:1] == ["bert"]:
+            if len(args) != 2 or args[1] not in ("rx", "tx", "stop"):
+                raise SystemExit(usage)
+            link.m17_bert(args[1])
+        else:
+            kw = {}
+            for a in args:
+                k, _, val = a.partition("=")
+                if k == "can":
+                    kw["can"] = int(val, 0)
+                elif k == "squelch" and val in ("0", "1"):
+                    kw["squelch"] = int(val)
+                elif k in ("dst", "call"):
+                    kw[k] = val
+                else:
+                    raise SystemExit(usage)
+            link.m17_settings(**kw)
     elif op == "cc":                  # cc 0..15
         link.dmr_fields(cc=num(0))
     elif op == "ts":                  # ts 1|2
@@ -2952,7 +3012,7 @@ def main(argv=None):
                                   "monitor", "clear", "reply-cancel", "hotspot-exit", "target", "contact", "call-back",
                                   "target-clear", "privacy", "scan", "scan-vfo", "beep", "burst", "set", "usb",
                                   "usb-settings", "ppp", "vibrate", "mode", "cc", "ts", "sfr", "copy-vfo", "voice-test", "dtmf",
-                                  "tx-limit", "tx-drive", "pa-keyup", "pa-sweep", "pa-keyrun", "p25", "nxdn"])
+                                  "tx-limit", "tx-drive", "pa-keyup", "pa-sweep", "pa-keyrun", "p25", "nxdn", "m17"])
     p.add_argument("args", nargs="*")
     p = sub.add_parser("data", help="DMR data: sms, call alert, radio check, settings, inbox")
     p.add_argument("op", choices=["sms", "alert", "check", "settings", "inbox", "read", "emergency", "em-settings",

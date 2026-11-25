@@ -327,8 +327,9 @@ CONFIG_P25 ?= $(CONFIG_DMR)
 CONFIG_NXDN ?= $(CONFIG_DMR)
 CONFIG_NXDN_SCRAMBLER ?= $(CONFIG_NXDN)
 # M17 conventional (core/m17, docs/spec/m17.md): stream, packet and BERT on the air interface, the engine and the M17
-# channel mode. Needs DMR (the vocoder path and the pool). Off until the engine runs on the radio
-CONFIG_M17 ?= n
+# channel mode. Needs DMR (the vocoder path and the pool). A board whose receive path is not written lists it in
+# BOARD_NOT_WRITTEN
+CONFIG_M17 ?= $(CONFIG_DMR)
 CONFIG_M17_PACKET ?= $(CONFIG_M17)
 CONFIG_M17_VOICE ?= n
 # Derived, never set by hand (a command line or a board's config.mk that sets one stops the build): AIR the air

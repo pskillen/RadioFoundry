@@ -2319,7 +2319,7 @@ static void test_vfo_dmr(void)
 	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 1, 0xFF, 0 }, 3) == DL_ST_OK);
 	CHECK(sm.view.ch.mode == RADIO_MODE_DMR && sim.started);
 #endif
-	// NXDN (3) the same; past NXDN: a bad argument
+	// NXDN (3) the same; M17 (4) the same; past M17: a bad argument
 	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 3, 0xFF, 0 }, 3) ==
 	      (CONFIG_NXDN ? DL_ST_OK : DL_ST_UNAVAILABLE));
 #if CONFIG_NXDN
@@ -2327,7 +2327,14 @@ static void test_vfo_dmr(void)
 	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 1, 0xFF, 0 }, 3) == DL_ST_OK);
 	CHECK(sm.view.ch.mode == RADIO_MODE_DMR && sim.started && !radio_nxdn_running());
 #endif
-	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 4, 0xFF, 0 }, 3) == DL_ST_BAD_ARG);
+	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 4, 0xFF, 0 }, 3) ==
+	      (CONFIG_M17 ? DL_ST_OK : DL_ST_UNAVAILABLE));
+#if CONFIG_M17
+	CHECK(sm.view.ch.mode == RADIO_MODE_M17 && radio_m17_running() && !sim.started);
+	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 1, 0xFF, 0 }, 3) == DL_ST_OK);
+	CHECK(sm.view.ch.mode == RADIO_MODE_DMR && sim.started && !radio_m17_running());
+#endif
+	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 5, 0xFF, 0 }, 3) == DL_ST_BAD_ARG);
 	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 0xFF, 16, 0 }, 3) == DL_ST_BAD_ARG);
 	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 0xFF, 0xFF, 3 }, 3) == DL_ST_BAD_ARG);
 	CHECK(debuglink_radio_feature_op(DL_OP_DMR_FIELDS, (const uint8_t[]){ 0xFF, 0xFF }, 2) == DL_ST_BAD_ARG);
@@ -4180,6 +4187,14 @@ void radio_req_nxdn_settings(const radio_nxdn_settings_t *s)
 	radio_nxdn_set_settings(s);
 	req(RREQ_NXDN_SET, 0);
 }
+#endif
+#if CONFIG_M17
+void radio_req_m17_settings(const radio_m17_settings_t *s)
+{
+	radio_m17_set_settings(s);
+	req(RREQ_M17_SET, 0);
+}
+void radio_req_m17_bert(uint8_t cmd) { req(RREQ_M17_BERT, cmd); }
 #endif
 // Not under test here: debuglink_view_radio.c, linked for the volume operation, refers to them
 void radio_req_scan_dual(uint16_t pos) { (void)pos; }
@@ -11774,6 +11789,24 @@ static void test_air_ops_m17(void)
 	CHECK(sm.view.tx_deny != TXDENY_NO_CODEC);
 	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_REFUSED && radio_m17_running());
 	req(RREQ_PTT, 0);
+	// Op 44: settings, then BERT. A blank callsign still refuses voice and still sends BERT
+	CHECK(debuglink_is_feature_op(DL_OP_M17));
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 0, 16 }, 2) == DL_ST_BAD_ARG);
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){
+		0, 7, 1, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 'T', 'E', 'S', 'T', 0, 0, 0, 0, 0 }, 18) == DL_ST_OK);
+	{
+		radio_m17_settings_t s;
+		radio_m17_settings(&s);
+		CHECK(s.can == 7 && s.can_squelch && strcmp(s.callsign, "TEST") == 0);
+	}
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 1 }, 1) == DL_ST_OK);
+	CHECK(radio_m17_bert_on() && sm.view.state != RS_TX);
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 2 }, 1) == DL_ST_OK);
+	CHECK(sm.view.state == RS_TX && sm.view.tx_deny != TXDENY_NO_CODEC && radio_m17_bert_on());
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 3 }, 1) == DL_ST_OK);
+	CHECK(!radio_m17_bert_on());
+	run(800);		// the end frame finishes; the state stays TX until it does
+	CHECK(sm.view.state == RS_IDLE);
 	codec_present = was;
 }
 #endif
