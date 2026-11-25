@@ -267,11 +267,20 @@ static void prbs9_bits(uint8_t *bits, uint16_t n, uint16_t seed)
 	}
 }
 
+// Packed scratch for one coded block. fec_conv_encode and puncture_bits store one bit per bit (bit_put);
+// the LSF path is the longest, 488 bits.
+#define M17_CODED_BYTES	((M17_LSF_CODED_BITS + 7) / 8)
+
+_Static_assert(M17_LSF_CODED_BITS <= M17_CODED_BYTES * 8 && M17_STREAM_CODED_BITS <= M17_CODED_BYTES * 8 &&
+		       M17_PACKET_CODED_BITS <= M17_CODED_BYTES * 8 && M17_BERT_CODED_BITS <= M17_CODED_BYTES * 8,
+	       "each path's coded bits fit the packed scratch");
+_Static_assert(sizeof(((m17_fec_work_t *)0)->soft) >= 2 * 244, "soft holds a full LSF decode");
+
 // ── Convolutional payload into 368-bit plain (before interleave) ──
 static void conv_plain(const m17_conv_path_t *path, const uint8_t *in, uint16_t dest_off, uint8_t *plain368)
 {
-	uint8_t enc[512];
-	uint8_t keep[400];
+	uint8_t enc[M17_CODED_BYTES];
+	uint8_t keep[M17_CODED_BYTES];
 
 	fec_conv_encode(&M17_CONV_CODE, in, path->nbits, enc);
 	puncture_bits(path, enc, keep);
@@ -282,7 +291,7 @@ static void conv_plain(const m17_conv_path_t *path, const uint8_t *in, uint16_t 
 static int conv_decode(const m17_conv_path_t *path, const uint8_t *plain368, uint16_t src_off, m17_fec_work_t *w,
 		       uint8_t *out)
 {
-	uint8_t keep[400];
+	uint8_t keep[M17_CODED_BYTES];
 
 	for (uint16_t i = 0; i < path->nkeep; i++)
 		bit_put(keep, i, bit_get(plain368, (uint16_t)(src_off + i)));
@@ -504,8 +513,8 @@ void m17_bert_encode_bits(const uint8_t bits[], uint8_t payload[M17_PAYLOAD_BYTE
 {
 	uint8_t in[28];
 	uint8_t plain[M17_PAYLOAD_BYTES];
-	uint8_t enc[512];
-	uint8_t keep[400];
+	uint8_t enc[M17_CODED_BYTES];
+	uint8_t keep[M17_CODED_BYTES];
 
 	memset(in, 0, sizeof in);
 	for (uint16_t i = 0; i < M17_BERT_BITS; i++)
@@ -553,7 +562,7 @@ uint16_t m17_puncture(const uint8_t *pat, uint8_t plen, const uint8_t *coded, ui
 
 uint16_t m17_puncture_drop_last(const uint8_t *pat, uint8_t plen, const uint8_t *coded, uint16_t ncoded, uint8_t *out)
 {
-	uint8_t tmp[400];
+	uint8_t tmp[M17_CODED_BYTES];
 	uint16_t n = m17_puncture(pat, plen, coded, ncoded, tmp);
 
 	for (uint16_t i = 0; i + 1 < n; i++)

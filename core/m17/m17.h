@@ -79,9 +79,10 @@
 // Example from the spec (7): AB1CD
 #define M17_ADDR_AB1CD		0x0000009FDD51ull
 
-// Viterbi workspace (m17_frame.c). The caller owns it.
+// Viterbi workspace (m17_frame.c). The caller owns it. soft is one value per coded bit: unpuncture writes
+// ncoded of them (488 on the LSF path) and the decoder reads two per input bit (2 x 244 = 488).
 typedef struct {
-	int8_t soft[M17_LSF_CODED_BITS * 2];
+	int8_t soft[M17_LSF_CODED_BITS];
 	uint16_t dec[256];
 } m17_fec_work_t;
 
