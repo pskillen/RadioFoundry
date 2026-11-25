@@ -4,6 +4,7 @@
 // extras, battery, beeps, settings) and the RADIO operations that drive them (scan, beep, tone burst, one setting,
 // roaming)
 #include "config.h"
+#include <string.h>
 #include "board.h"
 #include "debuglink/debuglink.h"
 #include "debuglink/debuglink_proto.h"
@@ -34,6 +35,9 @@
 #endif
 #if CONFIG_GPS
 #include "position/position.h"
+#endif
+#if CONFIG_M17
+#include "m17/m17.h"
 #endif
 
 #define DL_SETTING_MIC_GAIN	29u	// SETTING id of the mic gain step (radio/mic_gain.h)
@@ -398,12 +402,12 @@ uint8_t debuglink_radio_feature_op(uint8_t op, const uint8_t *a, uint16_t len)
 	case DL_OP_DMR_FIELDS:
 		// mode (0xFF = keep, else radio_mode_t), color code (0xFF = keep), timeslot (0 = keep): on a channel they are
 		// temporary changes, in the VFO the VFO's own settings. The radio core refuses what it can't do
-		if (len < 3 || (a[0] != 0xFF && a[0] > RADIO_MODE_NXDN) || (a[1] != 0xFF && a[1] > 15) || a[2] > 2) {
+		if (len < 3 || (a[0] != 0xFF && a[0] > RADIO_MODE_M17) || (a[1] != 0xFF && a[1] > 15) || a[2] > 2) {
 			return DL_ST_BAD_ARG;
 		}
 #if CONFIG_DMR || CONFIG_P25
 		if ((a[0] == RADIO_MODE_DMR && !CONFIG_DMR) || (a[0] == RADIO_MODE_P25 && !CONFIG_P25) ||
-		    (a[0] == RADIO_MODE_NXDN && !CONFIG_NXDN) ||
+		    (a[0] == RADIO_MODE_NXDN && !CONFIG_NXDN) || (a[0] == RADIO_MODE_M17 && !CONFIG_M17) ||
 		    ((a[1] != 0xFF || a[2] != 0) && !CONFIG_DMR)) {
 			return DL_ST_UNAVAILABLE;
 		}
@@ -470,6 +474,82 @@ uint8_t debuglink_radio_feature_op(uint8_t op, const uint8_t *a, uint16_t len)
 			return DL_ST_BAD_ARG;
 		}
 		radio_req_nxdn_settings(&n);
+		return DL_ST_OK;
+#else
+		return DL_ST_UNAVAILABLE;
+#endif
+	}
+	case DL_OP_M17: {
+		// cmd 0 settings, 1 BERT receive, 2 BERT transmit, 3 stop. Settings fields are optional and trailing:
+		// CAN (0xFF keeps, else 0..15), squelch (0xFF keeps, else 0/1), destination 6 bytes (all 0xFF keeps;
+		// 0 is broadcast), callsign 9 bytes (a first 0 keeps). RAM only
+		if (len < 1 || a[0] > 3)
+			return DL_ST_BAD_ARG;
+#if CONFIG_M17
+		if (a[0] != 0) {
+			if (len != 1)
+				return DL_ST_BAD_ARG;
+			radio_req_m17_bert(a[0]);
+			return DL_ST_OK;
+		}
+		radio_m17_settings_t s;
+		const uint8_t *p = a + 1;
+		uint16_t left = (uint16_t)(len - 1);
+
+		radio_m17_settings(&s);
+		if (left >= 1) {
+			if (p[0] != 0xFF) {
+				if (p[0] > RADIO_M17_CAN_MAX)
+					return DL_ST_BAD_ARG;
+				s.can = p[0];
+			}
+			p++;
+			left--;
+		}
+		if (left >= 1) {
+			if (p[0] != 0xFF) {
+				if (p[0] > 1)
+					return DL_ST_BAD_ARG;
+				s.can_squelch = p[0] != 0;
+			}
+			p++;
+			left--;
+		}
+		if (left != 0) {
+			bool keep = true;
+			uint64_t dst = 0;
+
+			if (left < M17_ADDR_BYTES)
+				return DL_ST_BAD_ARG;
+			for (uint8_t i = 0; i < M17_ADDR_BYTES; i++) {
+				if (p[i] != 0xFF)
+					keep = false;
+				dst = (dst << 8) | p[i];
+			}
+			if (!keep)
+				s.dst = dst;
+			p += M17_ADDR_BYTES;
+			left = (uint16_t)(left - M17_ADDR_BYTES);
+		}
+		if (left != 0) {
+			char call[RADIO_M17_CALL_LEN];
+			uint8_t raw[M17_ADDR_BYTES];
+			unsigned n = 0;
+
+			if (left != 9)
+				return DL_ST_BAD_ARG;
+			if (p[0] != 0) {
+				while (n < 9 && p[n] != 0) {
+					call[n] = (char)p[n];
+					n++;
+				}
+				call[n] = '\0';
+				if (!m17_addr_encode(call, raw))
+					return DL_ST_BAD_ARG;
+				memcpy(s.callsign, call, n + 1);
+			}
+		}
+		radio_req_m17_settings(&s);
 		return DL_ST_OK;
 #else
 		return DL_ST_UNAVAILABLE;

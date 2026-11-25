@@ -580,8 +580,21 @@ HRC_FLASHFUNC static void air_event(const air_event_t *ev, void *ctx)
 HRC_FLASHFUNC static uint32_t air_fit(const air_profile_t *p)
 {
 	uint32_t f = air_softmodem_rx_fit(p, &hrc_baseband) | hrc7000_air_tx_fit(p);
-	// Untested until the board says its receive and transmit were checked on air (modem-hrc7000.md 10.4)
-	return f != 0 && (brd == NULL || !brd->air_verified) ? f | AIR_FIT_UNTESTED : f;
+	uint8_t id = p->id;
+
+	if (f == 0) {
+		return 0;
+	}
+	if (brd == NULL || id == 0) {
+		return f | AIR_FIT_UNTESTED;
+	}
+	if ((f & AIR_FIT_RX) && !(brd->air_verified_rx & (1u << id))) {
+		f |= AIR_FIT_UNTESTED;
+	}
+	if ((f & AIR_FIT_TX) && !(brd->air_verified_tx & (1u << id))) {
+		f |= AIR_FIT_UNTESTED;
+	}
+	return f;
 }
 
 // Rule 1 (hal_air.h): in DMR the speaker carries only the codec's PCM, and the session keeps FM playback off. Rule 2:

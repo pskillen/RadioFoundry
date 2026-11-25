@@ -47,8 +47,9 @@ typedef struct {
 	// channel too (stm32_hrc_dmr_tx_listening; the modem's tx_listen_split)
 	bool listen_split;
 #if CONFIG_AIR
-	// The physical layer pipe (stm32_hrc_air) has been checked on air on this board: its fit loses AIR_FIT_UNTESTED
-	bool air_verified;
+	// Profiles checked on air on this board (1u << air_profile_id_t); fit directions without a bit keep AIR_FIT_UNTESTED
+	uint16_t air_verified_rx;
+	uint16_t air_verified_tx;
 	// The RF chip gives the HR_C6000 the flat discriminator in its DMR set-up, so the chip's FM copy carries it
 	// (modem-hrc6000.md 10.6): the provider receives the profiles the correlator can't through the soft modem, and
 	// stm32_hrc_baseband is the board's receive tap

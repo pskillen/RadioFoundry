@@ -49,6 +49,8 @@ byte, `AIR_SOFT_OUTER` (96) for a +3 symbol at the profile's deviation.
 | `sync[]` | the fixed patterns the mode puts on air, most useful first: symbols, length (8 to 24), errors tolerated, where the frame starts relative to the pattern, whether it is only at the start of a transmission |
 | `sync_every_syms` | the longest run of symbols between two 24-symbol patterns inside a transmission; 0 when none recurs |
 | `sync_any_syms` | the longest run between two patterns of any length (a mode whose recurring sync is shorter than 24 symbols); 0 = `sync_every_syms`. The soft modem holds its timing this long |
+| `sync_period_syms` | symbols from one sync to the next when every unit is that long; 0 when there is no fixed period. The soft modem may search only near those boundaries while locked |
+| `id` | which standard profile this is (`AIR_PROFILE_xxx` in `hal/hal_air.h`); 0 on a bench or host-built profile |
 | `idle` | four dibits a provider sends when a continuous transmission runs dry |
 
 ## 3. The provider (`hal_air_t`)
@@ -198,6 +200,7 @@ before anything is queued: `tx_deny=air_no_tx` ("This mode: receive only").
 |---|---|
 | P25 Phase 1 conventional voice | written, host tested ([p25.md](p25.md)) |
 | NXDN conventional voice, 4800 and 9600 bit/s | written, host tested, in the radio core ([nxdn.md](nxdn.md) 6) |
+| M17 conventional (stream, packet, BERT) | frame codec written, host tested ([m17.md](m17.md)) |
 | A DMR engine on symbols | not written. The interface carries TDMA (slot length, slot events, the slot clock, per-slot transmit chunks, syncs inside the burst); today's DMR runs on the modem chip's own layer 2 |
 | 2-level modes | carried (the dibit map, the soft modem's fit) |
 | AFSK (APRS) | not a symbol mode: its tones ride the audio band. The sample taps can feed a demodulator for it; nothing uses them for that yet |

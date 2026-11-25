@@ -1474,13 +1474,15 @@ static void quick_activate(int tile)
 		ui_st.quick_edit = true;	// the hint row says what Up / Down and the digits do
 		break;
 	case QT_MODE: {
-		// FM, DMR, P25, NXDN in turn: P25 and NXDN where the board runs them (the view may change at once: the
+		// FM, DMR, P25, NXDN, M17 in turn: each where the board runs it (the view may change at once: the
 		// host simulator)
 		uint32_t feat = ui_svc_features();
-		bool p25 = (feat & UI_FEAT_P25) != 0, nxdn = (feat & UI_FEAT_NXDN) != 0;
+		bool p25 = (feat & UI_FEAT_P25) != 0, nxdn = (feat & UI_FEAT_NXDN) != 0, m17 = (feat & UI_FEAT_M17) != 0;
 		uint8_t to = view->ch.mode == RADIO_MODE_FM ? RADIO_MODE_DMR :
 			view->ch.mode == RADIO_MODE_DMR && p25 ? RADIO_MODE_P25 :
 			(view->ch.mode == RADIO_MODE_DMR || view->ch.mode == RADIO_MODE_P25) && nxdn ? RADIO_MODE_NXDN :
+			(view->ch.mode == RADIO_MODE_DMR || view->ch.mode == RADIO_MODE_P25 ||
+			 view->ch.mode == RADIO_MODE_NXDN) && m17 ? RADIO_MODE_M17 :
 			RADIO_MODE_FM;
 		static char msg[12];	// the toast keeps the pointer
 		sbuf_t b;

@@ -66,6 +66,7 @@ typedef struct {
 	uint16_t gate_up[AIR_SYNCS_MAX];	// per pattern: the bits of its steps up ...
 	uint16_t gate_mask[AIR_SYNCS_MAX];	// ... and which bits are steps of four levels or more (0: no gate)
 	uint8_t valid;				// bit i: pattern i can be fitted (its length, more than one level)
+	uint8_t neg_partner[AIR_SYNCS_MAX];	// index of the negated twin pattern, 0xFF none
 	// The sync search: the best fit so far of the peak being climbed
 	uint16_t cand_q, cand_prev_q, last_q;	// fit errors (0xFFFF none): the candidate's, the sample's before it
 	int16_t cand_lvl, cand_off;		// x 256
@@ -102,5 +103,7 @@ void air_softmodem_rx_reset(air_softmodem_t *m);
 // n samples of one channel, the first taken at t_us on the provider's clock. Calls out for each chunk that fills
 // and for what is left at the end of the call (a chunk never waits for the next call)
 void air_softmodem_rx(air_softmodem_t *m, const int16_t *samples, uint16_t n, uint32_t t_us);
+
+extern uint32_t air_softmodem_search_calls;	// host tests: calls to search since open or reset
 
 #endif

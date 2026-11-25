@@ -346,8 +346,18 @@
 #ifndef CONFIG_NXDN_SCRAMBLER
 #define CONFIG_NXDN_SCRAMBLER		0
 #endif
+// M17 conventional (core/m17, docs/spec/m17.md)
+#ifndef CONFIG_M17
+#define CONFIG_M17			0
+#endif
+#ifndef CONFIG_M17_PACKET
+#define CONFIG_M17_PACKET		CONFIG_M17
+#endif
+#ifndef CONFIG_M17_VOICE
+#define CONFIG_M17_VOICE		0
+#endif
 #ifndef CONFIG_AIR
-#define CONFIG_AIR			(CONFIG_P25 || CONFIG_NXDN)
+#define CONFIG_AIR			(CONFIG_P25 || CONFIG_NXDN || CONFIG_M17)
 #endif
 // P25 trunked: the codec of its systems and channels (docs/spec/p25-codeplug.md 3), the control channel decoded, voice
 // channel grants followed and, where the system allows it, registration and transmit on a grant (core/p25/p25_follow.c)
@@ -501,7 +511,7 @@
 #error "CONFIG_NET_PPP needs CONFIG_HOSTLINK and CONFIG_DMR_IP_GATEWAY"
 #endif
 #if CONFIG_AIR_RAW && !CONFIG_AIR
-#error "CONFIG_AIR_RAW needs CONFIG_P25 or CONFIG_NXDN (an air-framed mode)"
+#error "CONFIG_AIR_RAW needs CONFIG_P25, CONFIG_NXDN or CONFIG_M17 (an air-framed mode)"
 #endif
 #if CONFIG_AIR_RAW && !CONFIG_DEBUGLINK
 #error "CONFIG_AIR_RAW needs CONFIG_DEBUGLINK"
@@ -571,6 +581,15 @@
 #endif
 #if CONFIG_NXDN && !CONFIG_DMR
 #error "CONFIG_NXDN needs CONFIG_DMR (its voice is the DMR vocoder's)"
+#endif
+#if CONFIG_M17_PACKET && !CONFIG_M17
+#error "CONFIG_M17_PACKET needs CONFIG_M17"
+#endif
+#if CONFIG_M17_VOICE && !CONFIG_M17
+#error "CONFIG_M17_VOICE needs CONFIG_M17"
+#endif
+#if CONFIG_M17 && !CONFIG_DMR
+#error "CONFIG_M17 needs CONFIG_DMR (its voice is the DMR vocoder's)"
 #endif
 #if (CONFIG_APRS_RX && !CONFIG_APRS_AFSK) || (CONFIG_APRS_IGATE && !(CONFIG_APRS_RX && CONFIG_HOSTLINK))
 #error "an APRS sub-feature is on without its parent (APRS_RX needs APRS_AFSK; APRS_IGATE needs APRS_RX and HOSTLINK)"

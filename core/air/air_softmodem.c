@@ -37,6 +37,10 @@
 #define TRACK_SHIFT_MAX	10
 #define HOLE_US		2000			// input time off by more: samples were lost
 #define GAIN_MAX	(1u << 20)		// 16 line units per summed count
+#define NEG_XOR		0xAAu			// packed-byte negation of every dibit level
+#define NO_PARTNER	0xFFu
+
+uint32_t air_softmodem_search_calls;
 // The gate (filtered, below): the steps of four levels or more between a pattern's neighboring symbols, as bits.
 // A fit with two of them missing (a step the wrong way, or none) is over Q_MAX whatever the rest does: the two cost
 // 10.7 levels squared at least, 256 x 10.7 / 24 symbols = 113. So a pattern is fitted only with one missing at most
@@ -139,6 +143,7 @@ void air_softmodem_rx_reset(air_softmodem_t *m)
 	m->sync_wait = 0;
 	m->gap = true;
 	m->n = 0;
+	air_softmodem_search_calls = 0;
 }
 
 bool air_softmodem_rx_open(air_softmodem_t *m, const air_profile_t *p, uint32_t rate_hz, uint16_t counts_per_khz,
@@ -195,6 +200,32 @@ bool air_softmodem_rx_open(air_softmodem_t *m, const air_profile_t *p, uint32_t 
 				m->gate_up[i] |= (uint16_t)(1u << j);
 			if (d >= 4 || d <= -4)
 				m->gate_mask[i] |= (uint16_t)(1u << j);
+		}
+	}
+	memset(m->neg_partner, NO_PARTNER, sizeof m->neg_partner);
+	for (uint8_t i = 0; i < p->nsyncs && i < AIR_SYNCS_MAX; i++) {
+		const air_sync_t *a = &p->sync[i];
+		uint8_t nb = a->nsyms / 4 + (a->nsyms % 4 ? 1 : 0);
+
+		if (m->neg_partner[i] != NO_PARTNER)
+			continue;
+		for (uint8_t j = (uint8_t)(i + 1); j < p->nsyncs && j < AIR_SYNCS_MAX; j++) {
+			const air_sync_t *b = &p->sync[j];
+			uint8_t ok = a->nsyms == b->nsyms;
+
+			if (!ok)
+				continue;
+			for (uint8_t k = 0; k < nb; k++) {
+				if ((a->syms[k] ^ NEG_XOR) != b->syms[k]) {
+					ok = 0;
+					break;
+				}
+			}
+			if (ok) {
+				m->neg_partner[i] = j;
+				m->neg_partner[j] = i;
+				break;
+			}
 		}
 	}
 	air_softmodem_rx_reset(m);
@@ -332,17 +363,47 @@ static void commit(air_softmodem_t *m, uint8_t back, uint16_t q_next)
 
 // Fit the symbol-spaced samples that end `back` samples before the line's newest to every pattern; returns the
 // least error (past Q_MAX too: the sides of a peak place its bottom), Q_NONE when no pattern's slope is there
+static bool fit_pattern(int32_t n, int32_t sxe, int32_t s1, int32_t det, int32_t num, int32_t sx, int32_t sxx,
+			int32_t lvl_min, uint16_t *best, int16_t *lvl, int16_t *off)
+{
+	int32_t a, b, r, a2;
+	uint32_t q;
+
+	if (det <= 0 || num * 256 < lvl_min * det)
+		return false;
+	a = (num * 256) / det;
+	b = (sx * 256 - a * s1) / n;
+	if (a > LVL_MAX || b > OFF_MAX || b < -OFF_MAX)
+		return false;
+	r = sxx - (a * sxe + b * sx) / 256;
+	if (r < 0)
+		r = 0;
+	a2 = ((a * a) >> 16) * n;
+	q = ((uint32_t)r << 8) / (uint32_t)a2;
+	if (q >= Q_NONE)
+		q = Q_NONE - 1;
+	if (q >= *best)
+		return false;
+	*best = (uint16_t)q;
+	*lvl = (int16_t)a;
+	*off = (int16_t)b;
+	return true;
+}
+
 static uint16_t search(const air_softmodem_t *m, unsigned back, uint8_t *which, int16_t *lvl, int16_t *off)
 {
 	int8_t x[AIR_SYNC_SYMS_MAX];
 	const air_profile_t *p = m->p;
 	int32_t lvl_min = m->gain_known ? LVL_MIN_KNOWN : LVL_MIN_TRACKED;
 	int32_t sx = 0, sxx = 0;
+	int32_t cache_sxe[AIR_SYNCS_MAX], cache_s1[AIR_SYNCS_MAX], cache_s2[AIR_SYNCS_MAX];
+	int32_t cache_det[AIR_SYNCS_MAX], cache_num[AIR_SYNCS_MAX];
+	uint8_t cache_len[AIR_SYNCS_MAX];
 	uint16_t best = Q_NONE;
 	unsigned summed = 0, squared = 0, valid = m->valid;
 	int at = (int)m->line_at - 1 - (int)back;
 
-	// x[k]: the sample k symbols back
+	air_softmodem_search_calls++;
 	if (at < 0)
 		at += LINE;
 	for (unsigned k = 0; k < AIR_SYNC_SYMS_MAX; k++) {
@@ -353,8 +414,7 @@ static uint16_t search(const air_softmodem_t *m, unsigned back, uint8_t *which, 
 	}
 	for (unsigned i = 0; valid >> i; i++) {
 		const air_sync_t *s = &p->sync[i];
-		int32_t n = s->nsyms, sxe = 0, s1 = 0, s2 = 0, det, num, a, b, r, a2;
-		uint32_t q;
+		int32_t n = s->nsyms, sxe = 0, s1 = 0, s2 = 0, det, num;
 
 		if (!(valid >> i & 1))
 			continue;
@@ -364,43 +424,54 @@ static uint16_t search(const air_softmodem_t *m, unsigned back, uint8_t *which, 
 				sx += x[k];
 			summed = s->nsyms;
 		}
-		for (int k = 0; k < n; k++) {
-			int e = air_sym_level(air_sym_get(s->syms, (uint16_t)k));
-
-			sxe += x[n - 1 - k] * e;
-			s1 += e;
-			s2 += e * e;
-		}
-		det = n * s2 - s1 * s1;
-		num = n * sxe - s1 * sx;
-		// Most samples stop here: no slope of the pattern's sign and size
-		if (num * 256 < lvl_min * det)
-			continue;
-		a = (num * 256) / det;				// level, line units x 256
-		b = (sx * 256 - a * s1) / n;			// offset, x 256
-		if (a > LVL_MAX || b > OFF_MAX || b < -OFF_MAX)
-			continue;
 		if (squared != s->nsyms) {
 			sxx = 0;
 			for (int k = 0; k < n; k++)
 				sxx += x[k] * x[k];
 			squared = s->nsyms;
 		}
-		r = sxx - (a * sxe + b * sx) / 256;		// what the line leaves: the sum of squared errors
-		if (r < 0)
-			r = 0;
-		a2 = ((a * a) >> 16) * n;
-		q = ((uint32_t)r << 8) / (uint32_t)a2;
-		if (q >= Q_NONE)
-			q = Q_NONE - 1;
-		if (q >= best)
-			continue;
-		best = (uint16_t)q;
-		*which = (uint8_t)i;
-		*lvl = (int16_t)a;
-		*off = (int16_t)b;
+		if (m->neg_partner[i] != NO_PARTNER && m->neg_partner[i] < i
+		    && cache_len[m->neg_partner[i]] == s->nsyms) {
+			uint8_t j = m->neg_partner[i];
+
+			sxe = -cache_sxe[j];
+			s1 = -cache_s1[j];
+			s2 = cache_s2[j];
+			det = cache_det[j];
+			num = -cache_num[j];
+		} else {
+			for (int k = 0; k < n; k++) {
+				int e = air_sym_level(air_sym_get(s->syms, (uint16_t)k));
+
+				sxe += x[n - 1 - k] * e;
+				s1 += e;
+				s2 += e * e;
+			}
+			det = n * s2 - s1 * s1;
+			num = n * sxe - s1 * sx;
+			cache_sxe[i] = sxe;
+			cache_s1[i] = s1;
+			cache_s2[i] = s2;
+			cache_det[i] = det;
+			cache_num[i] = num;
+			cache_len[i] = s->nsyms;
+		}
+		if (fit_pattern(n, sxe, s1, det, num, sx, sxx, lvl_min, &best, lvl, off))
+			*which = (uint8_t)i;
 	}
 	return best;
+}
+
+// Locked profiles with a fixed period: fit only near the next expected sync
+static bool search_window(const air_softmodem_t *m)
+{
+	uint16_t period = m->p->sync_period_syms;
+
+	if (!period || !m->locked || m->since_sync == 0xFFFF)
+		return true;
+	if (m->since_sync >= period)
+		return true;
+	return m->since_sync + 2 >= period;
 }
 
 // Can a pattern end at the newest sample: all its large steps there but one (steps: the sample's phase's bits)
@@ -434,9 +505,11 @@ static void filtered(air_softmodem_t *m, int32_t v, uint32_t t_us)
 		return;
 	}
 	m->due++;
+	if (m->p->sync_period_syms && m->locked && m->cand_q != Q_NONE && !search_window(m))
+		m->cand_q = Q_NONE;	// a peak started near the period must not coast through the frame middle
 	// The fit, where it can matter: on a peak being climbed, and where the gate lets a pattern through. A peak's
 	// near side is the sample before, fitted now if it was not then
-	if (!m->hold && (m->cand_q != Q_NONE || gate(m, steps))) {
+	if (!m->hold && (m->cand_q != Q_NONE || (search_window(m) && gate(m, steps)))) {
 		q = search(m, 0, &which, &lvl, &off);
 		if (!m->fitted && q <= Q_MAX) {
 			uint8_t w;

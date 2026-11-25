@@ -115,6 +115,8 @@ const air_mode_t nxdn_air_mode = {
 		.bw = RADIO_BW_12K5,		// the narrowest the radios have; the channel is 6.25 kHz
 		.sync_every_syms = 0,		// no 24-symbol pattern
 		.sync_any_syms = NXDN_FRAME_SYMS,	// an FSW opens every frame
+		.sync_period_syms = NXDN_FRAME_SYMS,
+		.id = AIR_PROFILE_NXDN48,
 		NXDN_SYNCS,
 	},
 	.frame_syms = NXDN_FRAME_SYMS,
@@ -137,6 +139,8 @@ const air_mode_t nxdn_air_mode_9600 = {
 		.bw = RADIO_BW_12K5,
 		.sync_every_syms = 0,
 		.sync_any_syms = NXDN_FRAME_SYMS,
+		.sync_period_syms = NXDN_FRAME_SYMS,
+		.id = AIR_PROFILE_NXDN96,
 		NXDN_SYNCS,
 	},
 	.frame_syms = NXDN_FRAME_SYMS,

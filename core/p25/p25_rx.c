@@ -133,6 +133,7 @@ const air_mode_t p25_air_mode = {
 		.timing = AIR_TIMING_CONTINUOUS,
 		.bw = RADIO_BW_12K5,
 		.sync_every_syms = P25_LDU_SYMS,	// the longest unit: a frame sync opens every one
+		.id = AIR_PROFILE_P25,
 		.idle = 0x5F,			// +3 +3 -3 -3: the deviation test pattern (9.4.1), nothing a receiver frames
 		.nsyncs = 1,
 		.sync = { {

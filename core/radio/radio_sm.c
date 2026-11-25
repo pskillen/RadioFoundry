@@ -36,8 +36,11 @@
 #include "radio/sigtone.h"
 #include "radio/vibe.h"	// vibe_t (vibe_play only with CONFIG_VIBRATE)
 #include "radio/tx_limit.h"	// the test TX limit (radio-features.md 3.1)
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_AIR
 #include "air/air_session.h"	// air_tx_state_t
+#endif
+#if CONFIG_M17
+#include "radio/radio_m17.h"
 #endif
 #if CONFIG_P25
 #include "radio/radio_p25.h"	// P25 conventional (docs/spec/p25.md 7)
@@ -125,10 +128,21 @@ static inline bool nxdn_ok(void)
 #endif
 }
 
-// An air-framed mode this build runs (P25, NXDN): the radio core runs it with the board in its digital mode
+// M17 on this board: built, and the air interface receives or transmits it
+static inline bool m17_ok(void)
+{
+#if CONFIG_M17
+	return radio_m17_fits();
+#else
+	return false;
+#endif
+}
+
+// An air-framed mode this build runs (P25, NXDN, M17): the radio core runs it with the board in its digital mode
 static inline bool air_mode(uint8_t mode)
 {
-	return (CONFIG_P25 && mode == RADIO_MODE_P25) || (CONFIG_NXDN && mode == RADIO_MODE_NXDN);
+	return (CONFIG_P25 && mode == RADIO_MODE_P25) || (CONFIG_NXDN && mode == RADIO_MODE_NXDN) ||
+	       (CONFIG_M17 && mode == RADIO_MODE_M17);
 }
 // What a scan stop hears of an air mode's call (air_heard)
 enum { AIR_HEARD_NONE, AIR_HEARD_PENDING, AIR_HEARD_PLAYED, AIR_HEARD_OTHER };
@@ -647,7 +661,8 @@ static bool parked(const channel_t *ch)
 	}
 	if (ch->kind == CODEPLUG_KIND_DMR_AES)
 		return ch->mode != RADIO_MODE_DMR;
-	return ch->kind != CODEPLUG_KIND_DMR_TRUNK && ch->mode != RADIO_MODE_P25 && ch->mode != RADIO_MODE_NXDN;
+	return ch->kind != CODEPLUG_KIND_DMR_TRUNK && ch->mode != RADIO_MODE_P25 &&
+	       ch->mode != RADIO_MODE_NXDN && ch->mode != RADIO_MODE_M17;
 }
 
 // Channel number from the codeplug as the radio runs it: the mode module of its kind takes it
@@ -661,6 +676,9 @@ static bool channel_read(uint16_t number, channel_t *ch)
 #endif
 #if CONFIG_NXDN
 	radio_nxdn_take(ch);
+#endif
+#if CONFIG_M17
+	radio_m17_take(ch);
 #endif
 	return true;
 }
@@ -1512,7 +1530,8 @@ static uint8_t tx_check(const radio_sm_t *sm)
 		return TXDENY_RX_ONLY;
 	}
 	if (ch->mode == RADIO_MODE_DMR ? !CONFIG_DMR : ch->mode == RADIO_MODE_P25 ? !CONFIG_P25 :
-	    ch->mode == RADIO_MODE_NXDN ? !CONFIG_NXDN : !CONFIG_FM) {
+	    ch->mode == RADIO_MODE_NXDN ? !CONFIG_NXDN : ch->mode == RADIO_MODE_M17 ? !CONFIG_M17 :
+	    !CONFIG_FM) {
 		return TXDENY_MODE;
 	}
 	if (!trunk && !board_in_band(ch->tx_hz, true)) {
@@ -6501,75 +6520,106 @@ static uint16_t air_number(const radio_sm_t *sm)
 #endif
 
 #if CONFIG_AIR
-// --- Air-framed modes (P25, NXDN): their modules (radio_p25.c, radio_nxdn.c) run the engine and the voice; here, when
-// it runs and the transmitter, the same for each (radio_air.h). One runs at a time ---
+// --- Air-framed modes (P25, NXDN, M17): each module runs its engine; here, when it runs and the transmitter, the
+// same for each (radio_air.h). One runs at a time. The row whose engine is running wins; otherwise the channel's ---
 
-#if CONFIG_NXDN
-// NXDN is the mode whose engine runs, or the channel's when none runs
-static bool nxdn_now(const radio_sm_t *sm)
-{
+static const struct {
+	uint8_t mode;
+	bool (*running)(void);
+	const radio_air_ops_t *ops;
+} air_modes[] = {
 #if CONFIG_P25
-	if (radio_p25_running()) {
-		return false;
+	{ RADIO_MODE_P25, radio_p25_running, &radio_p25_air },
+#endif
+#if CONFIG_NXDN
+	{ RADIO_MODE_NXDN, radio_nxdn_running, &radio_nxdn_air },
+#endif
+#if CONFIG_M17
+	{ RADIO_MODE_M17, radio_m17_running, &radio_m17_air },
+#endif
+};
+
+// The air mode in force: a running engine, else the channel's row. 0 when this build has no row for it
+static uint8_t air_which(const radio_sm_t *sm)
+{
+	uint8_t ch = 0;
+
+	for (unsigned i = 0; i < sizeof air_modes / sizeof air_modes[0]; i++) {
+		if (air_modes[i].running()) {
+			return air_modes[i].mode;
+		}
+		if (air_modes[i].mode == sm->view.ch.mode) {
+			ch = air_modes[i].mode;
+		}
 	}
-#endif
-	return radio_nxdn_running() || sm->view.ch.mode == RADIO_MODE_NXDN;
+	return ch;
 }
-#endif
 
 static const radio_air_ops_t *air_ops(const radio_sm_t *sm)
 {
-#if CONFIG_NXDN && CONFIG_P25
-	return nxdn_now(sm) ? &radio_nxdn_air : &radio_p25_air;
-#elif CONFIG_NXDN
-	(void)sm;
-	return &radio_nxdn_air;
-#else
-	(void)sm;
-	return &radio_p25_air;
-#endif
+	const radio_air_ops_t *ch = air_modes[0].ops;
+
+	for (unsigned i = 0; i < sizeof air_modes / sizeof air_modes[0]; i++) {
+		if (air_modes[i].running()) {
+			return air_modes[i].ops;
+		}
+		if (air_modes[i].mode == sm->view.ch.mode) {
+			ch = air_modes[i].ops;
+		}
+	}
+	return ch;
 }
 
 static bool air_running(void)
 {
-	bool on = false;
-#if CONFIG_P25
-	on = radio_p25_running();
-#endif
-#if CONFIG_NXDN
-	on = on || radio_nxdn_running();
-#endif
-	return on;
+	for (unsigned i = 0; i < sizeof air_modes / sizeof air_modes[0]; i++) {
+		if (air_modes[i].running()) {
+			return true;
+		}
+	}
+	return false;
 }
 
 // The engine's view into the radio view. True when it changed
 static bool air_poll(radio_sm_t *sm)
 {
-#if CONFIG_NXDN
-	if (nxdn_now(sm)) {
-		return radio_nxdn_poll(&sm->view.nxdn);
-	}
-#endif
+	switch (air_which(sm)) {
 #if CONFIG_P25
-	return radio_p25_poll(&sm->view.p25);
-#else
-	return false;
+	case RADIO_MODE_P25:
+		return radio_p25_poll(&sm->view.p25);
 #endif
+#if CONFIG_NXDN
+	case RADIO_MODE_NXDN:
+		return radio_nxdn_poll(&sm->view.nxdn);
+#endif
+#if CONFIG_M17
+	case RADIO_MODE_M17:
+		return radio_m17_poll(&sm->view.m17);
+#endif
+	default:
+		return false;
+	}
 }
 
-// A call on the channel (our NAC or RAN): it shows as a reception, whether or not it plays
+// A call on the channel: it shows as a reception, whether or not it plays
 static bool air_rx(const radio_sm_t *sm)
 {
-#if CONFIG_NXDN
-	if (nxdn_now(sm)) {
-		return (sm->view.nxdn.flags & RADIO_NXDN_RX) != 0;
-	}
-#endif
+	switch (air_which(sm)) {
 #if CONFIG_P25
-	return (sm->view.p25.flags & RADIO_P25_RX) != 0;
-#else
-	return false;
+	case RADIO_MODE_P25:
+		return (sm->view.p25.flags & RADIO_P25_RX) != 0;
 #endif
+#if CONFIG_NXDN
+	case RADIO_MODE_NXDN:
+		return (sm->view.nxdn.flags & RADIO_NXDN_RX) != 0;
+#endif
+#if CONFIG_M17
+	case RADIO_MODE_M17:
+		return (sm->view.m17.flags & RADIO_M17_RX) != 0;
+#endif
+	default:
+		return false;
+	}
 }
 
 #if CONFIG_SCAN
@@ -6578,22 +6628,35 @@ static bool air_rx(const radio_sm_t *sm)
 static uint8_t air_heard(const radio_sm_t *sm)
 {
 	bool rx = false, played = false, pending = false;
+
+	switch (air_which(sm)) {
 #if CONFIG_NXDN
-	if (nxdn_now(sm)) {
+	case RADIO_MODE_NXDN: {
 		const radio_nxdn_view_t *v = &sm->view.nxdn;
 		rx = (v->flags & RADIO_NXDN_RX) != 0;
 		played = (v->flags & RADIO_NXDN_PLAYED) != 0;
 		pending = (v->flags & RADIO_NXDN_ENC) == 0 && v->src == 0;	// no VCALL yet: nothing decided
-	} else
+		break;
+	}
 #endif
-	{
 #if CONFIG_P25
+	case RADIO_MODE_P25: {
 		const radio_p25_view_t *v = &sm->view.p25;
 		rx = (v->flags & RADIO_P25_RX) != 0;
 		played = (v->flags & RADIO_P25_PLAYED) != 0;
 		// Only a late entry waits (the header gives the talk group): its link control isn't in while src is 0
 		pending = (v->flags & (RADIO_P25_ENC | RADIO_P25_LATE)) == RADIO_P25_LATE && v->src == 0;
+		break;
+	}
 #endif
+#if CONFIG_M17
+	case RADIO_MODE_M17:
+		// No voice yet: a call is not played, and scan does not wait on a talk group
+		rx = (sm->view.m17.flags & RADIO_M17_RX) != 0;
+		break;
+#endif
+	default:
+		break;
 	}
 	return !rx ? AIR_HEARD_NONE : played ? AIR_HEARD_PLAYED : pending ? AIR_HEARD_PENDING : AIR_HEARD_OTHER;
 }
@@ -6602,17 +6665,28 @@ static uint8_t air_heard(const radio_sm_t *sm)
 // On an air mode's channel, the board in its digital mode and tuned: the engine starts (dmr_end stopped any before)
 static void air_begin(radio_sm_t *sm)
 {
+	switch (sm->view.ch.mode) {
 #if CONFIG_NXDN
-	if (sm->view.ch.mode == RADIO_MODE_NXDN) {
+	case RADIO_MODE_NXDN:
 		radio_nxdn_begin(&sm->view.ch, air_number(sm));
 		radio_nxdn_poll(&sm->view.nxdn);
-		return;
-	}
+		break;
+#endif
+#if CONFIG_M17
+	case RADIO_MODE_M17:
+		radio_m17_begin(&sm->view.ch, air_number(sm));
+		radio_m17_poll(&sm->view.m17);
+		break;
 #endif
 #if CONFIG_P25
-	radio_p25_begin(&sm->view.ch, air_number(sm), p25_own_id(sm));
-	radio_p25_poll(&sm->view.p25);
+	case RADIO_MODE_P25:
+		radio_p25_begin(&sm->view.ch, air_number(sm), p25_own_id(sm));
+		radio_p25_poll(&sm->view.p25);
+		break;
 #endif
+	default:
+		break;
+	}
 }
 
 // The air modes stop (leaving them, or something else takes the modem): the engine closes, which cuts a
@@ -6624,6 +6698,9 @@ static void air_stop(radio_sm_t *sm)
 #endif
 #if CONFIG_NXDN
 	radio_nxdn_end();
+#endif
+#if CONFIG_M17
+	radio_m17_end();
 #endif
 	if (sm->air_keyed) {
 		sm->air_keyed = false;
@@ -6641,6 +6718,10 @@ static void air_stop(radio_sm_t *sm)
 #if CONFIG_NXDN
 	sm->view.nxdn.flags &= (uint8_t)~(RADIO_NXDN_ON | RADIO_NXDN_RX | RADIO_NXDN_PLAYED);
 	sm->view.nxdn.tx = AIR_TX_IDLE;
+#endif
+#if CONFIG_M17
+	sm->view.m17.flags &= (uint8_t)~(RADIO_M17_ON | RADIO_M17_RX | RADIO_M17_LATE);
+	sm->view.m17.tx = AIR_TX_IDLE;
 #endif
 }
 
@@ -6691,15 +6772,25 @@ static void air_key(radio_sm_t *sm, uint32_t now_ms, uint32_t hz)
 // The settings sent while it transmitted (RREQ_P25_SET, RREQ_NXDN_SET): the engine takes them now
 static void air_apply(radio_sm_t *sm)
 {
+	switch (air_which(sm)) {
 #if CONFIG_NXDN
-	if (nxdn_now(sm)) {
+	case RADIO_MODE_NXDN:
 		radio_nxdn_apply(&sm->view.ch, air_number(sm));
-		return;
-	}
+		break;
+#endif
+#if CONFIG_M17
+	case RADIO_MODE_M17:
+		radio_m17_apply(&sm->view.ch, air_number(sm));
+		break;
 #endif
 #if CONFIG_P25
-	radio_p25_apply(&sm->view.ch, air_number(sm), p25_own_id(sm));
+	case RADIO_MODE_P25:
+		radio_p25_apply(&sm->view.ch, air_number(sm), p25_own_id(sm));
+		break;
 #endif
+	default:
+		break;
+	}
 }
 #endif
 
@@ -7685,7 +7776,8 @@ static void restore_vfo(radio_sm_t *sm, const settings_t *st, uint8_t idx)
 	sm->vfo_ch.mode = v.mode == RADIO_MODE_DMR && CONFIG_VFO_DMR ? RADIO_MODE_DMR :
 		v.mode == RADIO_MODE_FM && CONFIG_VFO_FM ? RADIO_MODE_FM :
 		v.mode == RADIO_MODE_P25 && p25_ok() ? RADIO_MODE_P25 :
-		v.mode == RADIO_MODE_NXDN && nxdn_ok() ? RADIO_MODE_NXDN : VFO_MODE_DEFAULT;
+		v.mode == RADIO_MODE_NXDN && nxdn_ok() ? RADIO_MODE_NXDN :
+		v.mode == RADIO_MODE_M17 && m17_ok() ? RADIO_MODE_M17 : VFO_MODE_DEFAULT;
 	if (sm->vfo_ch.mode != v.mode) {
 		sm->view.vfo_drop = (uint8_t)(v.mode + 1u);	// the debug link's vfo_drop: why the VFO came back changed
 	}
@@ -8340,6 +8432,9 @@ void radio_sm_init(radio_sm_t *sm, uint32_t now_ms)
 #if CONFIG_NXDN
 	radio_nxdn_init();
 #endif
+#if CONFIG_M17
+	radio_m17_init();
+#endif
 #if CONFIG_P25
 	radio_p25_init(pcm_audio());
 #if CONFIG_IMBE && CONFIG_BEEP
@@ -8865,6 +8960,8 @@ static bool mode_allowed(const radio_sm_t *sm, int32_t mode)
 		return p25_ok() && !radio_listen_band(sm->view.ch.rx_hz);
 	case RADIO_MODE_NXDN:
 		return nxdn_ok() && !radio_listen_band(sm->view.ch.rx_hz);
+	case RADIO_MODE_M17:
+		return m17_ok() && !radio_listen_band(sm->view.ch.rx_hz);
 	default:
 		return false;
 	}
@@ -9034,6 +9131,45 @@ static void nxdn_set_request(radio_sm_t *sm)
 		air_begin(sm);		// not running at the old rate: perhaps at the new one
 	}
 	radio_nxdn_poll(&sm->view.nxdn);	// the settings in the view now, running or not
+	changed(sm);
+}
+#endif
+
+#if CONFIG_M17
+// The settings, taken now when the engine is idle. No rate to restart on
+static void m17_set_request(radio_sm_t *sm)
+{
+	if (radio_m17_running())
+		radio_m17_apply(&sm->view.ch, air_number(sm));
+	radio_m17_poll(&sm->view.m17);
+	changed(sm);
+}
+
+// BERT: count, or key a BERT transmission on an M17 channel that is already running, or stop
+static void m17_bert_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms)
+{
+	uint8_t cmd = (uint8_t)req->arg;
+
+	if (cmd == 3) {
+		if (sm->ptt && sm->view.ch.mode == RADIO_MODE_M17)
+			ptt_release(sm, false, now_ms);
+		radio_m17_bert(3);
+		radio_m17_poll(&sm->view.m17);
+		changed(sm);
+		return;
+	}
+	if (sm->view.ch.mode != RADIO_MODE_M17 || !radio_m17_running())
+		return;
+	radio_m17_bert(cmd);
+	if (cmd == 2) {
+		ptt_down(sm, now_ms);
+		if (sm->view.state != RS_TX) {
+			radio_m17_bert(3);	// a refusal must not leave the next voice PTT as BERT
+			if (sm->ptt)
+				ptt_release(sm, false, now_ms);
+		}
+	}
+	radio_m17_poll(&sm->view.m17);
 	changed(sm);
 }
 #endif
@@ -9208,6 +9344,10 @@ void radio_sm_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms)
 #endif
 #if CONFIG_NXDN
 	case RREQ_NXDN_SET: nxdn_set_request(sm); break;
+#endif
+#if CONFIG_M17
+	case RREQ_M17_SET: m17_set_request(sm); break;
+	case RREQ_M17_BERT: m17_bert_request(sm, req, now_ms); break;
 #endif
 #if CONFIG_AIR_RAW
 	case RREQ_AIR_BENCH:

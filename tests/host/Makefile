@@ -137,6 +137,27 @@ run-nxdn-scramble: nxdnScrambleTest
 .PHONY: run-nxdn-scramble
 nxdnTest: nxdnTest.c $(NXDN) $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_framer.c $(FEC) $(CORE)/dmr/ambe/ambeFec.c
 	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -o $@ nxdnTest.c $(NXDN) $(CORE)/air/air_framer.c $(FEC) $(CORE)/dmr/ambe/ambeFec.c
+
+# M17 frame codec (core/m17): CRC, addresses, puncturing, interleaving, and frame round trips
+M17FEC  := $(CORE)/m17/m17_frame.c $(CORE)/fec/conv.c $(CORE)/fec/golay.c
+TESTS   += m17FrameTest
+m17FrameTest: m17FrameTest.c $(M17FEC) $(wildcard $(CORE)/m17/*.h) $(CORE)/fec/conv.h $(CORE)/fec/golay.h
+	$(CC) $(CFLAGS) -Wshadow -o $@ m17FrameTest.c $(M17FEC)
+
+# M17 engine: sync confirmation, a call rebuilt from the LICH, and a transmission (core/m17)
+M17ENG  := $(M17FEC) $(CORE)/m17/m17_air.c $(CORE)/m17/m17_rx.c $(CORE)/m17/m17_engine.c \
+	$(CORE)/m17/m17_bert.c $(CORE)/m17/m17_packet.c $(CORE)/air/air_framer.c
+TESTS   += m17EngineTest
+m17EngineTest: m17EngineTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_framer.h
+	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17EngineTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
+
+# The radio module's lend, without the state machine: a fake vocoder block and a fake P25 block
+TESTS   += m17RadioTest
+m17RadioTest: m17RadioTest.c $(M17ENG) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(CORE)/air/air_session.c \
+              $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/radio/radio_m17.h) $(CORE)/air/air_session.h
+	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DCONFIG_P25=1 -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
+		-I$(ROOT)/hal -Wshadow -o $@ m17RadioTest.c $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c \
+		$(M17ENG) $(CORE)/air/air_session.c -lm
 nxdnEngineTest: nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC)
 	$(CC) $(CFLAGS) -DCONFIG_NXDN_SCRAMBLER=1 -I$(ROOT)/hal -Wshadow -o $@ nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC) -lm
 
@@ -259,6 +280,9 @@ run: $(TESTS)
 	./airSoftmodemTest | tail -1
 	./p25EngineTest
 	./nxdnTest | tail -1
+	./m17FrameTest
+	./m17EngineTest
+	./m17RadioTest
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest
 	./p25VoiceTest
@@ -367,6 +391,14 @@ radioCoreTestP25Nxdn: $(RCP25NX) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE
                       $(wildcard $(CORE)/dmr/ambe/*.h)
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
 		-DCONFIG_P25=1 -DCONFIG_NXDN=1 -DCONFIG_NXDN_SCRAMBLER=1 -DCONFIG_AIR_RAW=1 -o $@ $(RCP25NX) -lm
+
+# M17 only (no P25, no NXDN): the air-mode table has one row, and PTT does not ask for the DMR vocoder
+TESTS   += radioCoreTestM17
+RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c
+radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/call/*.h) $(CORE)/dmr/dmrDataService.h \
+                  $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
+	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
+		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ $(RCM17) -lm
 
 # The same with APRS: what the data service hears goes into the station list (a DMR APRS position, docs/spec/aprs.md 8.2)
 TESTS   += radioCoreTestAprs
@@ -494,7 +526,7 @@ boardBandTest: boardBandTest.c $(ROOT)/hal/board.h
 	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -o $@ boardBandTest.c
 
 run: run-core
-run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
+run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
           rx2LinkTest keyassignTest powerSwitchTest powerKeyTest boardBandTest batteryTest
 	./aprsRadioTest
 	./radioCoreTest
@@ -502,6 +534,7 @@ run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T
 	./radioCoreTestP25
 	./radioCoreTestNxdn
 	./radioCoreTestP25Nxdn
+	./radioCoreTestM17
 	./radioCoreTestP25T
 	./radioCoreTestAprs
 	./radioCoreTestAprsDmr
