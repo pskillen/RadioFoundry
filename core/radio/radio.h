@@ -41,6 +41,7 @@ typedef struct {
 #endif
 #include "radio/radio_p25.h"
 #include "radio/radio_nxdn.h"
+#include "radio/radio_m17.h"
 
 typedef enum {
 	RS_IDLE,	// receiving, squelch closed
@@ -524,6 +525,9 @@ typedef struct {
 #endif
 #if CONFIG_NXDN
 	radio_nxdn_view_t nxdn;	// NXDN conventional (docs/spec/nxdn.md 6): the same
+#endif
+#if CONFIG_M17
+	radio_m17_view_t m17;	// M17 conventional (docs/spec/m17.md 10): the same
 #endif
 #if CONFIG_DMR_TRUNK
 	radio_t3_brief_t t3;

@@ -150,6 +150,14 @@ M17ENG  := $(M17FEC) $(CORE)/m17/m17_air.c $(CORE)/m17/m17_rx.c $(CORE)/m17/m17_
 TESTS   += m17EngineTest
 m17EngineTest: m17EngineTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_framer.h
 	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17EngineTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
+
+# The radio module's lend, without the state machine: a fake vocoder block and a fake P25 block
+TESTS   += m17RadioTest
+m17RadioTest: m17RadioTest.c $(M17ENG) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(CORE)/air/air_session.c \
+              $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/radio/radio_m17.h) $(CORE)/air/air_session.h
+	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DCONFIG_P25=1 -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
+		-I$(ROOT)/hal -Wshadow -o $@ m17RadioTest.c $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c \
+		$(M17ENG) $(CORE)/air/air_session.c -lm
 nxdnEngineTest: nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC)
 	$(CC) $(CFLAGS) -DCONFIG_NXDN_SCRAMBLER=1 -I$(ROOT)/hal -Wshadow -o $@ nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC) -lm
 
@@ -274,6 +282,7 @@ run: $(TESTS)
 	./nxdnTest | tail -1
 	./m17FrameTest
 	./m17EngineTest
+	./m17RadioTest
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest
 	./p25VoiceTest
