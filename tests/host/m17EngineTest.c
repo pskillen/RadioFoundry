@@ -44,6 +44,53 @@ static void on_end(void *ctx)
 	ends++;
 }
 
+static m17_engine_hooks_t end_hooks;
+
+static int hk_start, hk_voice, hk_lost, hk_end, hk_npkt;
+static uint8_t hk_pl[4][16];
+static uint16_t hk_fn[4];
+static uint8_t hk_pkt[64];
+static uint16_t hk_pkt_len;
+static m17_engine_hooks_t hk;
+
+static void hk_on_start(const struct m17_rx *r, void *ctx)
+{
+	(void)r;
+	(void)ctx;
+	hk_start++;
+}
+
+static void hk_on_voice(const uint8_t voice[16], uint16_t frame_num, void *ctx)
+{
+	(void)ctx;
+	if (hk_voice < 4) {
+		memcpy(hk_pl[hk_voice], voice, 16);
+		hk_fn[hk_voice] = frame_num;
+	}
+	hk_voice++;
+}
+
+static void hk_on_lost(void *ctx)
+{
+	(void)ctx;
+	hk_lost++;
+}
+
+static void hk_on_end(void *ctx)
+{
+	(void)ctx;
+	hk_end++;
+}
+
+static void hk_on_packet(const uint8_t *data, uint16_t len, void *ctx)
+{
+	(void)ctx;
+	hk_npkt++;
+	hk_pkt_len = len;
+	if (len && len <= sizeof hk_pkt)
+		memcpy(hk_pkt, data, len);
+}
+
 static const air_sync_t *sync_of(uint8_t id)
 {
 	for (uint8_t i = 0; i < m17_air_mode.profile.nsyncs; i++)
@@ -84,7 +131,9 @@ static void emit_eot(void)
 
 static void begin(void)
 {
-	m17_rx_init(&rx, on_end, NULL);
+	memset(&end_hooks, 0, sizeof end_hooks);
+	end_hooks.rx_end = on_end;
+	m17_rx_init(&rx, &end_hooks, NULL);
 	// Soft values, as the discriminator tap does. A hard slice takes the BERT preamble word for an LSF
 	// preamble (they are two symbols apart); the level fit does not.
 	air_framer_init(&fr, &m17_air_mode, &rx, fbuf, fsoft, M17_FRAME_SYMS);
@@ -230,13 +279,37 @@ static void test_stream_lich_three_bits(void)
 	      fr.stats.frames, fr.stats.rejects, rejects);
 }
 
-static void emit_stream(const uint8_t lsf[M17_LSF_BYTES], uint8_t counter, uint16_t fn)
+static void emit_stream_pl(const uint8_t lsf[M17_LSF_BYTES], uint8_t counter, uint16_t fn, const uint8_t pl[16])
 {
-	uint8_t pl[16], pay[M17_PAYLOAD_BYTES];
+	uint8_t pay[M17_PAYLOAD_BYTES];
 
-	memset(pl, 0x5A, sizeof pl);
 	m17_stream_encode(lsf, counter, fn, pl, pay);
 	emit_frame(M17_SYNC_ID_STREAM, pay);
+}
+
+static void emit_stream(const uint8_t lsf[M17_LSF_BYTES], uint8_t counter, uint16_t fn)
+{
+	uint8_t pl[16];
+
+	memset(pl, 0x5A, sizeof pl);
+	emit_stream_pl(lsf, counter, fn, pl);
+}
+
+static void begin_hooks(void)
+{
+	hk_start = hk_voice = hk_lost = hk_end = hk_npkt = 0;
+	hk_pkt_len = 0;
+	memset(&hk, 0, sizeof hk);
+	hk.rx_start = hk_on_start;
+	hk.rx_voice = hk_on_voice;
+	hk.rx_lost = hk_on_lost;
+	hk.rx_end = hk_on_end;
+	hk.rx_packet = hk_on_packet;
+	m17_rx_init(&rx, &hk, NULL);
+	air_framer_init(&fr, &m17_air_mode, &rx, fbuf, fsoft, M17_FRAME_SYMS);
+	sn = 0;
+	t_us = 1000000;
+	ends = 0;
 }
 
 static void test_late_entry(void)
@@ -639,6 +712,85 @@ static void test_bert_prbs_recurrence(void)
 	}
 }
 
+static void test_rx_hooks_call(void)
+{
+	uint8_t lsf[M17_LSF_BYTES], pay[M17_PAYLOAD_BYTES], pl[16];
+	uint16_t fns[3] = { 0, 1, 0x8002 };
+
+	begin_hooks();
+	make_lsf(lsf, "AB1CD", 0);
+	m17_lsf_encode(lsf, pay);
+	emit_frame(M17_SYNC_ID_LSF, pay);
+	for (int i = 0; i < 3; i++) {
+		memset(pl, (uint8_t)(0xA0 + i), sizeof pl);
+		emit_stream_pl(lsf, (uint8_t)i, fns[i], pl);
+	}
+	emit_eot();
+	feed();
+	CHECK(hk_start == 1, "rx_start %d", hk_start);
+	CHECK(hk_voice == 3, "rx_voice %d", hk_voice);
+	CHECK(hk_lost == 0, "rx_lost %d", hk_lost);
+	CHECK(hk_end == 1, "rx_end %d", hk_end);
+	for (int i = 0; i < hk_voice && i < 3; i++) {
+		memset(pl, (uint8_t)(0xA0 + i), sizeof pl);
+		CHECK(hk_fn[i] == fns[i], "frame %d number %04X", i, hk_fn[i]);
+		CHECK(memcmp(hk_pl[i], pl, 16) == 0, "frame %d bytes", i);
+	}
+}
+
+static void emit_packed(const uint8_t *buf, uint16_t nbytes)
+{
+	for (uint16_t i = 0; i < (uint16_t)(nbytes * 4); i++)
+		sym[sn++] = air_sym_get(buf, i);
+}
+
+static void test_rx_packet_two_frames(void)
+{
+	m17_engine_t e;
+	uint8_t data[40], buf[8 * 48], expect[41];
+	uint16_t n;
+
+	for (int i = 0; i < 40; i++)
+		data[i] = (uint8_t)(i + 1);
+	expect[0] = 0x05;
+	memcpy(expect + 1, data, 40);
+	engine_of(&e, M17_TX_PACKET, NULL);
+	CHECK(m17_engine_tx_start(&e, 0x05, data, 40), "two frames start");
+	n = pull(&e, buf, sizeof buf);
+	CHECK(n == 5 * 48, "two-frame air %u", n);
+
+	begin_hooks();
+	emit_packed(buf, n);
+	feed();
+	CHECK(hk_npkt == 1, "rx_packet %d", hk_npkt);
+	CHECK(hk_pkt_len == 41, "len %u", hk_pkt_len);
+	CHECK(memcmp(hk_pkt, expect, 41) == 0, "two-frame bytes");
+}
+
+static m17_prbs9_t bert_g;
+
+static void emit_bert(bool pre)
+{
+	uint8_t bits[(M17_BERT_BITS + 7) / 8];
+	uint8_t pay[M17_PAYLOAD_BYTES];
+
+	memset(bits, 0, sizeof bits);
+	m17_prbs9_bits(&bert_g, bits, M17_BERT_BITS);
+	m17_bert_encode_bits(bits, pay);
+	emit_frame(pre ? M17_SYNC_ID_BERT_PRE : M17_SYNC_ID_BERT, pay);
+}
+
+static void test_rx_bert_count(void)
+{
+	begin_hooks();
+	m17_prbs9_init(&bert_g);
+	emit_bert(true);
+	emit_bert(false);
+	emit_bert(false);
+	feed();
+	CHECK(rx.bert.bits == 591 && rx.bert.errors == 0, "clean bits %u errors %u", rx.bert.bits, rx.bert.errors);
+}
+
 // ── The soft modem's tap, copied from airSoftmodemTest.c. Sizes fit one call; the noise run never builds a wave. ──
 #define TAP_FS		240000
 #define TAP_SPAN	8
@@ -750,31 +902,33 @@ static uint8_t call_src[M17_ADDR_BYTES];
 static uint8_t call_type[2];
 static int call_crc;
 static uint16_t call_fn[4];
+static uint8_t call_pl[4][16];
 static int call_nfn;
+static int call_ends;
 
-static void on_modem_frame(const air_frame_t *f, void *ctx)
+static void on_call_start(const struct m17_rx *r, void *ctx)
 {
-	m17_rx_t *r = ctx;
-	m17_fec_work_t w;
-	uint8_t pay[M17_PAYLOAD_BYTES];
-	uint8_t lich, chunk[5], pl[16];
-	uint16_t fn = 0;
-	int lich_errs;
+	(void)ctx;
+	if (!r->crc_ok)
+		return;
+	memcpy(call_src, r->lsf + M17_ADDR_BYTES, M17_ADDR_BYTES);
+	memcpy(call_type, r->lsf + 12, 2);
+	call_crc = 1;
+}
 
-	if (f->nsyms < M17_FRAME_SYMS || (f->flags & AIR_FRAME_NO_SYNC))
+static void on_call_voice(const uint8_t voice[16], uint16_t frame_num, void *ctx)
+{
+	(void)ctx;
+	if (call_nfn >= 4)
 		return;
-	if (f->sync_id == M17_SYNC_ID_LSF && r->crc_ok) {
-		memcpy(call_src, r->lsf + M17_ADDR_BYTES, M17_ADDR_BYTES);
-		memcpy(call_type, r->lsf + 12, 2);
-		call_crc = 1;
-	}
-	if (f->sync_id != M17_SYNC_ID_STREAM || call_nfn >= 4)
-		return;
-	memset(pay, 0, sizeof pay);
-	for (uint16_t i = 0; i < M17_PAYLOAD_BITS / 2; i++)
-		air_sym_put(pay, i, air_sym_get(f->hard, (uint16_t)(M17_SYNC_SYMS + i)));
-	if (m17_stream_decode(pay, &w, &lich, chunk, &fn, pl, &lich_errs) >= 0)
-		call_fn[call_nfn++] = fn;
+	memcpy(call_pl[call_nfn], voice, 16);
+	call_fn[call_nfn++] = frame_num;
+}
+
+static void on_call_end(void *ctx)
+{
+	(void)ctx;
+	call_ends++;
 }
 
 static void on_modem_chunk(const air_chunk_t *c, void *ctx)
@@ -807,20 +961,24 @@ static void send_call(uint8_t rolloff)
 
 static void take_call(double clock_ppm)
 {
-	air_mode_t mode = m17_air_mode;
 	air_softmodem_t m;
 	air_framer_t framer;
 	m17_rx_t r;
+	m17_engine_hooks_t hooks;
 	uint8_t hard[M17_FRAME_SYMS];
 	int8_t soft[M17_FRAME_SYMS];
 
 	call_crc = 0;
 	call_nfn = 0;
+	call_ends = 0;
 	memset(call_src, 0, sizeof call_src);
 	memset(call_type, 0, sizeof call_type);
-	mode.rx_frame = on_modem_frame;
-	m17_rx_init(&r, NULL, NULL);
-	air_framer_init(&framer, &mode, &r, hard, soft, M17_FRAME_SYMS);
+	memset(&hooks, 0, sizeof hooks);
+	hooks.rx_start = on_call_start;
+	hooks.rx_voice = on_call_voice;
+	hooks.rx_end = on_call_end;
+	m17_rx_init(&r, &hooks, NULL);
+	air_framer_init(&framer, &m17_air_mode, &r, hard, soft, M17_FRAME_SYMS);
 	tap_sample(8000, 5, 3600, 2000, 0, 0, clock_ppm);
 	air_softmodem_rx_open(&m, &m17_air_mode.profile, 8000, 2000, on_modem_chunk, &framer);
 	for (uint32_t at = 0; at < tap_sn;) {
@@ -834,6 +992,7 @@ static void take_call(double clock_ppm)
 static void expect_call(const char *what)
 {
 	uint8_t src[M17_ADDR_BYTES];
+	uint8_t pl[16];
 	uint64_t a = M17_ADDR_AB1CD;
 	uint16_t want[3] = { 0, 1, 0x8002 };
 
@@ -844,8 +1003,13 @@ static void expect_call(const char *what)
 	CHECK(call_crc && memcmp(call_src, src, M17_ADDR_BYTES) == 0, "%s: source", what);
 	CHECK(call_type[0] == 0 && call_type[1] == 0, "%s: TYPE %02X %02X", what, call_type[0], call_type[1]);
 	CHECK(call_nfn == 3, "%s: %d frames", what, call_nfn);
-	for (int i = 0; i < call_nfn && i < 3; i++)
+	CHECK(call_ends == 1, "%s: ends %d", what, call_ends);
+	for (int i = 0; i < call_nfn && i < 3; i++) {
+		memset(pl, 0, sizeof pl);
+		pl[0] = (uint8_t)i;
 		CHECK(call_fn[i] == want[i], "%s: frame %d number %04X", what, i, call_fn[i]);
+		CHECK(memcmp(call_pl[i], pl, 16) == 0, "%s: frame %d bytes", what, i);
+	}
 }
 
 static void test_call_through_modem(void)
@@ -923,6 +1087,9 @@ int main(void)
 	test_csma();
 	test_bert_count();
 	test_bert_prbs_recurrence();
+	test_rx_hooks_call();
+	test_rx_packet_two_frames();
+	test_rx_bert_count();
 	test_call_through_modem();
 	test_call_through_chip_pulse();
 	test_call_clock_offset();

@@ -15,6 +15,8 @@
 #include "m17.h"
 #include "m17_bert.h"
 
+struct m17_rx;
+
 enum {
 	M17_TX_VOICE = 0,
 	M17_TX_PACKET = 1,
@@ -22,11 +24,15 @@ enum {
 };
 
 typedef struct {
-	void (*rx_start)(void *ctx);
-	void (*rx_update)(void *ctx);
-	void (*rx_voice)(const uint8_t voice[16], void *ctx);
-	void (*rx_lost)(void *ctx);
+	// in_call became true. rx is the call in hand; its LSF may still be incomplete.
+	void (*rx_start)(const struct m17_rx *rx, void *ctx);
+	// The LICH rebuilt an LSF whose CRC is 0. Not called for an LSF frame, which arrives whole.
+	void (*rx_update)(const struct m17_rx *rx, void *ctx);
+	// One accepted stream frame. frame_num is the 16-bit number as decoded, bit 15 included.
+	void (*rx_voice)(const uint8_t voice[16], uint16_t frame_num, void *ctx);
+	void (*rx_lost)(void *ctx);	// a stream frame placed by counting
 	void (*rx_end)(void *ctx);
+	// The packet, type byte first, CRC removed. Only when the CRC matched.
 	void (*rx_packet)(const uint8_t *data, uint16_t len, void *ctx);
 	// Two codec frames for the next stream frame. False: none ready, so silence goes out.
 	bool (*tx_voice)(uint8_t c2[2][8], void *ctx);

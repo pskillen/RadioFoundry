@@ -10,8 +10,11 @@
 
 #include "config.h"
 
+#if CONFIG_M17
+
 #include "../air/air_framer.h"
 #include "m17.h"
+#include "m17_engine.h"
 
 // air_profile_t.sync[].id, most useful first (spec 1.1)
 enum {
@@ -23,7 +26,7 @@ enum {
 	M17_SYNC_ID_EOT = 5,
 };
 
-typedef struct {
+typedef struct m17_rx {
 	uint8_t lsf[M17_LSF_BYTES];	// bytes filled where have[] says, or the whole frame after an LSF
 	bool have[6];			// LICH chunk n (LSF bytes 5n..5n+4) is in lsf; never from the frame number
 	bool late;			// chunk 2 has been seen: LSF bytes 10-14 are in
@@ -31,9 +34,13 @@ typedef struct {
 	bool crc_ok;			// lsf[0..29], CRC included, sums to 0
 	bool type_known;		// lsf bytes 12-13 are this call's TYPE
 	uint8_t bert_run;		// 8-symbol BERT syncs in a row presented to the head hook
+	// Bits bert_prbs decoded while proving the frame. Counted from here so the frame hook does not decode again.
+	uint8_t bert_bits[(M17_BERT_BITS + 7) / 8];
+	bool bert_have;
+	m17_bert_count_t bert;
 #if CONFIG_M17_PACKET
-	// A packet sync is not a frame by itself. The candidate bytes wait for the next packet sync one frame
-	// later, and the CRC over all of them (spec 5.2).
+	// A packet sync is not a frame by itself. The bytes wait for the next packet sync one frame later, and the
+	// CRC over all of them (spec 5.2).
 	bool pkt_pend;
 	uint32_t pkt_t;
 	uint16_t pkt_len;
@@ -41,12 +48,13 @@ typedef struct {
 	uint8_t pkt[825];
 #endif
 	m17_fec_work_t work;
-	void (*end)(void *ctx);		// the call ended (a new LSF, a different TYPE, the end marker, the signal)
+	const m17_engine_hooks_t *hooks;	// NULL: nothing is called
 	void *ctx;
 } m17_rx_t;
 
-void m17_rx_init(m17_rx_t *rx, void (*end)(void *ctx), void *ctx);
-// A retune: drop the call and the chunks. Does not call end.
+// hooks may be NULL. The pointer is kept, not copied: it has to outlive the call.
+void m17_rx_init(m17_rx_t *rx, const m17_engine_hooks_t *hooks, void *ctx);
+// A retune: drop the call and the chunks. Does not call rx_end.
 void m17_rx_reset(m17_rx_t *rx);
 
 void m17_rx_on_lsf(m17_rx_t *rx, const uint8_t lsf[M17_LSF_BYTES]);
@@ -57,4 +65,5 @@ void m17_rx_on_eot(m17_rx_t *rx);
 
 extern const air_mode_t m17_air_mode;
 
+#endif
 #endif

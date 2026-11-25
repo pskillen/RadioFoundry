@@ -62,20 +62,52 @@ static int lich_ok(const uint8_t pay[M17_PAYLOAD_BYTES], uint8_t *counter, uint8
 // The 24-symbol BERT word also correlates, two symbols off, inside an LSF preamble (both are a long run of
 // alternating outer symbols). The spec's proof that it is BERT is the payload: 197 bits of PRBS9, each bit
 // b[n] = b[n-5] XOR b[n-9] (spec 5.2, 3.7).
+// The decoded bits stay on rx. The frame hook counts them; a second Viterbi decode would not be the same work.
 static bool bert_prbs(m17_rx_t *rx, const uint8_t pay[M17_PAYLOAD_BYTES])
 {
-	uint8_t bits[(M17_BERT_BITS + 7) / 8];
-
-	if (m17_bert_decode(pay, &rx->work, bits) < 0)
+	rx->bert_have = false;
+	if (m17_bert_decode(pay, &rx->work, rx->bert_bits) < 0)
 		return false;
 	for (uint16_t i = 9; i < M17_BERT_BITS; i++) {
-		uint8_t exp = (uint8_t)(air_bit_get(bits, (uint16_t)(i - 5)) ^ air_bit_get(bits, (uint16_t)(i - 9)));
+		uint8_t exp = (uint8_t)(air_bit_get(rx->bert_bits, (uint16_t)(i - 5)) ^
+					air_bit_get(rx->bert_bits, (uint16_t)(i - 9)));
 
-		if (air_bit_get(bits, i) != exp)
+		if (air_bit_get(rx->bert_bits, i) != exp)
 			return false;
 	}
+	rx->bert_have = true;
 	return true;
 }
+
+// A following frame one slot later: 192 symbols is 40 ms, and the chunk clock is not exact.
+static bool frame_later(const air_frame_t *f, uint32_t t)
+{
+	uint32_t d = f->t_us - t;
+
+	return d >= 39000 && d <= 41000;
+}
+
+#if CONFIG_M17_PACKET
+static bool packet_crc_ok(const m17_rx_t *rx)
+{
+	uint16_t got;
+
+	if (rx->pkt_len < 3)
+		return false;
+	got = (uint16_t)((rx->pkt[rx->pkt_len - 2] << 8) | rx->pkt[rx->pkt_len - 1]);
+	return m17_crc16(rx->pkt, (uint16_t)(rx->pkt_len - 2)) == got;
+}
+
+// Type byte first, the two CRC bytes removed. The buffer stays until the caller has read it.
+static void give_packet(m17_rx_t *rx)
+{
+	if (!packet_crc_ok(rx))
+		return;
+	if (rx->hooks && rx->hooks->rx_packet)
+		rx->hooks->rx_packet(rx->pkt, (uint16_t)(rx->pkt_len - 2), rx->ctx);
+	rx->pkt_pend = false;
+}
+#endif
 
 // The end marker is the 8-symbol word repeated. The sync that locked us is the first; the second starts at
 // symbol 8. One error, the same allowance as the sync word.
@@ -146,7 +178,7 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 			rx->pkt_pend = false;
 			return 0;
 		}
-		follow = rx->pkt_pend && f->t_us - rx->pkt_t >= 39000 && f->t_us - rx->pkt_t <= 41000;
+		follow = rx->pkt_pend && frame_later(f, rx->pkt_t);
 		if (!follow || (!last && fn != rx->pkt_next) || (uint32_t)rx->pkt_len + n > sizeof rx->pkt) {
 			if (!last && fn != 0) {
 				rx->pkt_pend = false;
@@ -165,11 +197,11 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 		rx->pkt_next++;
 		if (!last)
 			return 0;
-		rx->pkt_pend = false;
-		if (rx->pkt_len < 3 ||
-		    m17_crc16(rx->pkt, (uint16_t)(rx->pkt_len - 2)) !=
-			    (uint16_t)((rx->pkt[rx->pkt_len - 2] << 8) | rx->pkt[rx->pkt_len - 1]))
+		if (!packet_crc_ok(rx)) {
+			rx->pkt_pend = false;
 			return 0;
+		}
+		give_packet(rx);
 		m17_rx_on_lock(rx);
 		return M17_FRAME_SYMS;
 #else
@@ -195,8 +227,24 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 
 static void rx_frame(const air_frame_t *f, void *ctx)
 {
-	(void)f;
-	(void)ctx;
+	m17_rx_t *rx = ctx;
+
+	if (f->sync_id == M17_SYNC_ID_STREAM) {
+		uint8_t pay[M17_PAYLOAD_BYTES];
+		uint8_t lich, chunk[5], pl[16];
+		uint16_t fn = 0;
+		int lich_errs = 0;
+
+		payload_of(f, pay);
+		if (m17_stream_decode(pay, &rx->work, &lich, chunk, &fn, pl, &lich_errs) >= 0 && rx->hooks &&
+		    rx->hooks->rx_voice)
+			rx->hooks->rx_voice(pl, fn, rx->ctx);
+		return;
+	}
+	if ((f->sync_id == M17_SYNC_ID_BERT || f->sync_id == M17_SYNC_ID_BERT_PRE) && rx->bert_have) {
+		m17_bert_count_frame(&rx->bert, rx->bert_bits);
+		rx->bert_have = false;
+	}
 }
 
 static void rx_lost(void *ctx)
