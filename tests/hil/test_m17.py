@@ -6,6 +6,11 @@ test_m17_mode_switch: the channel on view becomes M17 by a temporary mode change
 debuglink.md 3.8 op 31); the m17 view section must show the engine running (`m17.on=1`, no new `begin_fails`).
 Undoing the change brings the channel's own mode back with the engine stopped. Nothing is sent.
 
+test_m17_stored_channel: opt-in `--allow-codeplug-write`. Writes a kind-6 channel tag and the M17 callsign into the
+codeplug settings area over CPS (m17-codeplug.md), receive only, and checks the radio runs them: M17 mode, the stored
+CAN with the squelch off, the destination and the callsign in force (`m17.run.*`). The codeplug is put back after.
+Nothing is sent.
+
 test_m17_bert_rx_from_bench, test_m17_bert_tx_off_air, test_m17_lsf_off_air: opt-in `--allow-rf`. The bench
 transmitter and receiver are not wired into this file yet, so the bodies skip rather than transmit.
 """
@@ -72,3 +77,63 @@ def test_m17_bert_tx_off_air():
 def test_m17_lsf_off_air():
     """Opt-in `--allow-rf`. Would set the callsign over op 44, key, and expect the bench to decode the LSF."""
     skip("opt_in", "the bench fixture has no M17 receiver")
+
+
+# --- A stored M17 channel (m17-codeplug.md, channel-modes.md 2) ---
+
+KIND_M17 = 6
+KEY_CH_TAG = 0x0400         # codeplug-settings.md 3: channel tags, 0x0400 + channel - 1
+KEY_CALL = 0x0A00 + KIND_M17    # the radio-wide record: the callsign (channel-modes.md 5.5)
+STORED_CAN = 3
+STORED_DST = "ECHO"
+STORED_DST_BYTES = bytes.fromhex("0000000ED87D")
+RADIO_CALL = "AB1CD"
+
+
+def make_m17(img, number):
+    """Channel number of img made a stored M17 channel: the stand-in record, then its tag. Receive only, the CAN
+    squelch off, and the radio-wide callsign record"""
+    import cps_client
+    from test_nxdn import new_area
+    from test_p25 import area_with, name_check
+    _, a = cps_client.channel_addr(number)
+    img[a + 0x18] = 1                   # DMR
+    img[a + 0x33] |= 0x04               # receive only: the stand-in, whatever the tag allows
+    tag = bytes([KIND_M17, 0xFF]) + name_check(img[a:a + 16]).to_bytes(2, "little") + bytes([0])
+    block = bytes([0x10 | STORED_CAN]) + STORED_DST_BYTES
+    lo, hi = cps_client.SETTINGS_AREA
+    area = img[lo:hi]
+    if cps_client.area_state(area) != "valid":
+        area = new_area(hi - lo)
+    area = area_with(area, KEY_CH_TAG + number - 1, tag + block)
+    img[lo:hi] = area_with(area, KEY_CALL, RADIO_CALL.encode() + bytes(10 - len(RADIO_CALL)))
+
+
+@pytest.mark.feature("m17")
+@pytest.mark.codeplug_write
+def test_m17_stored_channel(radio, backup_dir):
+    m17_view(radio)
+    if "M17" not in radio.features():
+        skip("not_built", "M17 isn't in the radio's feature list")
+    import cps_client
+    from test_cps import codeplug_edited, pick_channel, read_backup
+    regions = cps_client.REGIONS["radio"]      # with the settings area, where the tag goes
+    probe, _ = read_backup(radio, backup_dir, "m17probe", regions)
+    lo, hi = cps_client.SETTINGS_AREA
+    if cps_client.area_state(probe[lo:hi]) != "valid":
+        skip("state", "the codeplug settings area isn't valid: the restore couldn't take the tag back")
+    core = radio.core()
+    number = pick_channel(radio, probe)
+    if core.get("vfo") == "1" or number != as_int(core.get("channel_number"), 0):
+        skip("state", "the radio isn't on a stored channel")
+    if core.get("am") == "1" or core.get("bcast") == "1":
+        skip("state", "the channel is in a listen-only band: no M17 there")
+    with codeplug_edited(radio, backup_dir, lambda img: make_m17(img, number), "m17", regions):
+        v = radio.wait_for(lambda x: x.get("ch.kind") == str(KIND_M17) and x.get("m17.on") == "1", 5.0,
+                           sections=("core", "channel", "m17"), what="the stored M17 channel running")
+        assert v.get("mode") == "m17", v
+        assert v.get("m17.run.can") == str(STORED_CAN) and v.get("m17.run.squelch") == "0", v
+        assert v.get("m17.run.dst") == STORED_DST, v
+        assert v.get("m17.run.call") == RADIO_CALL, v
+    radio.wait_for(lambda x: x.get("ch.kind") == "0" and x.get("m17.on") != "1", 5.0,
+                   sections=("core", "channel", "m17"), what="the channel back as it was, M17 stopped")
