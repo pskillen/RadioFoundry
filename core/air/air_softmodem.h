@@ -63,9 +63,10 @@ typedef struct {
 	// the one a symbol before it. A pattern is fitted only where the large steps of its last 17 symbols are all
 	// there but one
 	uint16_t steps[AIR_SOFTMODEM_SPS];
-	uint16_t gate_up[AIR_SYNCS_MAX];	// per pattern: the bits of its steps up ...
-	uint16_t gate_mask[AIR_SYNCS_MAX];	// ... and which bits are steps of four levels or more (0: no gate)
+	uint16_t gate_up[AIR_SYNCS_MAX];	// per pattern: steps up, or low 16 sign bits for a sign-gated pattern
+	uint16_t gate_mask[AIR_SYNCS_MAX];	// per pattern: large steps, or remaining sign bits
 	uint8_t valid;				// bit i: pattern i can be fitted (its length, more than one level)
+	uint8_t sign_gate;			// bit i: pattern i is all outer and has too few large steps
 	uint8_t neg_partner[AIR_SYNCS_MAX];	// index of the negated twin pattern, 0xFF none
 	// The sync search: the best fit so far of the peak being climbed
 	uint16_t cand_q, cand_prev_q, last_q;	// fit errors (0xFFFF none): the candidate's, the sample's before it

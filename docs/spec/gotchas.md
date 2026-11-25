@@ -21,6 +21,7 @@ Status words: "on air" means verified with an SDR or a second radio; "built" mea
 | 10, 11, 12 | Flash and storage, calibration, memory and RAM limits |
 | 13, 14 | Build and toolchain, SFR |
 | 15, 16, 17 | Testing practice, input, scan |
+| 18 | Air interface |
 
 ## 1. DMR modem timing: HR_C6000
 
@@ -969,3 +970,12 @@ level), so every stop counted a carrier and probed for 700 ms instead of the 150
 took about 12 s. Rule: the scale also sits above the floor the scan reads, the lowest strength past the settle on the
 last 8 stops, by 6 dB plus 3 dB a level (`scan_floor`, `RADIO_DMR_SQL_L1_FLOOR_DB`). A call 20 dB over that floor
 still holds the scan, by the noise reading or by the strength alone (`test_scan_dmr_high_floor`).
+
+## 18. Air interface
+
+**18.1 Short all-outer sync patterns let noise through the step gate.**
+M17's eight-symbol sync patterns have only two or three large steps, so their step gate alone starts a fit on
+about 95% of filtered samples in Gaussian noise. That fit rate can starve the idle task on a receiver using the
+soft modem. Require every symbol-spaced sample to have the expected sign relative to the tracked offset when an
+all-outer pattern has fewer than four large steps in the step gate. The sign check works before a reliable level
+is available. See [air-interface.md](air-interface.md#6-sample-taps-and-the-soft-modem).

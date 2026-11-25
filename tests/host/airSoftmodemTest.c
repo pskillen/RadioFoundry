@@ -11,6 +11,8 @@
 
 #include "air/air_softmodem.h"
 #include "air/air_syms.h"
+#include "m17/m17_rx.h"
+#include "nxdn/nxdn.h"
 #include "p25/p25.h"
 
 #define NXDN_FRAME_SYMS_LOCK	192u
@@ -828,6 +830,43 @@ static void testHole(void)
 	CHECK(out_gap_chunks == 3 && out_nsync == 6, "reset: gaps %u syncs %u", out_gap_chunks, out_nsync);
 }
 
+static void discard_chunk(const air_chunk_t *c, void *ctx)
+{
+	(void)c;
+	(void)ctx;
+}
+
+// An empty channel must leave most of the filtered samples out of the sync fit.
+static void testNoiseSearchLoad(void)
+{
+	static const air_mode_t *const modes[] = {
+		&p25_air_mode, &nxdn_air_mode, &nxdn_air_mode_9600, &m17_air_mode,
+	};
+	enum { RATE = 8000, SECONDS = 10 };
+	uint32_t saved_seed = rng_state;
+
+	rng_state = 0xC0FFEE;
+	for (unsigned i = 0; i < RATE * SECONDS; i++)
+		tap[i] = (int16_t)lround(3000 * gauss());
+	rng_state = saved_seed;
+
+	for (unsigned i = 0; i < sizeof modes / sizeof modes[0]; i++) {
+		const air_mode_t *mode = modes[i];
+		uint32_t filtered = (uint32_t)mode->profile.sym_rate * AIR_SOFTMODEM_SPS * SECONDS;
+		air_softmodem_t m;
+
+		bool opened = air_softmodem_rx_open(&m, &mode->profile, RATE, 0, discard_chunk, NULL);
+
+		CHECK(opened, "%s: open", mode->name);
+		if (!opened)
+			continue;
+		feed(&m, RATE, 0, RATE * SECONDS, 256);
+		CHECK(air_softmodem_search_calls * 100u < filtered * 15u,
+		      "%s: %u searches in %u filtered samples (%.1f %%)", mode->name,
+		      air_softmodem_search_calls, filtered, 100.0 * air_softmodem_search_calls / filtered);
+	}
+}
+
 int main(void)
 {
 	testFit();
@@ -841,6 +880,7 @@ int main(void)
 	test_lock_window_same_symbols();
 	test_lock_window_skips_middle();
 	testHole();
+	testNoiseSearchLoad();
 	printf("airSoftmodemTest: %d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;
 }
