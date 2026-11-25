@@ -105,6 +105,9 @@ void m17_stream_encode(const uint8_t lsf[M17_LSF_BYTES], uint8_t lich_count, uin
 int m17_stream_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t *lich_count,
 		      uint8_t lich_chunk[5], uint16_t *frame_num, uint8_t stream_pl[M17_STREAM_VOICE_BITS / 8],
 		      int *lich_errs);
+// The four Golay(24,12) words of a stream frame's LICH, in air order, so a caller can bound each word's
+// corrections. Derandomized and deinterleaved here; the randomizer table stays in this file.
+void m17_stream_lich_words(const uint8_t payload[M17_PAYLOAD_BYTES], uint32_t words[4]);
 
 void m17_packet_pack(const uint8_t data[25], uint8_t frame_num, bool last, uint8_t valid_bytes, uint8_t bits[26]);
 void m17_packet_unpack(const uint8_t bits[26], uint8_t data[25], uint8_t *frame_num, bool *last,

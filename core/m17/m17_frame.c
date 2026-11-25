@@ -431,6 +431,20 @@ int m17_stream_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *
 	return errs;
 }
 
+void m17_stream_lich_words(const uint8_t payload[M17_PAYLOAD_BYTES], uint32_t words[4])
+{
+	uint8_t plain[M17_PAYLOAD_BYTES];
+
+	deairify(payload, plain);
+	for (uint8_t w = 0; w < 4; w++) {
+		uint32_t cw = 0;
+
+		for (uint8_t i = 0; i < 24; i++)
+			cw = (cw << 1) | bit_get(plain, (uint16_t)(w * 24 + i));
+		words[w] = cw;
+	}
+}
+
 // ── Packet ──
 void m17_packet_pack(const uint8_t data[25], uint8_t frame_num, bool last, uint8_t valid_bytes, uint8_t bits[26])
 {
