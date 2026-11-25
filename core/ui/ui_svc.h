@@ -525,6 +525,13 @@ void ui_svc_boot_text(char line1[17], char line2[17]);
 enum { UI_NAME_RADIO, UI_NAME_BOOT1, UI_NAME_BOOT2, UI_NAME_COUNT };
 void ui_svc_name_get(uint8_t which, char out[17]);
 bool ui_svc_name_set(uint8_t which, const char *text);
+#if CONFIG_M17
+// The radio-wide M17 callsign (m17-codeplug.md 1). show writes the explicit record, or the radio-name fallback when
+// there is none (*stored false). False, and out empty, when that fallback is not a callsign either. set queues a
+// storage job (false while one is pending): empty text clears the record.
+bool ui_svc_m17_call_show(char out[10], bool *stored);
+bool ui_svc_m17_call_set(const char *text);
+#endif
 
 // Queue an event for the UI (copies it). False when the queue is full (the event is dropped)
 bool ui_notify(const ui_event_t *ev);

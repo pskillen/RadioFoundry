@@ -874,6 +874,27 @@ static const flow_t flows[] = {
 	  true },
 	{ "S digits on a name row type no ID", "ok 7 0 ok down", "3 1",
 	  "screen=dmr-id focus=Radio_name toast=No_item_with_that_number", 2, false },
+#if CONFIG_M17
+	// Settings > My radio > M17 callsign, after About so the About flow's one Down still lands there
+	{ "S M17 callsign not on this radio", "", "ok 7 0 down down ok",
+	  "screen=group toast=M17:_not_on_this_radio writes=0", 6, false },
+	{ "S M17 callsign shows the radio name", "m17", "ok 7 0 down down", "screen=group shows=Q0TEST", 5, false },
+	{ "S M17 callsign opens", "m17", "ok 7 0 down down ok", "screen=m17-callsign shows=M17_call", 6, false },
+	{ "S M17 callsign saved", "m17 ok 7 0 down down ok", "2 wait:1100 2 ok",
+	  "screen=group toast=Saved writes=1 shows=AA", 3, true },
+	{ "S M17 callsign cleared", "m17 ok 7 0 down down ok 2 wait:1100 2 ok", "ok back back ok",
+	  "screen=group toast=Saved writes=2 shows=Q0TEST", 4, true },
+	{ "S M17 callsign rejects a space", "m17 ok 7 0 down down ok", "0",
+	  "screen=m17-callsign toast=Letters writes=0", 1, false },
+	{ "S M17 callsign a rejected character is not saved", "m17 ok 7 0 down down ok", "0 ok",
+	  "screen=group toast=Saved writes=1 shows=Q0TEST", 2, true },
+	{ "S M17 callsign cancel", "m17 ok 7 0 down down ok", "2 back back",
+	  "screen=group writes=0 shows=Q0TEST", 3, false },
+	{ "S M17 callsign save failed", "m17 m17fail ok 7 0 down down ok", "2 ok",
+	  "screen=group toast=Couldn't_save writes=0 shows=Q0TEST", 2, false },
+	{ "S M17 callsign folds lower case", "m17 ok 7 0 down down ok", "ctx ctx 9 ok",
+	  "screen=group toast=Saved writes=1 shows=W", 4, true },
+#endif
 	// Vibrate (Settings > Sound, radio-features.md 4.1): ui_vibe_t 0 message, 1 call, 2 emergency
 	{ "S vibrate on a message", "", "msg:9991234,Hi", "vibes=1 vibe=0", 0, false },
 	{ "S vibrate on a call alert", "", "alert:91", "vibes=1 vibe=1", 0, false },
@@ -1504,6 +1525,11 @@ static const flow_t flows_f[] = {
 	// the channel saves
 	{ "F text entry by Up / Down", "ok down down down down down ok ok ok", "down ok long:ok",
 	  "screen=channel shows=COUNTY_DMQQ", 3, false },
+#if CONFIG_M17
+	// Up from Sound wraps Advanced, Signaling, My radio; two Downs pass About. Down adds A, OK another, long OK keeps
+	{ "F M17 callsign by Up / Down", "m17", "ok up ok up up up ok down down ok down ok long:ok",
+	  "screen=group shows=AA toast=Saved writes=1", 13, true },
+#endif
 	{ "F long OK saves the channel", "ok down down down down down ok ok ok down ok long:ok", "long:ok",
 	  "writes=1 toast=Saved_channel_3", 1, true },
 #endif
@@ -2341,10 +2367,29 @@ static int check_satellite_path_endpoint_colors(void)
 }
 #endif
 
+#if CONFIG_M17 && CONFIG_UI_COLOR
+// The fallback value is dim only while the row is not focused (a focused row redraws it in the focus color)
+static int check_m17_callsign_dim(void)
+{
+	char err[160];
+
+	sim_reset(sim_geom_find("240x320"), SIM_MAP_K);
+	if (!sim_run("m17 ok 7 0", err, sizeof err) || !sim_text_has_color("Q0TEST", ui_col.line)) {
+		printf("FAIL M17 fallback callsign is dim: %s\n", err);
+		return 1;
+	}
+	return 0;
+}
+#endif
+
 int main(void)
 {
 	if (check_name_is_id() != 0)
 		return 1;
+#if CONFIG_M17 && CONFIG_UI_COLOR
+	if (check_m17_callsign_dim() != 0)
+		return 1;
+#endif
 #if CONFIG_SATELLITE_TLE
 	if (check_satellite_countdowns() != 0)
 		return 1;

@@ -11793,6 +11793,25 @@ bool m17_callsign_load(const char *radio_name, char out[M17_CP_CALL_LEN])
 	return out[0] != '\0';
 }
 
+bool m17_callsign_stored(char out[M17_CP_CALL_LEN])
+{
+	memcpy(out, m17_record_call, M17_CP_CALL_LEN);
+	return out[0] != '\0';
+}
+
+bool m17_callsign_pick(const uint8_t *b, int len, const char *radio_name, char out[M17_CP_CALL_LEN])
+{
+	(void)b;
+	(void)len;
+	return m17_callsign_load(radio_name, out);
+}
+
+bool m17_callsign_store(const char *text)
+{
+	(void)text;
+	return true;
+}
+
 static void m17_view_text(char *buf, size_t cap)
 {
 	dl_text_t t;

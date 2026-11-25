@@ -190,12 +190,46 @@ static void test_callsign_load(void)
 	CHECK(m17_callsign_load("Q0TEST", out) && strcmp(out, "AB1CD") == 0);
 }
 
+static void test_callsign_store(void)
+{
+	const uint8_t longer[12] = { 'a', 'b', '1', 'c', 'd', 0, 0, 0, 0, 0, 1, 2 };
+	const uint8_t shortrec[4] = { 'A', 'B', 0, 0 };
+	uint8_t raw[16];
+	char out[M17_CP_CALL_LEN];
+	int n;
+
+	fresh();
+	CHECK(!m17_callsign_stored(out) && out[0] == '\0');
+	CHECK(m17_callsign_store("ab1cd"));
+	n = codeplug_kv_get(0x0A06u, raw, sizeof raw);
+	CHECK(n == 10 && memcmp(raw, "AB1CD", 6) == 0 && raw[9] == 0);
+	CHECK(m17_callsign_stored(out) && strcmp(out, "AB1CD") == 0);
+	CHECK(!m17_callsign_store("AB*CD"));
+	CHECK(m17_callsign_stored(out) && strcmp(out, "AB1CD") == 0);
+	CHECK(!m17_callsign_store("ABCDEFGHIJ"));
+	CHECK(m17_callsign_stored(out) && strcmp(out, "AB1CD") == 0);
+	CHECK(codeplug_kv_set(0x0A06u, longer, sizeof longer));
+	CHECK(m17_callsign_store("zz9"));
+	n = codeplug_kv_get(0x0A06u, raw, sizeof raw);
+	CHECK(n == 12 && raw[0] == 'Z' && raw[1] == 'Z' && raw[2] == '9' && raw[3] == 0);
+	CHECK(raw[10] == 1 && raw[11] == 2);
+	CHECK(m17_callsign_store(""));
+	n = codeplug_kv_get(0x0A06u, raw, sizeof raw);
+	CHECK(n == 12 && raw[0] == 0 && raw[9] == 0 && raw[10] == 1 && raw[11] == 2);
+	CHECK(!m17_callsign_stored(out));
+	CHECK(codeplug_kv_set(0x0A06u, shortrec, sizeof shortrec));
+	CHECK(m17_callsign_store("cd"));
+	n = codeplug_kv_get(0x0A06u, raw, sizeof raw);
+	CHECK(n == 10 && raw[0] == 'C' && raw[1] == 'D' && raw[2] == 0);
+}
+
 int main(void)
 {
 	test_vectors();
 	test_dst_edges();
 	test_chan_load();
 	test_callsign_load();
+	test_callsign_store();
 	sim_flash_free();
 	if (failures) {
 		printf("m17CodeplugTest: %d failure(s)\n", failures);

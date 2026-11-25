@@ -26,6 +26,11 @@
 #include "dmr/dmr_emergency.h"	// the emergency tone (Settings > Sound); stubs without CONFIG_DMR_EMERGENCY
 #include "hal_time.h"
 #include "config.h"
+#if CONFIG_M17
+#include "m17/m17.h"
+#include "m17/m17_codeplug.h"
+#include "radio/radio_m17.h"
+#endif
 #if CONFIG_HOSTLINK
 #include "hostlink/hostlink.h"
 #endif
@@ -822,6 +827,9 @@ void ui_svc_next_aes_key(channel_t *c)
 
 static void write_channel_job(void *ctx);
 static void name_job(void *ctx);
+#if CONFIG_M17
+static void m17_call_job(void *ctx);
+#endif
 #if CONFIG_DMR
 static void dmr_id_job(void *ctx);
 static void save_target_job(void *ctx);
@@ -837,6 +845,9 @@ static void key_write_job(void *ctx);
 #endif
 static void (*const cp_jobs[])(void *ctx) = {
 	save_channel_job, write_channel_job, name_job,
+#if CONFIG_M17
+	m17_call_job,
+#endif
 #if CONFIG_DMR
 	dmr_id_job, save_target_job,
 #endif
@@ -1548,6 +1559,61 @@ bool ui_svc_name_set(uint8_t which, const char *text)
 	job.name[CODEPLUG_NAME_LEN] = '\0';
 	return cp_post(name_job);
 }
+
+#if CONFIG_M17
+_Static_assert(M17_CP_CALL_LEN == 10, "the UI callsign buffer is the record");
+
+bool ui_svc_m17_call_show(char out[10], bool *stored)
+{
+	char name[CODEPLUG_NAME_LEN + 1];
+	settings_t *st;
+
+	if (stored != NULL)
+		*stored = false;
+	out[0] = '\0';
+	if (m17_callsign_stored(out)) {
+		if (stored != NULL)
+			*stored = true;
+		return true;
+	}
+	// The name the engine uses: the settings override, eight bytes as apply_prefs copies it, else the codeplug's
+	st = settings_begin();
+	name[0] = '\0';
+	if (st->radio_name[0] != '\0') {
+		memset(name, 0, sizeof name);
+		memcpy(name, st->radio_name, CODEPLUG_RADIO_NAME_LEN);
+	}
+	settings_end(hal_millis());
+	if (name[0] == '\0')
+		codeplug_radio_name(name);
+	return m17_callsign_pick(NULL, 0, name, out);
+}
+
+// Post the RAM settings back unchanged: an empty callsign makes apply reload the record, a debug override stays
+static void m17_call_job(void *ctx)
+{
+	radio_m17_settings_t s;
+
+	(void)ctx;
+	if (!m17_callsign_store(job.name)) {
+		save_failed(TRN(STORE_ERR_CODEPLUG_WRITE, "Couldn't write the codeplug: not saved"));
+		return;
+	}
+	radio_m17_settings(&s);
+	radio_req_m17_settings(&s);
+}
+
+bool ui_svc_m17_call_set(const char *text)
+{
+	if (job_busy())
+		return false;
+	if (text == NULL)
+		text = "";
+	strncpy(job.name, text, M17_ADDR_CHARS_MAX);
+	job.name[M17_ADDR_CHARS_MAX] = '\0';
+	return cp_post(m17_call_job);
+}
+#endif
 
 #if CONFIG_KEY_ASSIGN
 // --- Side keys (core/input/keyassign.h): the codeplug's quick-key slots, a copy here (UI task only), the key map

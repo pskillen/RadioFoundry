@@ -14,6 +14,7 @@
 #include "fmt.h"
 #include "text_edit.h"
 #include "codeplug/codeplug.h"
+#include "codeplug/codeplug_kv.h"
 #include "codeplug/codeplug_modes.h"
 #include "codeplug/codeplug_tag.h"
 #if CONFIG_P25
@@ -2095,7 +2096,7 @@ uint8_t ui_menus_zones_moved(ui_frame_t *stack, uint8_t sp, uint32_t from, uint3
 }
 #endif
 
-#if CONFIG_CHANNEL_EDIT || CONFIG_APRS_AFSK || CONFIG_DMR_SMS || CONFIG_SATELLITE_TLE
+#if CONFIG_CHANNEL_EDIT || CONFIG_APRS_AFSK || CONFIG_DMR_SMS || CONFIG_SATELLITE_TLE || (CONFIG_M17 && CONFIG_UI_SETTINGS)
 // ======================= Text entry: keypad letters (ui.md 2.1) =======================
 // Phone keypad: in ABC / abc, 2-9 cycle their letters, the digit, then the letters in the other case (ABC: A B C 2 a b
 // c); 1 cycles punctuation and 0 a space, 0 and a few signs. The same key within 1 s takes the next one, another key
@@ -2124,8 +2125,19 @@ enum { TEXT_NAME, TEXT_MESSAGE, TEXT_CALLSIGN,
 #if CONFIG_SATELLITE_TLE
 	TEXT_SATELLITE,
 #endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+	TEXT_M17,
+#endif
 	TEXT_PREFIXES };
 static uint8_t text_prefix;
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+enum { TEXT_PROFILE_FREE, TEXT_PROFILE_M17_CALL, TEXT_PROFILE_M17_DST };
+static uint8_t text_profile;
+static char m17_edit[10];
+static char m17_shown[10];
+static uint8_t m17_kv_at;
+static bool m17_pending;
+#endif
 
 static void text_open(char *target, uint8_t max, uint8_t screen)
 {
@@ -2146,6 +2158,14 @@ static void text_open(char *target, uint8_t max, uint8_t screen)
 #if CONFIG_SATELLITE_TLE
 	if (screen == SCR_SATELLITE_TEXT)
 		text_prefix = TEXT_SATELLITE;
+#endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+	text_profile = TEXT_PROFILE_FREE;
+	if (screen == SCR_M17_CALL) {
+		text_prefix = TEXT_M17;
+		text_profile = TEXT_PROFILE_M17_CALL;
+		text_max = max;
+	}
 #endif
 	ui_push(screen, 0);
 }
@@ -2178,6 +2198,35 @@ void ui_menus_satellite_text(char *target, uint8_t line, void (*done)(void))
 #endif
 #if CONFIG_APRS_AFSK
 static void ui_text_open_to(char *target, uint8_t max) { text_open(target, max, SCR_APRS_TO); }
+#endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+static void m17_call_kept(void)
+{
+	m17_kv_at = codeplug_kv_serial();
+	strncpy(m17_shown, m17_edit, sizeof m17_shown - 1u);
+	m17_shown[sizeof m17_shown - 1u] = '\0';
+	m17_pending = true;
+	if (!ui_svc_m17_call_set(m17_edit)) {
+		m17_pending = false;
+		ui_toast(TR(TOAST_SAVE_FAILED, "Couldn't save: try again"));
+		return;
+	}
+	ui_toast(TR(TOAST_SAVED, "Saved"));
+}
+
+static void m17_call_open(void)
+{
+	char shown[10];
+	bool stored = false;
+
+	m17_edit[0] = '\0';
+	if (ui_svc_m17_call_show(shown, &stored) && stored) {
+		strncpy(m17_edit, shown, sizeof m17_edit - 1u);
+		m17_edit[sizeof m17_edit - 1u] = '\0';
+	}
+	text_open(m17_edit, 9, SCR_M17_CALL);
+	text_done = m17_call_kept;
+}
 #endif
 
 static void text_enter(void)
@@ -2223,14 +2272,89 @@ static void text_append(char c)
 	text_buf[text_len] = 0;
 }
 
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+// Callsign: A-Z, 0-9, - / . Fold a-z. Destination (the channel editor) also allows a space inside.
+static bool text_m17_ok(char c)
+{
+	if (c >= 'a' && c <= 'z')
+		c = (char)(c - 'a' + 'A');
+	if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '/' || c == '.')
+		return true;
+	return text_profile == TEXT_PROFILE_M17_DST && c == ' ';
+}
+
+static char text_m17_fold(char c)
+{
+	return c >= 'a' && c <= 'z' ? (char)(c - 'a' + 'A') : c;
+}
+
+static bool text_m17_commit(void)
+{
+	for (uint8_t i = 0; i < text_len; i++) {
+		char c = text_m17_fold(text_buf[i]);
+		if (!text_m17_ok(c))
+			return false;
+		text_buf[i] = c;
+	}
+	return true;
+}
+
+static void text_m17_step(int dir)
+{
+	static const char alpha_call[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/.";
+	static const char alpha_dst[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/. ";
+	const char *alpha = text_profile == TEXT_PROFILE_M17_DST ? alpha_dst : alpha_call;
+	size_t n = strlen(alpha);
+
+	if (text_len == 0) {
+		text_append(alpha[0]);
+		return;
+	}
+	char c = text_m17_fold(text_buf[text_len - 1]);
+	const char *p = strchr(alpha, c);
+	if (p == NULL) {
+		text_buf[text_len - 1] = alpha[0];
+		return;
+	}
+	size_t i = (size_t)(p - alpha);
+	if (dir < 0 && i == 0) {
+		text_buf[--text_len] = 0;
+		return;
+	}
+	i = (i + (dir > 0 ? 1u : n - 1u)) % n;
+	text_buf[text_len - 1] = alpha[i];
+}
+
+// Insert c, or replace the last character. A character the profile refuses is left out and said so.
+static bool text_m17_take(char c, bool replace)
+{
+	c = text_m17_fold(c);
+	if (!text_m17_ok(c)) {
+		ui_toast(TR(M17_TOAST_CHAR, "Letters, digits and - / ."));
+		return false;
+	}
+	if (replace) {
+		if (text_len == 0)
+			return false;
+		text_buf[text_len - 1] = c;
+		return true;
+	}
+	text_append(c);
+	return true;
+}
+#endif
+
 static void text_draw(void)
 {
 	static const tr_id_t prefixes[TEXT_PREFIXES] = { TRN(LABEL_NAME, "Name"), TRN(WORD_MESSAGE, "Message"),
+		TRN(TEXT_TITLE_CALLSIGN, "Callsign"),
 #if CONFIG_SATELLITE_TLE
-		TRN(TEXT_TITLE_CALLSIGN, "Callsign"), TRN(SATELLITE_2, "Satellite") };
-#else
-		TRN(TEXT_TITLE_CALLSIGN, "Callsign") };
+		TRN(SATELLITE_2, "Satellite"),
 #endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+		TRN(M17_LABEL_CALLSIGN, TEXT_ALT_OPEN "M17 callsign" TEXT_ALT_NEXT "M17 call" TEXT_ALT_CLOSE),
+#endif
+	};
 	static const char *const modes[TEXT_MODES] = { "ABC", "123", "abc" };
 #if CONFIG_SATELLITE_TLE
 	static const tr_id_t satellite_titles[2][TEXT_MODES] = {
@@ -2306,6 +2430,25 @@ static bool text_key_fn(const input_event_t *ev)
 	if (ev->action >= ACT_DIGIT_0 && ev->action <= ACT_DIGIT_9 && press) {
 		int8_t k = (int8_t)(ev->action - ACT_DIGIT_0);
 		const char *set = keys[k];
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+		if (text_profile != TEXT_PROFILE_FREE) {
+			if (text_mode == TEXT_DIGITS || ev->gesture == GESTURE_LONG) {
+				text_m17_take((char)('0' + k), false);
+				text_key = -1;
+			} else if (k == text_key && text_len > 0 && now - text_ms < TEXT_MULTI_MS) {
+				text_idx = (uint8_t)((text_idx + 1u) % text_cycle_len(set));
+				text_m17_take(text_char(set, text_idx), true);
+				text_key = k;
+			} else {
+				text_idx = 0;
+				text_m17_take(text_char(set, 0), false);
+				text_key = k;
+			}
+			text_ms = now;
+			ui_dirty();
+			return true;
+		}
+#endif
 		if (text_mode == TEXT_DIGITS || ev->gesture == GESTURE_LONG) {
 			text_append((char)('0' + k));	// 123, or a held digit: the digit itself
 			text_key = -1;
@@ -2325,6 +2468,14 @@ static bool text_key_fn(const input_event_t *ev)
 	int dir = ev->action == ACT_NAV_UP ? 1 : ev->action == ACT_NAV_DOWN ? -1 :
 		ev->action == ACT_ENC_STEP ? (ev->value > 0 ? 1 : -1) : 0;
 	if (dir != 0 && ev->gesture != GESTURE_UP) {
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+		if (text_profile != TEXT_PROFILE_FREE) {
+			text_m17_step(dir);	// the allowed alphabet only; down from its first character deletes
+			text_key = -1;
+			ui_dirty();
+			return true;
+		}
+#endif
 		// Step the last character through the printable ones (the way in without a keypad); down past the space
 		// deletes it
 		if (text_len == 0) {
@@ -2364,8 +2515,20 @@ static bool text_key_fn(const input_event_t *ev)
 	}
 	if (ev->action == ACT_SELECT && press) {
 		if (!(board.caps & CAP_KEYPAD) && ev->gesture == GESTURE_PRESS) {
-			text_append(text_len > 0 ? text_buf[text_len - 1] : 'A');	// the next character, started as this one
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+			if (text_profile != TEXT_PROFILE_FREE)
+				text_m17_take(text_len > 0 ? text_buf[text_len - 1] : 'A', false);
+			else
+#endif
+				text_append(text_len > 0 ? text_buf[text_len - 1] : 'A');	// the next character, started as this one
 		} else {
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+			if (text_profile != TEXT_PROFILE_FREE && !text_m17_commit()) {
+				ui_toast(TR(M17_TOAST_CHAR, "Letters, digits and - / ."));
+				ui_dirty();
+				return true;
+			}
+#endif
 			if (text_target != text_buf)
 				strcpy(text_target, text_buf);
 			ui_pop();
@@ -2398,6 +2561,11 @@ static const ui_scr_def_t aprs_to_screen = {
 #if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
 static const ui_scr_def_t message_text_screen = {
 	.name = "message-text", .flags = 0, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
+};
+#endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+static const ui_scr_def_t m17_call_screen = {
+	.name = "m17-callsign", .flags = 0, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
 };
 #endif
 
@@ -4903,6 +5071,9 @@ void ui_menus_save_failed(void)
 	zones_new_pending = false;	// nothing to focus
 #endif
 	my_text_row = MY_COUNT;		// the stored name shows again
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+	m17_pending = false;
+#endif
 #if CONFIG_DMR
 	dmr_id_saved = 0;
 #endif
@@ -6540,7 +6711,8 @@ static const ui_scr_def_t tools_screen = {
 
 typedef enum { ST_TOGGLE, ST_LIST, ST_NUMBER, ST_ACTION } set_type_t;
 enum { SA_DIAG, SA_FIRMWARE, SA_CODEPLUG, SA_RESET, SA_MY_RADIO, SA_CRASH, SA_LANGUAGE, SA_HARDWARE, SA_FIXED_POS,
-	SA_SAVE_GPS_POS, SA_DATA_SERVICES, SA_BL_TEST, SA_SIG_BEGIN, SA_SIG_END, SA_SIG_IDLE };	// signaling tone steps, by sig_event_t
+	SA_SAVE_GPS_POS, SA_DATA_SERVICES, SA_BL_TEST, SA_SIG_BEGIN, SA_SIG_END, SA_SIG_IDLE,	// signaling tone steps, by sig_event_t
+	SA_M17_CALL };
 
 typedef struct {
 	tr_id_t name;			// TRN; TR_NONE for a key's row (set_name)
@@ -6972,8 +7144,12 @@ static const set_item_t s_keys[] = {
 };
 static const set_item_t s_my_radio[] = {
 	ACTION(TRN(SET_ROW_DMR_ID_AND_NAME, "DMR ID and name"), "callsign", SA_MY_RADIO),
-	// Also in Advanced, where users didn't look for it
+	// Also in Advanced, where users didn't look for it. The M17 row is after it so "down ok" still opens About
 	ACTION(TRN(TITLE_ABOUT, "About"), "firmware version release build date", SA_FIRMWARE),
+#if CONFIG_M17
+	ACTION(TRN(M17_LABEL_CALLSIGN, TEXT_ALT_OPEN "M17 callsign" TEXT_ALT_NEXT "M17 call" TEXT_ALT_CLOSE),
+		"m17 callsign", SA_M17_CALL),
+#endif
 };
 static const set_item_t s_advanced[] = {
 	ACTION(TRN(TITLE_ABOUT, "About"), "firmware version license authors", SA_FIRMWARE),
@@ -7453,9 +7629,14 @@ static bool mic_agc_on(void)
 // Why a setting can't be used on this radio or in this build (the row is dimmed and OK says it), NULL if it can
 static const char *set_why_not(const set_item_t *s)
 {
-	if (s->type == ST_ACTION)
+	if (s->type == ST_ACTION) {
+#if CONFIG_M17
+		if (s->id == SA_M17_CALL && !(feats() & UI_FEAT_M17))
+			return TR(M17_WHY_NOT_ON_RADIO, "M17: not on this radio");
+#endif
 		return s->id >= SA_SIG_BEGIN && s->id <= SA_SIG_IDLE && !(CONFIG_BEEP && CONFIG_SIG_TONES) ?
 			TR(WHY_TONES_NOT_IN_BUILD, "Tones: not in this build") : NULL;
+	}
 	switch (s->id) {
 	case UI_SET_VOICE_PROMPTS:
 		return TR(WHY_VOICE_PROMPTS_NOT_IN_BUILD, "Voice prompts: not in this build");
@@ -7558,6 +7739,22 @@ static void group_item(uint16_t i, ui_item_t *it)
 	else if (s->id >= SA_SIG_BEGIN && s->id <= SA_SIG_IDLE)
 		sc_summary(it->value, sizeof it->value, (uint8_t)(s->id - SA_SIG_BEGIN));
 #endif
+#if CONFIG_M17
+	else if (s->id == SA_M17_CALL) {
+		char call[10];
+		bool stored = false;
+		if (m17_pending && codeplug_kv_serial() == m17_kv_at) {
+			str_copy(it->value, sizeof it->value, m17_shown);
+			stored = true;	// what was just kept, including a clear, until the write lands
+		} else {
+			m17_pending = false;
+			if (ui_svc_m17_call_show(call, &stored))
+				str_copy(it->value, sizeof it->value, call);
+		}
+		if (!stored)
+			it->flags |= UI_ITEM_DIM;	// the radio-name fallback, still editable
+	}
+#endif
 	if (s->id == UI_SET_PRIVACY_KEY && s->type == ST_NUMBER && !edit && ui_svc_setting_get(UI_SET_PRIVACY_TYPE) == 0)
 		strcpy(it->value, "-");
 	if (s->type == ST_NUMBER && s->id == UI_SET_MIC_GAIN && !edit && mic_agc_on())
@@ -7636,6 +7833,9 @@ static void group_select(uint16_t i, bool hold)
 		case SA_FIRMWARE: ui_push(SCR_ABOUT, 0); break;
 		case SA_CODEPLUG: ui_push(SCR_INFO, INFO_CODEPLUG); break;
 		case SA_MY_RADIO: ui_push(SCR_DMR_ID, 0); break;
+#if CONFIG_M17
+		case SA_M17_CALL: m17_call_open(); break;
+#endif
 		case SA_RESET: ui_push(SCR_CONFIRM, 0); break;
 		case SA_LANGUAGE: ui_push(SCR_LANGUAGE, 0); break;
 #if CONFIG_SIG_TONES
@@ -8248,6 +8448,9 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 	[SCR_SATELLITE_PASSES] = &ui_satellite_passes_screen,
 	[SCR_SATELLITE] = &ui_satellite_screen,
 	[SCR_SATELLITE_TEXT] = &satellite_text_screen,
+#endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+	[SCR_M17_CALL] = &m17_call_screen,
 #endif
 #if CONFIG_CRASH_SCREEN
 	[SCR_CRASH] = &crash_screen,

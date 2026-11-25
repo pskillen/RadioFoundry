@@ -222,6 +222,10 @@ static const struct { const char *name, *script; } gallery[] = {
 	{ "dmr_id", "ok 7 0 ok" },		// Settings > My radio
 	{ "dmr_id_entry", "ok 7 0 ok 3 1 0 9" },
 #endif
+#if CONFIG_M17
+	{ "m17_callsign", "m17 ok 7 0 down down ok 9 long:1 2 9" },
+	{ "m17_callsign_fallback", "m17 ok 7 0" },
+#endif
 	{ "volume_muted", "softvol volkey down down down down down down down down" },
 	{ "hotspot", "hotspot:on" },
 };

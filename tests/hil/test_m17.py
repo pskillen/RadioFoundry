@@ -11,12 +11,17 @@ codeplug settings area over CPS (m17-codeplug.md), receive only, and checks the 
 CAN with the squelch off, the destination and the callsign in force (`m17.run.*`). The codeplug is put back after.
 Nothing is sent.
 
+test_m17_callsign_on_radio: opt-in `--allow-codeplug-write`. Types a callsign on Settings > My radio and checks
+`m17.run.call`. The radio region is restored after. Nothing is sent.
+
 test_m17_bert_rx_from_bench, test_m17_bert_tx_off_air, test_m17_lsf_off_air: opt-in `--allow-rf`. The bench
 transmitter and receiver are not wired into this file yet, so the bodies skip rather than transmit.
 """
+import time
+
 import pytest
 
-from rfoundry_hil import as_int, skip
+from rfoundry_hil import LONG, as_int, skip
 
 
 def m17_view(radio):
@@ -137,3 +142,52 @@ def test_m17_stored_channel(radio, backup_dir):
         assert v.get("m17.run.call") == RADIO_CALL, v
     radio.wait_for(lambda x: x.get("ch.kind") == "0" and x.get("m17.on") != "1", 5.0,
                    sections=("core", "channel", "m17"), what="the channel back as it was, M17 stopped")
+
+
+@pytest.mark.feature("m17")
+@pytest.mark.codeplug_write
+def test_m17_callsign_on_radio(radio, backup_dir):
+    """Settings > My radio > M17 callsign writes the radio-wide record. Nothing is sent."""
+    m17_view(radio)
+    if "UI_SETTINGS" not in radio.features():
+        skip("not_built", "built without CONFIG_UI_SETTINGS")
+    if radio.core().get("hotspot") == "1":
+        skip("state", "the radio is in hotspot mode")
+    import cps_client
+    from test_cps import read_backup, restore_backup
+    regions = cps_client.REGIONS["radio"]
+    backup, path = read_backup(radio, backup_dir, "m17call", regions)
+    mode0 = radio.core().get("mode")
+    radio.go_home()
+    try:
+        for key in ("ok", "7", "0", "down", "down", "ok"):
+            radio.press(key)
+        try:
+            radio.wait_for(lambda v: v.get("ui.screen") == "m17-callsign", 3.0, sections=("link",),
+                           what="the M17 callsign editor")
+        except AssertionError:
+            skip("state", "M17 callsign didn't open (no keypad, or the row isn't there)")
+        # W 1 A W. Past the multi-tap window, so the keys don't cycle one character
+        radio.press("9")
+        time.sleep(1.2)
+        radio.press("1", LONG)
+        time.sleep(1.2)
+        radio.press("2")
+        time.sleep(1.2)
+        radio.press("9")
+        time.sleep(1.2)
+        radio.press("ok")
+        if radio.core().get("mode") != "m17":
+            radio.link.dmr_fields(mode="m17")
+            try:
+                radio.wait_for(lambda x: x.get("mode") == "m17", 3.0, sections=("core",), what="M17 mode")
+            except AssertionError:
+                v = radio.core()
+                skip("state", f"the radio kept mode {v.get('mode')}")
+        radio.wait_for(lambda x: x.get("m17.run.call") == "W1AW", 5.0, sections=("m17",),
+                       what="the typed callsign in force")
+    finally:
+        if radio.core().get("mode") != mode0:
+            radio.link.dmr_fields(mode=mode0)
+        radio.go_home()
+        restore_backup(radio, backup, path, backup, regions=regions)

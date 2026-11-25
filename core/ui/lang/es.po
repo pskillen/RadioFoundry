@@ -2128,9 +2128,19 @@ msgid "Empty zone"
 msgstr "Zona vacía"
 
 #: core/ui/ui_menus.c
+msgctxt "TOAST_SAVED"
+msgid "Saved"
+msgstr "Guardado"
+
+#: core/ui/ui_menus.c
 msgctxt "TEXT_TOAST_FULL"
 msgid "That's the most it can hold"
 msgstr "Máximo alcanzado"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_CHAR"
+msgid "Letters, digits and - / ."
+msgstr "Letras, dígitos y - / ."
 
 #: core/ui/ui_menus.c
 msgctxt "LABEL_NAME"
@@ -2141,6 +2151,11 @@ msgstr "Nombre"
 msgctxt "SATELLITE_2"
 msgid "Satellite"
 msgstr "Satélite"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_LABEL_CALLSIGN"
+msgid "{M17 callsign|M17 call}"
+msgstr "{Indicativo M17|M17}"
 
 #: core/ui/ui_menus.c
 msgctxt "SATELLITE_TLE_TITLE_LINE1_UPPER"
@@ -3071,11 +3086,6 @@ msgstr "Guardado en el codeplug"
 msgctxt "BODY_RADIO"
 msgid "Radio: "
 msgstr "Radio: "
-
-#: core/ui/ui_menus.c
-msgctxt "TOAST_SAVED"
-msgid "Saved"
-msgstr "Guardado"
 
 #: core/ui/ui_menus.c
 msgctxt "MYID_TOAST_IDS_START_AT_1"
@@ -4341,6 +4351,11 @@ msgstr " paso"
 msgctxt "SIG_UNIT_STEPS"
 msgid " steps"
 msgstr " pasos"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_WHY_NOT_ON_RADIO"
+msgid "M17: not on this radio"
+msgstr "M17: no en esta radio"
 
 #: core/ui/ui_menus.c
 msgctxt "WHY_PERMIT_TONE_NOT_IN_BUILD"

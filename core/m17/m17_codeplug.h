@@ -33,5 +33,10 @@ bool m17_callsign_pick(const uint8_t *b, int len, const char *radio_name, char o
 bool m17_chan_load(uint16_t number, const channel_t *ch, m17_chan_t *out);
 // Read the stored record and pick a callsign with radio_name as the fallback.
 bool m17_callsign_load(const char *radio_name, char out[M17_CP_CALL_LEN]);
+// The explicit record only. False, and out empty, when it is absent, blank or invalid (the fallback is separate).
+bool m17_callsign_stored(char out[M17_CP_CALL_LEN]);
+// Write an upper-case NUL-padded 10-byte prefix. Empty text clears the callsign. Bytes after the prefix stay.
+// False, and nothing written, when text is not a callsign (no partial write).
+bool m17_callsign_store(const char *text);
 
 #endif

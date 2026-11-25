@@ -760,7 +760,7 @@ TESTS   += uiFlowTest uiFlowTestNoColor uiSim
 TESTS   += uiFlowTestSatellite
 
 uiFlowTest: uiFlowTest.c $(UIDEPS)
-	$(CC) $(UIFLAGS) -DCONFIG_P25=1 -DCONFIG_P25_TRUNK=1 -DCONFIG_NXDN=1 -o $@ uiFlowTest.c $(UIAPP) -lz
+	$(CC) $(UIFLAGS) -DCONFIG_P25=1 -DCONFIG_P25_TRUNK=1 -DCONFIG_NXDN=1 -DCONFIG_M17=1 -o $@ uiFlowTest.c $(UIAPP) -lz
 
 # The same flows built as a radio with only a monochrome screen builds them (CONFIG_UI_COLOR=n): no color rows;
 # without a translation (CONFIG_LANG_ES=n): the Language screen dims Spanish; and with the backlight tests
@@ -778,7 +778,7 @@ uiFlowTestSatellite: uiFlowTest.c $(UIDEPS)
 # off by default: make -B uiSim UI_LANG=fr (docs/dev/translating.md). The CJK face compiles to nothing without Chinese
 UI_LANG_FLAG := $(if $(UI_LANG),-DCONFIG_LANG_$(shell echo '$(UI_LANG)' | tr a-z A-Z)=1)
 uiSim: uiSim.c $(UIDEPS) $(CJK)
-	$(CC) $(UIFLAGS) $(UI_LANG_FLAG) -DCONFIG_SATELLITE_TLE=1 -o $@ uiSim.c $(UIAPP) $(CJK) -lz
+	$(CC) $(UIFLAGS) $(UI_LANG_FLAG) -DCONFIG_SATELLITE_TLE=1 -DCONFIG_M17=1 -o $@ uiSim.c $(UIAPP) $(CJK) -lz
 
 # The beep reel (tools/beep_reel.py). BEEP_DIR picks the beep.c and beep.h to build with, so CI can build the base
 # commit's beeps for a before and after comparison. We copy that beep.h into out/beep/radio/ and put out/beep first on

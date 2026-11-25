@@ -32,6 +32,12 @@ An absent, empty or invalid record uses the fallback in 1.2. Readers ignore byte
 | Alphabet | `A`–`Z`, `0`–`9`, `-`, `/` and `.`. Readers fold `a`–`z` to upper case. A leading or internal space or any other character makes the record invalid. |
 | Write | Upper case, padded with 0x00 to 10 bytes. |
 
+On the radio, **Settings > My radio > M17 callsign** edits this field. The editor accepts the alphabet above, folds
+lower case, and refuses any other character without writing. An empty field clears the record. The write is a
+10-byte prefix (`CODEPLUG_KV_HEAD`): bytes after the first 10 stay. A callsign set through debug link operation 44
+is left in RAM until restart. After a successful write the radio applies its settings again, so an empty session
+callsign picks up the record or the fallback while the radio is idle. A failed write leaves the record as it was.
+
 ### 1.2 Without a valid callsign
 
 Use the radio name from **Settings > My radio**, or the codeplug's radio name if that setting is absent. Skip

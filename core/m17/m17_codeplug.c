@@ -149,4 +149,41 @@ bool m17_callsign_load(const char *radio_name, char out[M17_CP_CALL_LEN])
 	return m17_callsign_pick(b, len < cap ? len : cap, radio_name, out);
 }
 
+bool m17_callsign_stored(char out[M17_CP_CALL_LEN])
+{
+	uint8_t b[M17_CP_CALL_BYTES];
+	const int cap = (int)sizeof b;
+	int len = codeplug_mode_settings(CODEPLUG_KIND_M17, b, sizeof b);
+
+	if (len < 0)
+		len = 0;
+	return m17_call_decode(b, len < cap ? len : cap, out);
+}
+
+bool m17_callsign_store(const char *text)
+{
+	uint8_t prefix[M17_CP_CALL_BYTES];
+	size_t n = 0;
+
+	memset(prefix, 0, sizeof prefix);
+	if (text == NULL)
+		text = "";
+	while (text[n] != '\0') {
+		char c;
+
+		if (n >= M17_ADDR_CHARS_MAX)
+			return false;
+		c = call_char((uint8_t)text[n]);
+		if (c == '\0')
+			return false;
+		prefix[n++] = (uint8_t)c;
+	}
+	// The first 10 bytes only: a later field appended to the record stays (codeplug_kv.h, CODEPLUG_KV_HEAD)
+	codeplug_kv_op_t op = {
+		(uint16_t)(CODEPLUG_KEY_MODE_SET + CODEPLUG_KIND_M17),
+		(uint16_t)(M17_CP_CALL_BYTES | CODEPLUG_KV_HEAD), prefix,
+	};
+	return codeplug_kv_write(&op, 1);
+}
+
 #endif	// CONFIG_M17

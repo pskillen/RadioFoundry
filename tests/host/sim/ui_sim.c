@@ -967,6 +967,12 @@ static bool sim_cp_insert;		// cpwrite: zone 0 starts with channel 40, its other
 static uint16_t sim_cp_deleted;		// cpdel:N: channel N is in no zone
 static uint8_t sim_zone_size[3];	// zonesize:Z,N: zone Z has its first N channels only (0: all)
 uint32_t codeplug_serial(void) { return sim_cp_serial; }
+#if CONFIG_M17
+static char sim_m17_call[10];
+static bool sim_m17_fail;
+static uint8_t sim_kv_serial;
+uint8_t codeplug_kv_serial(void) { return (uint8_t)(sim_kv_serial + (uint8_t)sim_cp_serial); }
+#endif
 
 bool codeplug_zone(uint16_t index, zone_t *out)
 {
@@ -1746,6 +1752,9 @@ static bool bcast_rx;
 static bool p25_radio;
 static bool nxdn_radio;
 static bool m17_radio;
+#if CONFIG_M17
+bool radio_m17_fits(void) { return m17_radio; }
+#endif
 // Hardware options (Settings > Advanced > Hardware, hal_hwopt.h) only with the "hwopt" token: a revision that starts
 // unset and a plain option
 static int8_t hwopt_val[2];
@@ -1793,6 +1802,68 @@ bool ui_svc_name_set(uint8_t which, const char *text)
 	sim_rec.codeplug_writes++;
 	return true;
 }
+#if CONFIG_M17
+static bool sim_m17_char(char c)
+{
+	return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '/' || c == '.';
+}
+
+bool ui_svc_m17_call_show(char out[10], bool *stored)
+{
+	const char *name;
+	size_t n, i;
+
+	if (stored != NULL)
+		*stored = false;
+	out[0] = '\0';
+	if (sim_m17_call[0] != '\0') {
+		strncpy(out, sim_m17_call, 9);
+		out[9] = '\0';
+		if (stored != NULL)
+			*stored = true;
+		return true;
+	}
+	name = sim_names[UI_NAME_RADIO];
+	while (*name == ' ')
+		name++;
+	n = strcspn(name, " -");
+	if (n == 0 || n > 9)
+		return false;
+	for (i = 0; i < n; i++) {
+		char c = name[i] >= 'a' && name[i] <= 'z' ? (char)(name[i] - 'a' + 'A') : name[i];
+		if (!sim_m17_char(c))
+			return false;
+		out[i] = c;
+	}
+	out[n] = '\0';
+	return true;
+}
+
+bool ui_svc_m17_call_set(const char *text)
+{
+	char folded[10];
+	size_t n = 0;
+
+	if (sim_m17_fail)
+		return false;
+	if (text == NULL)
+		text = "";
+	while (text[n] != '\0') {
+		char c;
+		if (n >= 9)
+			return false;
+		c = text[n] >= 'a' && text[n] <= 'z' ? (char)(text[n] - 'a' + 'A') : text[n];
+		if (!sim_m17_char(c))
+			return false;
+		folded[n++] = c;
+	}
+	folded[n] = '\0';
+	memcpy(sim_m17_call, folded, n + 1u);
+	sim_rec.codeplug_writes++;
+	sim_kv_serial++;
+	return true;
+}
+#endif
 void ui_svc_boot_text(char line1[17], char line2[17])
 {
 	strcpy(line1, sim_names[UI_NAME_BOOT1]);
@@ -2734,6 +2805,11 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 	p25_radio = false;
 	nxdn_radio = false;
 	m17_radio = false;
+#if CONFIG_M17
+	sim_m17_call[0] = '\0';
+	sim_m17_fail = false;
+	sim_kv_serial = 0;
+#endif
 #if CONFIG_NXDN
 	memset(&view.nxdn, 0, sizeof view.nxdn);
 	view.nxdn.flags = RADIO_NXDN_9600;	// the NXDN settings' defaults (radio_nxdn.c): 9600 bit/s, RAN 1, group 1
@@ -3825,6 +3901,12 @@ static bool run_token(char *t, char *err, size_t len)
 		m17_radio = true;
 		return true;
 	}
+#if CONFIG_M17
+	if (strcmp(t, "m17fail") == 0) {	// the next M17 callsign save fails
+		sim_m17_fail = true;
+		return true;
+	}
+#endif
 	if (strcmp(t, "hwopt") == 0) {		// this radio has hardware options (sim_hwopts)
 		board.hwopts = sim_hwopts;
 		board.hwopt_count = 2;
