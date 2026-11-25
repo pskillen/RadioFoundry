@@ -55,8 +55,8 @@ is `tools/bringup.py list --radio <id>`.
 | `p25_trunk` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
 | `nxdn` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | partial, needs re-run |
 | `nxdn_scrambler` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
-| `m17` | off | off | off | off | not written | off | off | off |
-| `m17_packet` | off | off | off | off | not written | off | off | off |
+| `m17` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
+| `m17_packet` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
 | `m17_voice` | off | off | off | off | not written | off | off | off |
 | `dmr_voice` | pass (seed) | pass (seed) | pass (seed) | pass (seed) | pass (seed) | not recorded | partial, needs re-run | partial, needs re-run |
 | `dmr_privacy` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | pass, needs re-run | partial, needs re-run |
@@ -310,8 +310,8 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | `P25_TRUNK` | ● | ● | ● | ● | … | ● | ● | ● |
 | `NXDN` | ● | ● | ● | ● | … | ● | ● | ● |
 | `NXDN_SCRAMBLER` | ● | ● | ● | ● | … | ● | ● | ● |
-| `M17` | ○ | ○ | ○ | ○ | … | ○ | ○ | ○ |
-| `M17_PACKET` | ○ | ○ | ○ | ○ | … | ○ | ○ | ○ |
+| `M17` | ● | ● | ● | ● | … | ● | ● | ● |
+| `M17_PACKET` | ● | ● | ● | ● | … | ● | ● | ● |
 | `M17_VOICE` | ○ | ○ | ○ | ○ | … | ○ | ○ | ○ |
 | `AIR_RAW` | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | Voltage reading (board, no switch) | Battery | Battery | Battery | None | Battery | Battery | Supply | Battery |
