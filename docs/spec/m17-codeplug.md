@@ -88,7 +88,8 @@ For `AB1CD`, the sum is 10,476,881 (0x9FDD51).
 | `M17-M17 A` | `06 16 FA CE CA ED` |
 
 Typed destinations accept the callsign characters in 1.1 and internal spaces, as in the reflector module
-`M17-M17 A`. A leading space is invalid. The editor discards trailing spaces and reads lower case as upper case.
+`M17-M17 A`. The editor trims spaces at both ends, as it does for every text field, and reads lower case as upper
+case.
 Blank text, `ALL` and `@ALL` in any case all store 0. Gateways may send the base-40 text `ALL` (0x4CE1) on air.
 
 ### 2.2 The base record
