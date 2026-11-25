@@ -80,14 +80,6 @@ static bool bert_prbs(m17_rx_t *rx, const uint8_t pay[M17_PAYLOAD_BYTES])
 	return true;
 }
 
-// A following frame one slot later: 192 symbols is 40 ms, and the chunk clock is not exact.
-static bool frame_later(const air_frame_t *f, uint32_t t)
-{
-	uint32_t d = f->t_us - t;
-
-	return d >= 39000 && d <= 41000;
-}
-
 static bool coast_ok(const m17_rx_t *rx)
 {
 #if CONFIG_M17_PACKET
@@ -113,6 +105,14 @@ static bool preamble_run(const air_frame_t *f)
 }
 
 #if CONFIG_M17_PACKET
+// A following frame one slot later: 192 symbols is 40 ms, and the chunk clock is not exact.
+static bool frame_later(const air_frame_t *f, uint32_t t)
+{
+	uint32_t d = f->t_us - t;
+
+	return d >= 39000 && d <= 41000;
+}
+
 static bool packet_crc_ok(const m17_rx_t *rx)
 {
 	uint16_t got;
