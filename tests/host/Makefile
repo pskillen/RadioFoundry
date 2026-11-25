@@ -148,7 +148,8 @@ m17FrameTest: m17FrameTest.c $(M17FEC) $(wildcard $(CORE)/m17/*.h) $(CORE)/fec/c
 M17ENG  := $(M17FEC) $(CORE)/m17/m17_air.c $(CORE)/m17/m17_rx.c $(CORE)/m17/m17_engine.c \
 	$(CORE)/m17/m17_bert.c $(CORE)/m17/m17_packet.c $(CORE)/air/air_framer.c
 TESTS   += m17EngineTest
-m17EngineTest: m17EngineTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_framer.h
+m17EngineTest: m17EngineTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_framer.h \
+               $(CORE)/air/air_softmodem.c $(CORE)/air/air_softmodem.h
 	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17EngineTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
 
 # The radio module's lend, without the state machine: a fake vocoder block and a fake P25 block
@@ -202,8 +203,9 @@ fxpTest: fxpTest.c $(CORE)/dsp/fxp.h
 
 # The soft modem's receiver on a modeled tap, alone and under the framer and the P25 receive hooks
 TESTS   += airSoftmodemTest
-airSoftmodemTest: airSoftmodemTest.c $(CORE)/air/air_softmodem.c $(CORE)/air/air_softmodem.h $(CORE)/dsp/fxp.h $(CORE)/air/air_framer.c $(P25) $(FEC) $(ROOT)/hal/hal_baseband.h
-	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -o $@ airSoftmodemTest.c $(CORE)/air/air_softmodem.c $(CORE)/air/air_framer.c $(P25) $(FEC) -lm
+SOFTMODEM_MODES := $(sort $(P25) $(NXDN) $(M17ENG) $(FEC))
+airSoftmodemTest: airSoftmodemTest.c $(CORE)/air/air_softmodem.c $(CORE)/air/air_softmodem.h $(CORE)/dsp/fxp.h $(SOFTMODEM_MODES) $(ROOT)/hal/hal_baseband.h
+	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -o $@ airSoftmodemTest.c $(CORE)/air/air_softmodem.c $(SOFTMODEM_MODES) -lm
 
 airFramerTest: airFramerTest.c $(CORE)/air/air_framer.c $(CORE)/air/air_framer.h $(CORE)/air/air_syms.h $(ROOT)/hal/hal_air.h
 	$(CC) $(CFLAGS) -Wshadow -o $@ airFramerTest.c $(CORE)/air/air_framer.c

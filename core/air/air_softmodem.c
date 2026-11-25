@@ -4,12 +4,12 @@
 //
 // Input samples -> minus the tap's offset -> polyphase interpolator to five samples per symbol -> integrate and
 // dump -> the line (a ring of the last 28 symbols of filtered samples). On every filtered sample the newest symbol
-// spaced samples in the line are fitted to each sync pattern (sample = offset + level x pattern); where the fit's
+// spaced samples in the line can be fitted to each sync pattern (sample = offset + level x pattern); where the fit's
 // error passes through a minimum, that sample is a symbol center, and the fit's level and offset are the signal's.
 // Symbols leave from the far end of the line, so a sync is sampled on the timing it gave.
 //
 // The cost is per filtered sample (24,000 a second at 4800 symbols), so that path is kept short (../dsp/fxp.h has
-// the rules and the kernels): the fit runs only where a gate of one bit per symbol says a pattern can be there, the
+// the rules and the kernels): the fit runs where the step and sign gates allow a pattern or a candidate needs it, the
 // input history is laid out twice so the interpolator reads one run, and nothing in it divides or needs 64 bits.
 #include "air_softmodem.h"
 
@@ -179,6 +179,8 @@ bool air_softmodem_rx_open(air_softmodem_t *m, const air_profile_t *p, uint32_t 
 	for (uint8_t i = 0; i < p->nsyncs && i < AIR_SYNCS_MAX; i++) {
 		const air_sync_t *s = &p->sync[i];
 		int16_t s1 = 0, s2 = 0;
+		unsigned large_steps = 0;
+		uint32_t positive = 0;
 
 		if (s->nsyms < 8 || s->nsyms > AIR_SYNC_SYMS_MAX)
 			continue;
@@ -187,6 +189,7 @@ bool air_softmodem_rx_open(air_softmodem_t *m, const air_profile_t *p, uint32_t 
 
 			s1 = (int16_t)(s1 + e);
 			s2 = (int16_t)(s2 + e * e);
+			positive = (positive << 1) | (uint32_t)(e > 0);
 		}
 		if (s->nsyms * s2 - s1 * s1 <= 0)
 			continue;	// one level only: nothing to fit
@@ -198,8 +201,16 @@ bool air_softmodem_rx_open(air_softmodem_t *m, const air_profile_t *p, uint32_t 
 
 			if (d >= 4)
 				m->gate_up[i] |= (uint16_t)(1u << j);
-			if (d >= 4 || d <= -4)
+			if (d >= 4 || d <= -4) {
 				m->gate_mask[i] |= (uint16_t)(1u << j);
+				large_steps++;
+			}
+		}
+		if (large_steps < 4 && s2 == 9 * s->nsyms) {
+			m->sign_gate |= (uint8_t)(1u << i);
+			// For all-outer symbols the signs also encode the steps. Reuse the step gate's storage.
+			m->gate_up[i] = (uint16_t)positive;
+			m->gate_mask[i] = (uint16_t)(positive >> 16);
 		}
 	}
 	memset(m->neg_partner, NO_PARTNER, sizeof m->neg_partner);
@@ -474,13 +485,43 @@ static bool search_window(const air_softmodem_t *m)
 	return m->since_sync + 2 >= period;
 }
 
-// Can a pattern end at the newest sample: all its large steps there but one (steps: the sample's phase's bits)
+// Can a pattern end at the newest sample: allow one missing step, and check signs when there are too few steps.
 static bool gate(const air_softmodem_t *m, unsigned steps)
 {
-	for (unsigned i = 0, valid = m->valid; valid; i++, valid >>= 1) {
-		unsigned v = (steps ^ m->gate_up[i]) & m->gate_mask[i];
+	uint32_t positive = 0, zero = 0;
+	unsigned gathered = 0;
+	int at = (int)m->line_at - 1;
 
-		if ((valid & 1) && !(v & (v - 1)))
+	for (unsigned i = 0, valid = m->valid; valid; i++, valid >>= 1) {
+		uint32_t expected = m->gate_up[i];
+		unsigned mask = m->gate_mask[i];
+		unsigned n = 0, v;
+
+		if (!(valid & 1))
+			continue;
+		if (m->sign_gate & (1u << i)) {
+			n = m->p->sync[i].nsyms;
+			expected |= (uint32_t)mask << 16;
+			// A sign change is a large step. Its direction is the sign of the newer symbol.
+			mask = (uint16_t)((expected ^ (expected >> 1)) & ((1u << (n - 1)) - 1u));
+		}
+		v = (steps ^ expected) & mask;
+		if (v & (v - 1))
+			continue;
+		if (!n)
+			return true;
+		// Gather each symbol-spaced sample only once, even when several patterns need it.
+		for (; gathered < n; gathered++) {
+			int x;
+
+			if (at < 0)
+				at += LINE;
+			x = m->line[at] * 256 - m->off;
+			positive |= (uint32_t)(x > 0) << gathered;
+			zero |= (uint32_t)(x == 0) << gathered;
+			at -= SPS;
+		}
+		if ((((positive ^ expected) | zero) & ((1u << n) - 1u)) == 0)
 			return true;
 	}
 	return false;
