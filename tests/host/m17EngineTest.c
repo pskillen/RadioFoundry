@@ -790,6 +790,141 @@ static void emit_packed(const uint8_t *buf, uint16_t nbytes)
 		sym[sn++] = air_sym_get(buf, i);
 }
 
+static void test_tx_type(void)
+{
+	static const struct {
+		uint8_t can, hi, voice_lo, packet_lo;
+	} cases[] = {
+		{ 0, 0x00, 0x05, 0x00 },
+		{ 5, 0x02, 0x85, 0x80 },
+		{ 15, 0x07, 0x85, 0x80 },
+	};
+	m17_engine_t e;
+	m17_fec_work_t w;
+	uint8_t frame[48], lsf[M17_LSF_BYTES];
+
+	for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+		for (uint8_t kind = M17_TX_VOICE; kind <= M17_TX_PACKET; kind++) {
+			uint8_t lo = kind == M17_TX_VOICE ? cases[i].voice_lo : cases[i].packet_lo;
+
+			engine_of(&e, kind, NULL);
+			e.cfg.can = cases[i].can;
+			CHECK(m17_engine_tx_start(&e, 0x05, NULL, 0), "start kind %u CAN %u", kind, cases[i].can);
+			CHECK(pull(&e, frame, sizeof frame) == sizeof frame, "preamble");
+			CHECK(pull(&e, frame, sizeof frame) == sizeof frame, "LSF");
+			CHECK(m17_lsf_decode(frame + 2, &w, lsf) >= 0, "LSF CRC");
+			CHECK(lsf[12] == cases[i].hi && lsf[13] == lo, "kind %u CAN %u TYPE %02X %02X",
+			      kind, cases[i].can, lsf[12], lsf[13]);
+			if (kind == M17_TX_VOICE) {
+				uint8_t counter, chunk[5], voice[16];
+				uint16_t fn;
+				int errs;
+
+				for (uint8_t n = 0; n < 3; n++)
+					CHECK(pull(&e, frame, sizeof frame) == sizeof frame, "stream %u", n);
+				CHECK(m17_stream_decode(frame + 2, &w, &counter, chunk, &fn, voice, &errs) >= 0,
+				      "stream decode");
+				CHECK(counter == 2 && chunk[2] == cases[i].hi && chunk[3] == lo, "CAN %u LICH TYPE",
+				      cases[i].can);
+			}
+		}
+	}
+}
+
+static const struct {
+	uint8_t can;
+	bool squelch;
+	int delivered;
+} can_cases[] = {
+	{ 5, true, 1 },
+	{ 4, true, 0 },
+	{ 4, false, 1 },
+};
+
+static void test_rx_voice_can(void)
+{
+	uint8_t lsf[M17_LSF_BYTES], pay[M17_PAYLOAD_BYTES];
+
+	make_lsf(lsf, "AB1CD", 0x02);
+	lsf[13] = 0x85;
+	m17_lsf_encode(lsf, pay);
+	for (size_t i = 0; i < sizeof can_cases / sizeof can_cases[0]; i++) {
+		begin_hooks();
+		m17_rx_set_can(&rx, can_cases[i].can, can_cases[i].squelch);
+		m17_rx_reset(&rx);
+		emit_frame(M17_SYNC_ID_LSF, pay);
+		emit_stream(lsf, 0, 0);
+		feed();
+		CHECK(hk_start == 1 && rx.in_call && rx.crc_ok, "call reported for case %zu", i);
+		CHECK(!memcmp(rx.lsf + 6, lsf + 6, 6), "caller for case %zu", i);
+		CHECK(hk_voice == can_cases[i].delivered, "case %zu voice %d", i, hk_voice);
+		emit_stream(lsf, 1, 1);
+		blank_last_sync();
+		feed();
+		CHECK(hk_lost == can_cases[i].delivered, "case %zu lost %d", i, hk_lost);
+	}
+}
+
+static void test_rx_late_can(void)
+{
+	uint8_t lsf[M17_LSF_BYTES], pay[M17_PAYLOAD_BYTES];
+
+	make_lsf(lsf, "AB1CD", 0x02);
+	lsf[13] = 0x85;
+	m17_lsf_encode(lsf, pay);
+	for (uint8_t can = 4; can <= 5; can++) {
+		begin_hooks();
+		m17_rx_set_can(&rx, can, true);
+		emit_stream(lsf, 0, 0);
+		emit_stream(lsf, 1, 1);
+		feed();
+		CHECK(hk_start == 1 && !rx.type_known && hk_voice == 0, "CAN %u before TYPE", can);
+		emit_stream(lsf, 2, 2);
+		feed();
+		CHECK(rx.type_known && !rx.crc_ok, "CAN %u TYPE before the LSF CRC", can);
+		CHECK(hk_voice == (can == 5), "CAN %u from chunk 2, voice %d", can, hk_voice);
+		if (can == 5)
+			CHECK(hk_fn[0] == 2, "first delivered frame was chunk 2");
+		for (uint8_t n = 3; n < 6; n++)
+			emit_stream(lsf, n, n);
+		feed();
+		CHECK(rx.crc_ok && !memcmp(rx.lsf + 6, lsf + 6, 6), "CAN %u caller after LSF CRC", can);
+		CHECK(hk_voice == (can == 5 ? 4 : 0), "CAN %u final voice %d", can, hk_voice);
+	}
+}
+
+static void test_rx_packet_can(void)
+{
+	m17_engine_t e;
+	uint8_t data[40] = { 0 }, buf[5 * 48];
+
+	// The EOT delivers a one-frame packet. The last packet frame delivers a longer one.
+	for (uint16_t len = 20; len <= sizeof data; len += 20) {
+		engine_of(&e, M17_TX_PACKET, NULL);
+		e.cfg.can = 5;
+		CHECK(m17_engine_tx_start(&e, 0x05, data, len), "packet starts, len %u", len);
+		uint16_t n = pull(&e, buf, sizeof buf);
+
+		CHECK(n == (len == 20 ? 4 : 5) * 48, "packet air bytes %u", n);
+		for (size_t i = 0; i < sizeof can_cases / sizeof can_cases[0]; i++) {
+			begin_hooks();
+			m17_rx_set_can(&rx, can_cases[i].can, can_cases[i].squelch);
+			emit_packed(buf, 2 * 48);
+			feed();
+			CHECK(hk_start == 1 && rx.in_call && rx.crc_ok, "packet call reported for case %zu", i);
+			CHECK(hk_npkt == 0, "packet payload pending for case %zu", i);
+			emit_packed(buf + 2 * 48, (uint16_t)(n - 2 * 48));
+			feed();
+			CHECK(hk_npkt == can_cases[i].delivered, "packet len %u case %zu delivered %d", len, i, hk_npkt);
+		}
+		begin_hooks();
+		m17_rx_set_can(&rx, 0, true);
+		emit_packed(buf + 2 * 48, (uint16_t)(n - 2 * 48));
+		feed();
+		CHECK(hk_npkt == 0, "packet len %u without an LSF, delivered %d", len, hk_npkt);
+	}
+}
+
 static void test_rx_packet_one_frame(void)
 {
 	m17_engine_t e;
@@ -1086,7 +1221,7 @@ static void expect_call(const char *what)
 		a >>= 8;
 	}
 	CHECK(call_crc && memcmp(call_src, src, M17_ADDR_BYTES) == 0, "%s: source", what);
-	CHECK(call_type[0] == 0 && call_type[1] == 0, "%s: TYPE %02X %02X", what, call_type[0], call_type[1]);
+	CHECK(call_type[0] == 0 && call_type[1] == 0x05, "%s: TYPE %02X %02X", what, call_type[0], call_type[1]);
 	CHECK(call_nfn == 3, "%s: %d frames", what, call_nfn);
 	CHECK(call_ends == 1, "%s: ends %d", what, call_ends);
 	for (int i = 0; i < call_nfn && i < 3; i++) {
@@ -1177,6 +1312,10 @@ int main(void)
 	test_bert_prbs_recurrence();
 	test_rx_hooks_call();
 	test_rx_coast();
+	test_tx_type();
+	test_rx_voice_can();
+	test_rx_late_can();
+	test_rx_packet_can();
 	test_rx_packet_one_frame();
 	test_rx_packet_two_frames();
 	test_rx_bert_count();

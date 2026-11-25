@@ -33,6 +33,8 @@ typedef struct m17_rx {
 	bool in_call;			// a frame this mode accepted is the call in hand
 	bool crc_ok;			// lsf[0..29], CRC included, sums to 0
 	bool type_known;		// lsf bytes 12-13 are this call's TYPE
+	uint8_t rx_can;
+	bool can_squelch;
 	uint8_t bert_run;		// 8-symbol BERT syncs in a row presented to the head hook
 	// Bits bert_prbs decoded while proving the frame. Counted from here so the frame hook does not decode again.
 	uint8_t bert_bits[(M17_BERT_BITS + 7) / 8];
@@ -55,7 +57,9 @@ typedef struct m17_rx {
 
 // hooks may be NULL. The pointer is kept, not copied: it has to outlive the call.
 void m17_rx_init(m17_rx_t *rx, const m17_engine_hooks_t *hooks, void *ctx);
-// A retune: drop the call and the chunks. Does not call rx_end.
+void m17_rx_set_can(m17_rx_t *rx, uint8_t can, bool squelch);
+bool m17_rx_can_passes(const m17_rx_t *rx);
+// A retune: keep the settings and drop the call and chunks. Does not call rx_end.
 void m17_rx_reset(m17_rx_t *rx);
 
 void m17_rx_on_lsf(m17_rx_t *rx, const uint8_t lsf[M17_LSF_BYTES]);

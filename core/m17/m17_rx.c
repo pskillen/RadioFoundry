@@ -55,14 +55,33 @@ void m17_rx_init(m17_rx_t *rx, const m17_engine_hooks_t *hooks, void *ctx)
 	rx->ctx = ctx;
 }
 
+void m17_rx_set_can(m17_rx_t *rx, uint8_t can, bool squelch)
+{
+	rx->rx_can = can;
+	rx->can_squelch = squelch;
+}
+
+bool m17_rx_can_passes(const m17_rx_t *rx)
+{
+	if (!rx->can_squelch)
+		return true;
+	if (!rx->type_known)
+		return false;
+
+	uint16_t type = (uint16_t)((rx->lsf[M17_LSF_TYPE_OFFSET] << 8) | rx->lsf[M17_LSF_TYPE_OFFSET + 1]);
+
+	return ((type & M17_TYPE_CAN_MASK) >> M17_TYPE_CAN_SHIFT) == rx->rx_can;
+}
+
 void m17_rx_reset(m17_rx_t *rx)
 {
 	const m17_engine_hooks_t *hooks = rx->hooks;
 	void *ctx = rx->ctx;
+	uint8_t can = rx->rx_can;
+	bool squelch = rx->can_squelch;
 
-	memset(rx, 0, sizeof *rx);
-	rx->hooks = hooks;
-	rx->ctx = ctx;
+	m17_rx_init(rx, hooks, ctx);
+	m17_rx_set_can(rx, can, squelch);
 }
 
 void m17_rx_on_lsf(m17_rx_t *rx, const uint8_t lsf[M17_LSF_BYTES])
@@ -85,12 +104,14 @@ void m17_rx_on_lich(m17_rx_t *rx, uint8_t counter, const uint8_t chunk[5])
 {
 	bool all = true;
 	bool was, crc_was;
+	const size_t offset = (size_t)counter * 5;
 
-	if (counter == 2 && rx->type_known && (chunk[2] != rx->lsf[12] || chunk[3] != rx->lsf[13]))
+	if (counter == 2 && rx->type_known &&
+	    memcmp(chunk + (M17_LSF_TYPE_OFFSET - offset), rx->lsf + M17_LSF_TYPE_OFFSET, 2) != 0)
 		finish(rx);
 	was = rx->in_call;
 	crc_was = rx->crc_ok;
-	memcpy(rx->lsf + (size_t)counter * 5, chunk, 5);
+	memcpy(rx->lsf + offset, chunk, 5);
 	rx->have[counter] = true;
 	if (counter == 2) {
 		rx->late = true;

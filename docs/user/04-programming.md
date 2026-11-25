@@ -234,7 +234,8 @@ Pick **M17** in the channel form's **Mode**. **Talk to** sets the destination in
 Set your **M17 callsign** on the **Radio** tab. If it is blank, the radio uses the first word of the radio name,
 up to a space or `-`. M17 voice transmission requires a valid callsign from one of these sources.
 
-This version stores the CAN and its squelch setting. Sending the CAN and checking it on receive are pending.
+The radio sends the configured CAN in M17 call setup. With **Play only this CAN** selected, the receiver reports
+calls on other CANs and mutes their voice. The VFO defaults to accepting every CAN.
 
 ### Files
 

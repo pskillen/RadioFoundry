@@ -128,7 +128,7 @@ static void give_packet(m17_rx_t *rx)
 {
 	if (!packet_crc_ok(rx))
 		return;
-	if (rx->hooks && rx->hooks->rx_packet)
+	if (rx->hooks && rx->hooks->rx_packet && m17_rx_can_passes(rx))
 		rx->hooks->rx_packet(rx->pkt, (uint16_t)(rx->pkt_len - 2), rx->ctx);
 	rx->pkt_pend = false;
 	rx->pkt_last = false;
@@ -277,7 +277,7 @@ static void rx_frame(const air_frame_t *f, void *ctx)
 	if (f->flags & AIR_FRAME_NO_SYNC) {
 		if (rx->bert_run > 0)
 			rx->bert.lost++;
-		else if (rx->hooks && rx->hooks->rx_lost)
+		else if (rx->hooks && rx->hooks->rx_lost && m17_rx_can_passes(rx))
 			rx->hooks->rx_lost(rx->ctx);
 		return;
 	}
@@ -287,9 +287,10 @@ static void rx_frame(const air_frame_t *f, void *ctx)
 		uint16_t fn = 0;
 		int lich_errs = 0;
 
+		if (!rx->hooks || !rx->hooks->rx_voice || !m17_rx_can_passes(rx))
+			return;
 		payload_of(f, pay);
-		if (m17_stream_decode(pay, &rx->work, &lich, chunk, &fn, pl, &lich_errs) >= 0 && rx->hooks &&
-		    rx->hooks->rx_voice)
+		if (m17_stream_decode(pay, &rx->work, &lich, chunk, &fn, pl, &lich_errs) >= 0)
 			rx->hooks->rx_voice(pl, fn, rx->ctx);
 		return;
 	}

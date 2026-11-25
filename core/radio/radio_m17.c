@@ -112,7 +112,7 @@ static uint64_t own_addr(const char *call)
 	return v;
 }
 
-// A channel in M17 for now keeps the settings but squelches on its CAN (decision 35).
+// A temporary M17 mode on a channel without stored M17 settings squelches on its CAN (decision 35).
 static void params(const channel_t *ch, uint16_t number, m17_engine_cfg_t *c)
 {
 	radio_m17_settings_t s = set;
@@ -133,6 +133,7 @@ static void params(const channel_t *ch, uint16_t number, m17_engine_cfg_t *c)
 	c->dst = s.dst;
 	c->can = s.can;
 	c->rx_can = s.can;
+	c->can_squelch = s.can_squelch;
 	c->tx_kind = M17_TX_VOICE;
 	c->silence = NULL;
 }
@@ -216,6 +217,7 @@ bool radio_m17_begin(const channel_t *ch, uint16_t number)
 	params(ch, number, &cfg);
 	m17_engine_init(&b->tx, &cfg, NULL, NULL);
 	m17_rx_init(&b->rx, NULL, NULL);
+	m17_rx_set_can(&b->rx, cfg.rx_can, cfg.can_squelch);
 	if (!air_session_open(&b->session, board.air, &m17_air_mode, &b->rx, b->hard, b->soft, M17_FRAME_SYMS,
 			      &session_ops, b)) {
 		stats.begin_fails++;
@@ -298,6 +300,7 @@ void radio_m17_apply(const channel_t *ch, uint16_t number)
 		return;
 	params(ch, number, &cfg);
 	blk->tx.cfg = cfg;
+	m17_rx_set_can(&blk->rx, cfg.rx_can, cfg.can_squelch);
 }
 
 bool radio_m17_in_force(radio_m17_settings_t *out)
