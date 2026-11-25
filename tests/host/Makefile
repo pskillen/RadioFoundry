@@ -1619,6 +1619,18 @@ run-nxdncp: nxdnCodeplugTest
 	./nxdnCodeplugTest
 .PHONY: run-nxdncp
 
+# M17 in the codeplug (core/m17/m17_codeplug.c): the shared vectors, a channel's parameters, and the callsign
+TESTS   += m17CodeplugTest
+M17CP   := $(CPTAG) $(CORE)/codeplug/codeplug_tag.c $(CORE)/codeplug/codeplug_records.c $(CORE)/m17/m17_codeplug.c $(M17FEC)
+
+m17CodeplugTest: m17CodeplugTest.c $(M17CP) $(wildcard $(CORE)/codeplug/*.h $(CORE)/m17/*.h) ../vectors/channel-modes.txt
+	$(CC) $(CFLAGS) -I$(ROOT)/hal -I. -Wshadow -DCONFIG_AIR=1 -DCONFIG_M17=1 -o $@ m17CodeplugTest.c $(M17CP)
+
+run: run-m17cp
+run-m17cp: m17CodeplugTest
+	./m17CodeplugTest
+.PHONY: run-m17cp
+
 # Zone editing (core/codeplug/zone_edit.c) on the real codeplug over a simulated flash: add, move, remove, copy,
 # rename, delete, a new channel added in one step, the limits
 ZEDIT   := $(CORE)/codeplug/zone_edit.c $(CORE)/codeplug/zone_shift.c $(CORE)/codeplug/zone_settle.c $(CPEDIT) \

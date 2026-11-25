@@ -106,9 +106,9 @@ codeplug is sent: no scan lists, no RX group lists, no privacy keys.
 ### 4.2 The modes part
 
 Channels of a kind ([channel-modes.md](channel-modes.md)) go with their tags and the systems they are on. Builds with
-a mode that has channels of a kind carry them (`CONFIG_ZONE_SHARE_MODES`, on with `CONFIG_ZONE_SHARE` and `CONFIG_P25`
-or `CONFIG_DMR_TRUNK`). A record holds
-the part only when it has such a channel, so a share of plain channels is the same as before. Every length is one
+a mode that has channels of a kind carry them (`CONFIG_ZONE_SHARE_MODES`, on with `CONFIG_ZONE_SHARE` and one of
+`CONFIG_P25`, `CONFIG_NXDN`, `CONFIG_DMR_TRUNK`, or `CONFIG_M17`). A record holds the part only when it has such a
+channel, so a share of plain channels is the same as before. Every length is one
 octet. Kinds' and system types' bytes are opaque here: their mode modules read them.
 
 | Part | Octets | Fields |
