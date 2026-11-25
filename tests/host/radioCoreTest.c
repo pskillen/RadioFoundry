@@ -478,7 +478,9 @@ static void air_abort(uint8_t i) { fair[i].qn = 0; fair[i].on = false; fair[i].a
 					       air_space##i, air_end##i, air_abort##i, air_now##i, NULL, NULL, air_load##i, NULL, AIR_CHUNK, \
 					       AIR_DEPTH, 60, 100 };
 FAKE_AIR(0)
-FAKE_AIR(1)
+#if CONFIG_P25 || CONFIG_NXDN
+FAKE_AIR(1)		// the far radio; an M17-only build has no second engine
+#endif
 static void air_step(void);	// with the far radio's engine, below
 #else
 static bool far_on_air(void) { return false; }
@@ -6965,7 +6967,7 @@ static void test_volume_step_of(void)
 	}
 }
 
-#if CONFIG_AIR && CONFIG_SCAN
+#if CONFIG_AIR && CONFIG_SCAN && (CONFIG_P25 || CONFIG_NXDN)
 // Run the scan (or dual watch) for up to ms: the stops it makes on channel number (visits), and whether it holds there.
 // Returns at the hold
 static bool scan_holds_on(uint16_t number, uint32_t ms, uint16_t *visits)
@@ -11752,6 +11754,30 @@ static void test_t3_stun(void)
 }
 #endif
 
+#if CONFIG_M17
+// The air-mode table selects M17, and PTT is not the NXDN codec check: a blank callsign refuses, the engine stays
+static void test_air_ops_m17(void)
+{
+	bool was = codec_present;
+
+	codec_present = false;
+	air_nofit = false;
+	setup_codeplug();
+	start();
+	CHECK(!sm.codec);
+	req(RREQ_VFO, 1);
+	req(RREQ_VFO_SET, 446100000);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	CHECK(sm.view.vfo && sm.view.ch.mode == RADIO_MODE_M17 && radio_m17_running() && hw_mode == RADIO_MODE_DMR);
+	CHECK((sm.view.m17.flags & RADIO_M17_ON) != 0);
+	req(RREQ_PTT, 1);
+	CHECK(sm.view.tx_deny != TXDENY_NO_CODEC);
+	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_REFUSED && radio_m17_running());
+	req(RREQ_PTT, 0);
+	codec_present = was;
+}
+#endif
+
 int main(void)
 {
 	test_tx_limit_op();
@@ -11885,6 +11911,9 @@ int main(void)
 #endif
 #if CONFIG_NXDN
 	test_nxdn();
+#endif
+#if CONFIG_M17
+	test_air_ops_m17();
 #endif
 	test_dmr_data_glue();	// (last: the data service's state carries over)
 	test_factory_reset();
