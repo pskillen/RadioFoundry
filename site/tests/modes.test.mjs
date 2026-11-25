@@ -539,6 +539,94 @@ test("NXDN: offered with the radio's feature; group, unit and channel ID ranges"
 	assert.ok(has(validate(m, { features: "FM,DMR,NXDN" }), "nxdn_unit_range", a));
 });
 
+// --- M17 conventional (docs/spec/m17-codeplug.md) ---
+
+import * as m17 from "../static/js/codeplug/mode_m17.js";
+
+test("vectors: M17 channel block, destination text, callsign record", () => {
+	const conv = vectors("m17conv"), enc = vectors("m17enc"), bad = vectors("m17dstbad"), rec = vectors("m17rec");
+	for (const group of [conv, enc, bad, rec]) assert.ok(group.length >= 4);
+	for (const l of conv) {
+		const [b, can, squelch, addr] = l.split(" ");
+		const p = m17.decodeChan(bytes(b));
+		assert.equal(p.can, parseInt(can, 16), l);
+		assert.equal(p.canSquelch, squelch === "1", l);
+		assert.equal(m17.addrOf(p.dst)?.toString(16).padStart(12, "0").toUpperCase(), addr, l);
+	}
+	for (const l of enc) {
+		const [can, squelch, expected, ...dst] = l.split(" ");
+		assert.equal(hexOf(m17.encodeChan({ can: parseInt(can, 16), canSquelch: squelch === "1", dst: dst.join(" ") })), expected, l);
+	}
+	for (const dst of bad) assert.equal(m17.addrOf(dst), null, dst);
+	for (const l of rec) {
+		const [b, call] = l.split(" ");
+		assert.equal(m17.decodeCall(bytes(b)).callsign, call === "-" ? "" : call, l);
+	}
+});
+
+function m17Sample() {
+	const m = empty();
+	const c = newChannel({ name: "M17 Voice", rxHz: 446006250, txHz: 446006250 });
+	m.channels.push(c);
+	numberAll(m);
+	setKind(m, c, 6);
+	c.params = { can: 7, canSquelch: false, dst: "M17-M17 A" };
+	m.modeSettings[6] = { callsign: "ab1cd" };
+	return { m, c };
+}
+
+test("M17: channels and the callsign round-trip; unknown bytes are kept", () => {
+	const { m, c } = m17Sample();
+	const img = encode(m);
+	const d = decode(img);
+	const [back] = d.channels;
+	assert.equal(back.kind, 6);
+	assert.deepEqual(back.params, c.params);
+	assert.equal(back.system, null);
+	assert.equal(back.tagTx, true);
+	assert.equal(back.mode, "dmr");
+	assert.equal(back.rxOnly, true, "the record is the safe stand-in");
+	assert.deepEqual(d.modeSettings[6], { callsign: "AB1CD" });
+	assert.deepEqual(encode(d).bytes, img.bytes);
+	const e = area(img);
+	const key = MODE_KEY.tag + c.number - 1;
+	const tag = decodeTag(getValue(e, key));
+	assert.equal(hexOf(tag.params), "170616FACECAED");
+	assert.equal(hexOf(getValue(e, MODE_KEY.setting + 6)), "41423143440000000000");
+
+	// Replace the first parameter byte and append one reserved byte.
+	tag.params = Uint8Array.of(0xE3, ...tag.params.subarray(1), 0xAA);
+	putArea(img.bytes, setValue(e, key, encodeTag(tag)));
+	const d2 = decode(img);
+	d2.channels[0].params.can = 5;
+	d2.modeSettings[6].callsign = "";
+	const saved = area(encode(d2));
+	assert.equal(hexOf(decodeTag(getValue(saved, key)).params), "E50616FACECAEDAA");
+	assert.equal(getValue(saved, MODE_KEY.setting + 6), null);
+});
+
+test("M17: offered with the radio's feature; CAN, Talk to and callsign checks", () => {
+	assert.deepEqual(offeredKinds(empty(), "FM,DMR,M17").map((k) => k.id), [6]);
+	assert.equal(kindName(6), "M17");
+	const { m, c } = m17Sample();
+	const can = m17.m17Kind.fields().find((f) => f.key === "can");
+	const dst = m17.m17Kind.fields().find((f) => f.key === "dst");
+	const [callsign] = m17.m17Kind.settings.fields;
+	assert.ok(parseSpec(can, "16", t).error);
+	assert.deepEqual(parseSpec(can, "15", t), { value: 15 });
+	assert.deepEqual(parseSpec(can, "", t), { value: 0 });
+	assert.deepEqual(parseSpec(dst, "  M17-M17 A  ", t), { value: "M17-M17 A" });
+	assert.deepEqual(parseSpec(callsign, "  ab1cd  ", t), { value: "ab1cd" });
+	for (const input of ["AB1CDEFGHI", " AB", "", "ALL", "M17-M17 A"]) {
+		c.params.dst = input;
+		assert.equal(has(validate(m), "m17_dest", c), ["AB1CDEFGHI", " AB"].includes(input), input);
+	}
+	for (const input of ["AB*CD", "AB CD", "", "ab1cd"]) {
+		m.modeSettings[6].callsign = input;
+		assert.equal(has(validate(m), "m17_callsign"), ["AB*CD", "AB CD"].includes(input), input);
+	}
+});
+
 test("AES keys are traffic keys: round-trip by system and ID, stripped exports retain the protected channel", () => {
 	const m = empty(), c = newChannel({ name: "Voice" });
 	m.channels.push(c);

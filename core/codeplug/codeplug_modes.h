@@ -31,13 +31,23 @@ bool radio_nxdn_fits(void);
 #define CODEPLUG_RUNS_NXDN	0
 #endif
 
+// What runs M17 conventional: the build (CONFIG_M17) and a board whose air interface receives or transmits its
+// profile (core/radio/radio_m17.c)
+#if CONFIG_M17
+bool radio_m17_fits(void);
+#define CODEPLUG_RUNS_M17	radio_m17_fits()
+#else
+#define CODEPLUG_RUNS_M17	0
+#endif
+
 // Channel kinds: the first byte of a channel tag
 #define CODEPLUG_KINDS(X) \
 	X(1, DMR_TRUNK, "T3", CONFIG_DMR_TRUNK)	/* DMR Tier III trunked (radio/radio_trunk.h) */ \
 	X(2, P25, "P25", CODEPLUG_RUNS_P25)	/* P25 conventional: the radio core runs it (core/radio/radio_p25.c) */ \
 	X(3, P25_TRUNK, "P25T", CONFIG_P25_TRUNK && CODEPLUG_RUNS_P25)	/* P25 trunked, receive only (radio_p25.c) */ \
 	X(4, NXDN, "NXDN", CODEPLUG_RUNS_NXDN)	/* NXDN conventional: the radio core runs it (core/radio/radio_nxdn.c) */ \
-	X(5, DMR_AES, "AES", CONFIG_DMR_AES)
+	X(5, DMR_AES, "AES", CONFIG_DMR_AES) \
+	X(6, M17, "M17", CODEPLUG_RUNS_M17)	/* M17 conventional: the radio core runs it (core/radio/radio_m17.c) */
 
 // System types: the first byte of a system record
 #define CODEPLUG_SYSTEM_TYPES(X) \
@@ -55,9 +65,9 @@ bool radio_nxdn_fits(void);
 #endif
 
 // Whether this build reads the mode-scoped record families (codeplug_records.h): the OR of the build conditions of the
-// modes that use them: P25 and NXDN read their radio-wide records, Tier III its systems. A test defines it 1
+// modes that use them: P25, NXDN and M17 read their radio-wide records, Tier III its systems. A test defines it 1
 #ifndef CODEPLUG_MODE_RECORDS
-#define CODEPLUG_MODE_RECORDS	(CONFIG_P25 || CONFIG_NXDN || CONFIG_DMR_TRUNK || CONFIG_DMR_AES)
+#define CODEPLUG_MODE_RECORDS	(CONFIG_P25 || CONFIG_NXDN || CONFIG_DMR_TRUNK || CONFIG_DMR_AES || CONFIG_M17)
 #endif
 
 #define CODEPLUG_KIND_ENUM(id, token, name, built)	CODEPLUG_KIND_##token = id,

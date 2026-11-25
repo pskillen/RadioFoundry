@@ -221,6 +221,21 @@ plan entry the radio uses the plan the control channel sends.
 follows calls to every talk group, not just the channel's. **Fallback channel** is kept in the codeplug; the radio
 doesn't use it yet and keeps hunting for a control channel. A trunked channel has no frequencies of its own.
 
+### M17
+
+Pick **M17** in the channel form's **Mode**. **Talk to** sets the destination in place of a contact.
+
+| Field | Meaning |
+|---|---|
+| CAN | Channel access number to send, 0–15. Blank uses 0. |
+| Play only this CAN | Play calls on the channel's CAN. Clear the setting to hear every CAN. |
+| Talk to | A callsign or reflector, up to 9 characters from A–Z, 0–9, `-`, `/` and `.`, with spaces allowed inside. Blank or `ALL` calls everyone. |
+
+Set your **M17 callsign** on the **Radio** tab. If it is blank, the radio uses the first word of the radio name,
+up to a space or `-`. M17 voice transmission requires a valid callsign from one of these sources.
+
+This version stores the CAN and its squelch setting. Sending the CAN and checking it on receive are pending.
+
 ### Files
 
 **Open File** takes:
