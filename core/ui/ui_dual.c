@@ -178,8 +178,9 @@ static uint8_t shown_mode(const channel_t *c)
 {
 	if (!codeplug_kind_built(c->kind) || c->kind == CODEPLUG_KIND_DMR_TRUNK)
 		return c->mode;
-	// The other kinds a build runs: P25 (trunked too) and NXDN
-	return c->kind == CODEPLUG_KIND_NXDN ? RADIO_MODE_NXDN : RADIO_MODE_P25;
+	// The other kinds a build runs: P25 (trunked too), NXDN and M17
+	return c->kind == CODEPLUG_KIND_NXDN ? RADIO_MODE_NXDN :
+		c->kind == CODEPLUG_KIND_M17 ? RADIO_MODE_M17 : RADIO_MODE_P25;
 }
 
 static void pane_fill(uint8_t i)

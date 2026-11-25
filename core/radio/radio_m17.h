@@ -4,8 +4,8 @@
 // modes that are not running, the channel's M17 parameters, and a compact view. radio_sm.c decides when M17 runs
 // and keys the transmitter (radio_air.h); nothing here keys it.
 //
-// The VFO's parameters are RAM settings. A stored channel's own record is a later step; until then a stored
-// channel still squelches on its CAN (decision 35) and the VFO does not, unless its settings say otherwise.
+// A stored kind-6 channel runs on its block. The VFO and a channel in M17 for now run on the RAM settings,
+// with CAN squelch forced on for the latter (decision 35).
 #ifndef RADIO_M17_H
 #define RADIO_M17_H
 
@@ -23,7 +23,7 @@ typedef struct {
 	uint8_t can;			// 0 to RADIO_M17_CAN_MAX, sent on every transmission
 	bool can_squelch;		// play only this CAN; off plays every one
 	uint64_t dst;			// destination address; 0 is stored as the broadcast address
-	char callsign[RADIO_M17_CALL_LEN];	// ours; empty refuses a voice or packet transmission
+	char callsign[RADIO_M17_CALL_LEN];	// session override via debug link, else the record, else the radio name's first word
 } radio_m17_settings_t;
 
 // view flags
@@ -65,6 +65,8 @@ bool radio_m17_take(channel_t *ch);
 bool radio_m17_receives(const channel_t *ch, uint16_t number);
 void radio_m17_settings(radio_m17_settings_t *out);		// any task
 void radio_m17_set_settings(const radio_m17_settings_t *s);	// radio task
+// The radio name, the callsign's fallback. Radio task; taken at the next begin or apply.
+void radio_m17_set_radio_name(const char *name);
 
 // The parameters in force, as settings: false when the engine isn't running
 bool radio_m17_in_force(radio_m17_settings_t *out);

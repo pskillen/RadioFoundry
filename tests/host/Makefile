@@ -394,7 +394,8 @@ radioCoreTestP25Nxdn: $(RCP25NX) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE
 
 # M17 only (no P25, no NXDN): the air-mode table has one row, and PTT does not ask for the DMR vocoder
 TESTS   += radioCoreTestM17
-RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c
+RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c \
+           $(CORE)/hostlink/build_info.c $(CORE)/debuglink/debuglink_view_m17.c
 radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/call/*.h) $(CORE)/dmr/dmrDataService.h \
                   $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \

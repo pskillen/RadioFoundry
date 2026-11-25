@@ -7700,6 +7700,9 @@ static void apply_prefs(radio_sm_t *sm, const settings_t *st)
 		memcpy(gs.radio_name, st->radio_name, CODEPLUG_RADIO_NAME_LEN);
 	}
 	memcpy(sm->radio_name, gs.radio_name, sizeof(sm->radio_name));
+#if CONFIG_M17
+	radio_m17_set_radio_name(sm->radio_name);	// the M17 callsign's fallback (m17-codeplug.md 1.2)
+#endif
 	sm->group_hang_ms = gs.group_hang_ms;
 	sm->private_hang_ms = gs.private_hang_ms;
 #if CONFIG_DMR_PRIVACY

@@ -40,6 +40,10 @@
 #include "hostlink/build_info.h"
 #include "radio/tx_limit.h"
 #include "radio/battery.h"
+#if CONFIG_M17
+#include "m17/m17.h"
+#include "m17/m17_codeplug.h"
+#endif
 #if CONFIG_DMR_TRUNK_TX
 #include "radio/radio_trunk.h"
 #include "codeplug/codeplug_tag.h"
@@ -11770,6 +11774,32 @@ static void test_t3_stun(void)
 #endif
 
 #if CONFIG_M17
+static m17_chan_t stored_m17[NCH + 1];
+static char m17_record_call[M17_CP_CALL_LEN];
+static char m17_name_seen[CODEPLUG_RADIO_NAME_LEN + 1];
+
+bool m17_chan_load(uint16_t number, const channel_t *ch, m17_chan_t *out)
+{
+	if (ch->kind != CODEPLUG_KIND_M17 || number < 1 || number > NCH)
+		return false;
+	*out = stored_m17[number];
+	return true;
+}
+
+bool m17_callsign_load(const char *radio_name, char out[M17_CP_CALL_LEN])
+{
+	strcpy(m17_name_seen, radio_name);
+	memcpy(out, m17_record_call, M17_CP_CALL_LEN);
+	return out[0] != '\0';
+}
+
+static void m17_view_text(char *buf, size_t cap)
+{
+	dl_text_t t;
+	dl_text_init(&t, buf, cap);
+	debuglink_view_m17(&sm.view, &t);
+}
+
 // The air-mode table selects M17, and PTT is not the NXDN codec check: a blank callsign refuses, the engine stays
 static void test_air_ops_m17(void)
 {
@@ -11808,6 +11838,71 @@ static void test_air_ops_m17(void)
 	run(800);		// the end frame finishes; the state stays TX until it does
 	CHECK(sm.view.state == RS_IDLE);
 	codec_present = was;
+}
+
+static void test_m17_stored(void)
+{
+	char buf[512];
+	radio_m17_settings_t s;
+
+	setup_codeplug();
+	add(3, "M17 rptr", 446100000, RADIO_MODE_DMR, false, 2);
+	chans[3].kind = CODEPLUG_KIND_M17;
+	chans[3].system = 0xFF;
+	stored_m17[3] = (m17_chan_t){ 3, false, 0x0000000ED87Dull };	// ECHO
+	strcpy(m17_record_call, "AB1CD");
+	start();
+	req(RREQ_ZONE_POS, 2);
+	CHECK(sm.view.channel_number == 3 && sm.view.ch.mode == RADIO_MODE_M17 && radio_m17_running());
+	CHECK(radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch && s.dst == 0xED87Dull &&
+	      strcmp(s.callsign, "AB1CD") == 0);
+	CHECK(strcmp(m17_name_seen, "Q0TEST") == 0);
+	m17_view_text(buf, sizeof buf);
+	CHECK(strstr(buf, "m17.run.can=3\nm17.run.squelch=0\nm17.run.dst=ECHO\nm17.run.call=AB1CD\n") != NULL);
+
+	req(RREQ_PTT, 1);
+	CHECK(sm.view.state == RS_TX && hw.keyed);
+	req(RREQ_PTT, 0);
+	run(800);
+	CHECK(sm.view.state == RS_IDLE && !hw.keyed);
+
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 0, 7, 1 }, 3) == DL_ST_OK);
+	radio_m17_settings(&s);
+	CHECK(s.can == 7 && s.can_squelch);
+	CHECK(radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch && s.dst == 0xED87Dull);
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){
+		0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 'T', 'E', 'S', 'T', 0, 0, 0, 0, 0 }, 18) == DL_ST_OK);
+	CHECK(radio_m17_in_force(&s) && strcmp(s.callsign, "TEST") == 0);
+
+	m17_record_call[0] = '\0';
+	start();
+	req(RREQ_ZONE_POS, 2);
+	CHECK(radio_m17_in_force(&s) && s.callsign[0] == '\0');
+	req(RREQ_PTT, 1);
+	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_REFUSED);
+	req(RREQ_PTT, 0);
+
+	stored_m17[3] = (m17_chan_t){ 0, true, M17_ADDR_BROADCAST };
+	req(RREQ_ZONE_POS, 0);
+	req(RREQ_ZONE_POS, 2);
+	m17_view_text(buf, sizeof buf);
+	CHECK(strstr(buf, "m17.run.can=0\nm17.run.squelch=1\nm17.run.dst=ALL\nm17.run.call=\n") != NULL);
+
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 0, 7, 0 }, 3) == DL_ST_OK);
+	req(RREQ_ZONE_POS, 0);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	CHECK(!sm.view.vfo && sm.view.ch.mode == RADIO_MODE_M17 && (sm.view.temp & RADIO_TEMP_MODE));
+	CHECK(radio_m17_in_force(&s) && s.can == 7 && s.can_squelch);
+
+	CHECK(strstr(build_modes_now(), "M17,") != NULL);
+	air_nofit = true;
+	req(RREQ_ZONE_POS, 2);
+	CHECK(sm.view.ch.mode == RADIO_MODE_DMR && !radio_m17_running());
+	req(RREQ_PTT, 1);
+	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_MODE);
+	req(RREQ_PTT, 0);
+	CHECK(strstr(build_modes_now(), "M17,") == NULL);
+	air_nofit = false;
 }
 #endif
 
@@ -11947,6 +12042,7 @@ int main(void)
 #endif
 #if CONFIG_M17
 	test_air_ops_m17();
+	test_m17_stored();
 #endif
 	test_dmr_data_glue();	// (last: the data service's state carries over)
 	test_factory_reset();

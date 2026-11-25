@@ -6,17 +6,17 @@
 #include <stddef.h>
 #include <string.h>
 #include "board.h"
+#include "codeplug/codeplug_modes.h"
 #include "radio/radio_m17.h"
 #include "radio/radio_bands.h"
 #include "radio/radio_lend.h"
 #include "m17/m17_engine.h"
 #include "m17/m17_rx.h"
 #include "m17/m17_bert.h"
+#include "m17/m17_codeplug.h"
 #include "air/air_session.h"
 
-// Kind 6 is the stored M17 channel (docs/spec/m17.md 10). The codeplug row that names it is a later step;
-// the number is already fixed, and take claims only a channel that carries it.
-#define M17_KIND	6u
+_Static_assert(RADIO_M17_CALL_LEN == M17_CP_CALL_LEN, "M17 callsign buffers must match");
 
 // What one session borrows: the transmit engine, the receiver, the air session (its framer), and the framer's
 // hard and soft frame buffers. It has to fit the smaller lend block. Do not shrink the M17 types to make it.
@@ -35,6 +35,7 @@ static const radio_m17_settings_t defaults = {
 };
 static radio_m17_settings_t set;
 static radio_m17_settings_t applied;	// what the running engine was given
+static char radio_name[CODEPLUG_RADIO_NAME_LEN + 1];
 static m17_block_t *blk;
 static bool bert_on;			// a BERT count or transmission was asked for; cleared when the session ends
 static radio_m17_stats_t stats;
@@ -51,6 +52,12 @@ void radio_m17_init(void)
 void radio_m17_settings(radio_m17_settings_t *out)
 {
 	*out = set;
+}
+
+void radio_m17_set_radio_name(const char *name)
+{
+	strncpy(radio_name, name != NULL ? name : "", sizeof radio_name - 1);
+	radio_name[sizeof radio_name - 1] = '\0';
 }
 
 void radio_m17_set_settings(const radio_m17_settings_t *s)
@@ -79,7 +86,7 @@ bool radio_m17_fits(void)
 
 bool radio_m17_take(channel_t *ch)
 {
-	if (ch->kind != M17_KIND || !radio_m17_fits() || radio_listen_band(ch->rx_hz))
+	if (ch->kind != CODEPLUG_KIND_M17 || !radio_m17_fits() || radio_listen_band(ch->rx_hz))
 		return false;
 	ch->mode = RADIO_MODE_M17;
 	ch->bw = RADIO_BW_12K5;
@@ -105,13 +112,21 @@ static uint64_t own_addr(const char *call)
 	return v;
 }
 
-// A stored channel squelches on its CAN; the VFO uses the RAM settings, which start with squelch off
-static void params(uint16_t number, m17_engine_cfg_t *c)
+// A channel in M17 for now keeps the settings but squelches on its CAN (decision 35).
+static void params(const channel_t *ch, uint16_t number, m17_engine_cfg_t *c)
 {
 	radio_m17_settings_t s = set;
+	m17_chan_t cc;
 
-	if (number != 0)
+	if (number != 0 && m17_chan_load(number, ch, &cc)) {
+		s.can = cc.can;
+		s.can_squelch = cc.can_squelch;
+		s.dst = cc.dst;
+	} else if (number != 0) {
 		s.can_squelch = true;
+	}
+	if (s.callsign[0] == '\0')
+		m17_callsign_load(radio_name, s.callsign);
 	applied = s;
 	memset(c, 0, sizeof *c);
 	c->own = own_addr(s.callsign);
@@ -190,7 +205,6 @@ bool radio_m17_begin(const channel_t *ch, uint16_t number)
 	m17_engine_cfg_t cfg;
 	m17_block_t *b;
 
-	(void)ch;
 	radio_m17_end();
 	stats.begins++;
 	b = place();
@@ -199,7 +213,7 @@ bool radio_m17_begin(const channel_t *ch, uint16_t number)
 		return false;
 	}
 	memset(b, 0, sizeof *b);
-	params(number, &cfg);
+	params(ch, number, &cfg);
 	m17_engine_init(&b->tx, &cfg, NULL, NULL);
 	m17_rx_init(&b->rx, NULL, NULL);
 	if (!air_session_open(&b->session, board.air, &m17_air_mode, &b->rx, b->hard, b->soft, M17_FRAME_SYMS,
@@ -280,10 +294,9 @@ void radio_m17_apply(const channel_t *ch, uint16_t number)
 {
 	m17_engine_cfg_t cfg;
 
-	(void)ch;
 	if (blk == NULL || air_session_tx_state(&blk->session) != AIR_TX_IDLE)
 		return;
-	params(number, &cfg);
+	params(ch, number, &cfg);
 	blk->tx.cfg = cfg;
 }
 
