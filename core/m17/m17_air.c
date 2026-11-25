@@ -131,14 +131,50 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 		return M17_FRAME_SYMS;
 	}
 	case M17_SYNC_ID_PACKET: {
+#if CONFIG_M17_PACKET
 		uint8_t data[25], fn, vb;
 		bool last;
+		uint16_t n;
+		bool follow;
 
-		// No corrected-bit ceiling: the spec states none. The next sync and the packet CRC are later.
+		// The decoder always returns a byte string, so one sync is not proof. The next packet sync has to
+		// land a frame later, and the CRC over the gathered bytes has to match (spec 5.2).
 		if (m17_packet_decode(pay, &rx->work, data, &fn, &last, &vb) < 0)
+			return 0;
+		n = last ? vb : 25;
+		if (n == 0 || n > 25) {
+			rx->pkt_pend = false;
+			return 0;
+		}
+		follow = rx->pkt_pend && f->t_us - rx->pkt_t >= 39000 && f->t_us - rx->pkt_t <= 41000;
+		if (!follow || (!last && fn != rx->pkt_next) || (uint32_t)rx->pkt_len + n > sizeof rx->pkt) {
+			if (!last && fn != 0) {
+				rx->pkt_pend = false;
+				return 0;
+			}
+			memcpy(rx->pkt, data, n);
+			rx->pkt_len = n;
+			rx->pkt_next = 1;
+			rx->pkt_t = f->t_us;
+			rx->pkt_pend = true;
+			return 0;
+		}
+		memcpy(rx->pkt + rx->pkt_len, data, n);
+		rx->pkt_len = (uint16_t)(rx->pkt_len + n);
+		rx->pkt_t = f->t_us;
+		rx->pkt_next++;
+		if (!last)
+			return 0;
+		rx->pkt_pend = false;
+		if (rx->pkt_len < 3 ||
+		    m17_crc16(rx->pkt, (uint16_t)(rx->pkt_len - 2)) !=
+			    (uint16_t)((rx->pkt[rx->pkt_len - 2] << 8) | rx->pkt[rx->pkt_len - 1]))
 			return 0;
 		m17_rx_on_lock(rx);
 		return M17_FRAME_SYMS;
+#else
+		return 0;
+#endif
 	}
 	case M17_SYNC_ID_BERT_PRE:
 		if (!bert_prbs(rx, pay))

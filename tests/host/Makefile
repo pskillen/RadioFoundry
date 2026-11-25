@@ -149,7 +149,7 @@ M17ENG  := $(M17FEC) $(CORE)/m17/m17_air.c $(CORE)/m17/m17_rx.c $(CORE)/m17/m17_
 	$(CORE)/m17/m17_bert.c $(CORE)/m17/m17_packet.c $(CORE)/air/air_framer.c
 TESTS   += m17EngineTest
 m17EngineTest: m17EngineTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_framer.h
-	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17EngineTest.c $(M17ENG)
+	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17EngineTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
 nxdnEngineTest: nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC)
 	$(CC) $(CFLAGS) -DCONFIG_NXDN_SCRAMBLER=1 -I$(ROOT)/hal -Wshadow -o $@ nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC) -lm
 

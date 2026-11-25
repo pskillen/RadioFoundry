@@ -3,10 +3,13 @@
 // M17 on the framer and the bytes of a transmission (docs/spec/m17.md 4, 5.2, 5.5, 8): a sync is kept only when
 // the head hook can prove the frame, a call's LSF is rebuilt from LICH chunks by their counter, and a
 // transmission is a preamble, an LSF, frames and the end marker.
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "air/air_framer.h"
+#include "air/air_softmodem.h"
 #include "air/air_syms.h"
 #include "m17/m17_engine.h"
 #include "m17/m17_packet.h"
@@ -636,6 +639,273 @@ static void test_bert_prbs_recurrence(void)
 	}
 }
 
+// ── The soft modem's tap, copied from airSoftmodemTest.c. Sizes fit one call; the noise run never builds a wave. ──
+#define TAP_FS		240000
+#define TAP_SPAN	8
+#define TAP_SYMS_MAX	4000
+#define TAP_WAVE_MAX	(TAP_SYMS_MAX * 50 + 8000)
+#define TAP_LEAD	2000
+#define TAP_LPF_HALF	120
+#define NOISE_SYMBOLS	34560000u
+
+static double tap_wave[TAP_WAVE_MAX];
+static uint32_t tap_wave_n;
+static uint8_t tap_air[TAP_SYMS_MAX];
+static uint32_t tap_air_n;
+static double tap_lpf[2 * TAP_LPF_HALF + 1];
+static int16_t tap_s[TAP_WAVE_MAX / 5];
+static uint32_t tap_sn;
+static uint32_t tap_rng_state = 0xC0FFEE;
+
+static uint32_t tap_rng(void)
+{
+	tap_rng_state ^= tap_rng_state << 13;
+	tap_rng_state ^= tap_rng_state >> 17;
+	tap_rng_state ^= tap_rng_state << 5;
+	return tap_rng_state;
+}
+
+static double tap_gauss(void)
+{
+	double u = (tap_rng() % 1000000 + 1) / 1000001.0, v = (tap_rng() % 1000000) / 1000000.0;
+
+	return sqrt(-2 * log(u)) * cos(2 * M_PI * v);
+}
+
+static void tap_pulse(double *h, int osr, uint8_t shape, double alpha)
+{
+	int n = 2 * TAP_SPAN * osr + 1;
+	double rate = (double)TAP_FS / osr, sum = 0;
+
+	for (int i = 0; i < n; i++) {
+		double t = (double)(i - TAP_SPAN * osr) / TAP_FS, v = 0;
+
+		if (shape == AIR_SHAPE_RRC) {
+			double x = t * rate;
+
+			if (fabs(x) < 1e-9)
+				v = 1 - alpha + 4 * alpha / M_PI;
+			else if (fabs(fabs(4 * alpha * x) - 1) < 1e-6)
+				v = alpha / sqrt(2) * ((1 + 2 / M_PI) * sin(M_PI / (4 * alpha)) +
+							(1 - 2 / M_PI) * cos(M_PI / (4 * alpha)));
+			else
+				v = (sin(M_PI * x * (1 - alpha)) + 4 * alpha * x * cos(M_PI * x * (1 + alpha))) /
+				    (M_PI * x * (1 - (4 * alpha * x) * (4 * alpha * x)));
+		} else {
+			v = abs(i - TAP_SPAN * osr) * 2 < osr ? 1 : 0;
+		}
+		h[i] = v;
+		sum += v;
+	}
+	for (int i = 0; i < n; i++)
+		h[i] *= osr / sum;
+}
+
+static void tap_modulate(const air_profile_t *p, double ppm)
+{
+	static double h[2 * TAP_SPAN * 100 + 1];
+	int osr = TAP_FS / p->sym_rate;
+
+	tap_pulse(h, osr, p->shape, p->shape_param / 100.0);
+	tap_wave_n = TAP_LEAD + tap_air_n * (uint32_t)osr + TAP_LEAD;
+	memset(tap_wave, 0, tap_wave_n * sizeof(double));
+	for (uint32_t k = 0; k < tap_air_n; k++) {
+		long at = TAP_LEAD + lround(k * osr / (1 + ppm * 1e-6)) - TAP_SPAN * osr;
+		double lv = air_sym_level(tap_air[k]) * (p->dev_outer_hz / 3.0);
+
+		for (int i = 0; i <= 2 * TAP_SPAN * osr; i++)
+			if (at + i >= 0 && at + i < (long)tap_wave_n)
+				tap_wave[at + i] += lv * h[i];
+	}
+}
+
+// ppm is the 8 kHz clock, fast when positive: samples land closer together.
+static void tap_sample(uint32_t rate, uint32_t phase, double hi_hz, double counts_per_khz, double off, double sigma,
+		       double ppm)
+{
+	uint32_t dec = TAP_FS / rate;
+	double step = (double)dec / (1.0 + ppm * 1e-6);
+	double sum = 0;
+
+	for (int i = -TAP_LPF_HALF; i <= TAP_LPF_HALF; i++) {
+		double x = 2 * M_PI * hi_hz / TAP_FS * i, w = 0.54 + 0.46 * cos(M_PI * i / TAP_LPF_HALF);
+
+		tap_lpf[i + TAP_LPF_HALF] = (i ? sin(x) / x : 1) * w;
+		sum += tap_lpf[i + TAP_LPF_HALF];
+	}
+	tap_sn = 0;
+	for (double j = phase + TAP_LPF_HALF; j + TAP_LPF_HALF < tap_wave_n; j += step) {
+		uint32_t jj = (uint32_t)j;
+		double v = 0;
+
+		for (int i = -TAP_LPF_HALF; i <= TAP_LPF_HALF; i++)
+			v += tap_wave[jj + (uint32_t)i] * tap_lpf[i + TAP_LPF_HALF];
+		v = v / sum / 1000 * counts_per_khz + off + sigma * tap_gauss();
+		tap_s[tap_sn++] = (int16_t)lround(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+	}
+	(void)dec;
+}
+
+static uint8_t call_src[M17_ADDR_BYTES];
+static uint8_t call_type[2];
+static int call_crc;
+static uint16_t call_fn[4];
+static int call_nfn;
+
+static void on_modem_frame(const air_frame_t *f, void *ctx)
+{
+	m17_rx_t *r = ctx;
+	m17_fec_work_t w;
+	uint8_t pay[M17_PAYLOAD_BYTES];
+	uint8_t lich, chunk[5], pl[16];
+	uint16_t fn = 0;
+	int lich_errs;
+
+	if (f->nsyms < M17_FRAME_SYMS || (f->flags & AIR_FRAME_NO_SYNC))
+		return;
+	if (f->sync_id == M17_SYNC_ID_LSF && r->crc_ok) {
+		memcpy(call_src, r->lsf + M17_ADDR_BYTES, M17_ADDR_BYTES);
+		memcpy(call_type, r->lsf + 12, 2);
+		call_crc = 1;
+	}
+	if (f->sync_id != M17_SYNC_ID_STREAM || call_nfn >= 4)
+		return;
+	memset(pay, 0, sizeof pay);
+	for (uint16_t i = 0; i < M17_PAYLOAD_BITS / 2; i++)
+		air_sym_put(pay, i, air_sym_get(f->hard, (uint16_t)(M17_SYNC_SYMS + i)));
+	if (m17_stream_decode(pay, &w, &lich, chunk, &fn, pl, &lich_errs) >= 0)
+		call_fn[call_nfn++] = fn;
+}
+
+static void on_modem_chunk(const air_chunk_t *c, void *ctx)
+{
+	air_framer_rx(ctx, c);
+}
+
+static void send_call(uint8_t rolloff)
+{
+	m17_engine_t e;
+	air_profile_t prof = m17_air_mode.profile;
+	uint8_t bytes[8 * 48];
+	uint8_t nvoice = 0;
+	uint16_t n;
+
+	engine_of(&e, M17_TX_VOICE, voice_seq);
+	e.ctx = &nvoice;
+	m17_engine_tx_start(&e, 0, NULL, 0);
+	n = pull(&e, bytes, 4 * 48);
+	m17_engine_tx_stop(&e);
+	n = (uint16_t)(n + pull(&e, bytes + n, 2 * 48));
+	tap_air_n = 0;
+	for (uint16_t i = 0; i < 64; i++)
+		tap_air[tap_air_n++] = air_sym_get((const uint8_t *)"\x77", (uint16_t)(i & 3));
+	for (uint16_t i = 0; i < (uint16_t)(n * 4); i++)
+		tap_air[tap_air_n++] = air_sym_get(bytes, i);
+	prof.shape_param = rolloff;
+	tap_modulate(&prof, 0);
+}
+
+static void take_call(double clock_ppm)
+{
+	air_mode_t mode = m17_air_mode;
+	air_softmodem_t m;
+	air_framer_t framer;
+	m17_rx_t r;
+	uint8_t hard[M17_FRAME_SYMS];
+	int8_t soft[M17_FRAME_SYMS];
+
+	call_crc = 0;
+	call_nfn = 0;
+	memset(call_src, 0, sizeof call_src);
+	memset(call_type, 0, sizeof call_type);
+	mode.rx_frame = on_modem_frame;
+	m17_rx_init(&r, NULL, NULL);
+	air_framer_init(&framer, &mode, &r, hard, soft, M17_FRAME_SYMS);
+	tap_sample(8000, 5, 3600, 2000, 0, 0, clock_ppm);
+	air_softmodem_rx_open(&m, &m17_air_mode.profile, 8000, 2000, on_modem_chunk, &framer);
+	for (uint32_t at = 0; at < tap_sn;) {
+		uint16_t k = (uint16_t)(tap_sn - at < 256 ? tap_sn - at : 256);
+
+		air_softmodem_rx(&m, tap_s + at, k, (uint32_t)(((uint64_t)at * 1000000u) / 8000u));
+		at += k;
+	}
+}
+
+static void expect_call(const char *what)
+{
+	uint8_t src[M17_ADDR_BYTES];
+	uint64_t a = M17_ADDR_AB1CD;
+	uint16_t want[3] = { 0, 1, 0x8002 };
+
+	for (int i = 5; i >= 0; i--) {
+		src[i] = (uint8_t)a;
+		a >>= 8;
+	}
+	CHECK(call_crc && memcmp(call_src, src, M17_ADDR_BYTES) == 0, "%s: source", what);
+	CHECK(call_type[0] == 0 && call_type[1] == 0, "%s: TYPE %02X %02X", what, call_type[0], call_type[1]);
+	CHECK(call_nfn == 3, "%s: %d frames", what, call_nfn);
+	for (int i = 0; i < call_nfn && i < 3; i++)
+		CHECK(call_fn[i] == want[i], "%s: frame %d number %04X", what, i, call_fn[i]);
+}
+
+static void test_call_through_modem(void)
+{
+	send_call(50);
+	take_call(0);
+	expect_call("roll-off 0.5");
+}
+
+static void test_call_through_chip_pulse(void)
+{
+	send_call(20);
+	take_call(0);
+	expect_call("roll-off 0.2");
+}
+
+static void test_call_clock_offset(void)
+{
+	send_call(50);
+	take_call(50);
+	expect_call("+50 ppm");
+	send_call(50);
+	take_call(-50);
+	expect_call("-50 ppm");
+}
+
+static uint32_t noise_syms;
+
+static void on_noise_chunk(const air_chunk_t *c, void *ctx)
+{
+	noise_syms += c->nsyms;
+	air_framer_rx(ctx, c);
+}
+
+static void test_noise_two_hours(void)
+{
+	air_mode_t mode = m17_air_mode;
+	air_softmodem_t m;
+	air_framer_t framer;
+	m17_rx_t r;
+	uint8_t hard[M17_FRAME_SYMS];
+	int8_t soft[M17_FRAME_SYMS];
+	int16_t buf[256];
+	uint32_t at = 0;
+
+	noise_syms = 0;
+	tap_rng_state = 0xC0FFEE;
+	m17_rx_init(&r, NULL, NULL);
+	air_framer_init(&framer, &mode, &r, hard, soft, M17_FRAME_SYMS);
+	air_softmodem_rx_open(&m, &m17_air_mode.profile, 8000, 0, on_noise_chunk, &framer);
+	while (noise_syms < NOISE_SYMBOLS) {
+		for (uint16_t i = 0; i < 256; i++)
+			buf[i] = (int16_t)lround(3000 * tap_gauss());
+		air_softmodem_rx(&m, buf, 256, at);
+		at += 256u * 125u;
+	}
+	CHECK(framer.stats.frames == 0, "noise accepted %u frames in %u symbols (%u rejects)", framer.stats.frames,
+	      noise_syms, framer.stats.rejects);
+}
+
 int main(void)
 {
 	test_lsf_crc_accepts();
@@ -653,6 +923,10 @@ int main(void)
 	test_csma();
 	test_bert_count();
 	test_bert_prbs_recurrence();
+	test_call_through_modem();
+	test_call_through_chip_pulse();
+	test_call_clock_offset();
+	test_noise_two_hours();
 	printf("m17EngineTest: %d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;
 }

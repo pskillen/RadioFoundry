@@ -19,6 +19,9 @@ static void finish(m17_rx_t *rx)
 	rx->crc_ok = false;
 	rx->type_known = false;
 	rx->bert_run = 0;
+#if CONFIG_M17_PACKET
+	rx->pkt_pend = false;
+#endif
 	memset(rx->have, 0, sizeof rx->have);
 	memset(rx->lsf, 0, sizeof rx->lsf);
 	if (was && rx->end)

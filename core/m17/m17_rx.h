@@ -8,6 +8,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "config.h"
+
 #include "../air/air_framer.h"
 #include "m17.h"
 
@@ -29,6 +31,15 @@ typedef struct {
 	bool crc_ok;			// lsf[0..29], CRC included, sums to 0
 	bool type_known;		// lsf bytes 12-13 are this call's TYPE
 	uint8_t bert_run;		// 8-symbol BERT syncs in a row presented to the head hook
+#if CONFIG_M17_PACKET
+	// A packet sync is not a frame by itself. The candidate bytes wait for the next packet sync one frame
+	// later, and the CRC over all of them (spec 5.2).
+	bool pkt_pend;
+	uint32_t pkt_t;
+	uint16_t pkt_len;
+	uint8_t pkt_next;
+	uint8_t pkt[825];
+#endif
 	m17_fec_work_t work;
 	void (*end)(void *ctx);		// the call ended (a new LSF, a different TYPE, the end marker, the signal)
 	void *ctx;
