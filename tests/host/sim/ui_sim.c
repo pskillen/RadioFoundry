@@ -35,6 +35,9 @@
 //                       1 finding the system, 2 on the control channel, 3 following talk group tg
 //   rx:<src>,<dst>,g|p[,name]   a DMR call starts (g = group, p = private to us); rxend ends it
 //   call:<src>,<dst>,g|p        a 2 s call, then 1 s of quiet
+//   m17messages         enable the M17 packet receive capability
+//   nosms               disable DMR SMS capability
+//   m17msg:<call>,<text>,<cut>  receive an M17 message (_ = space; cut = 0 or 1)
 //   msg:<src>,<text>    a text message arrives (_ = space); alert:<src>; emergency:<src>; privcall:<src>
 //                       (each also <src>,<name>: the station's name, _ = space, for one not in the contacts)
 //   zoneoffer:<src>[,c] another radio offers its zone "Club net" (,c: one channel); the import and sends always work
@@ -1764,10 +1767,18 @@ static void rx_end(void)
 typedef struct { ui_msg_t m; uint32_t at; } sim_msg_t;
 static sim_msg_t inbox[8];
 static uint16_t n_inbox;
+#if CONFIG_M17 && CONFIG_M17_PACKET
+typedef struct { ui_msg_t m; uint32_t at, id; } sim_m17_msg_t;
+static sim_m17_msg_t m17_inbox[4];
+static uint8_t n_m17_inbox;
+static uint32_t m17_seq, m17_last_id;
+static bool m17_messages;
+#endif
 
 // The volume feature (a radio without a knob: the VOL key, Settings > Sound > Volume) only with the "softvol" token, so
 // the other screens look as on the radios with a knob
 static bool soft_volume;
+static bool no_sms;
 // The broadcast receiver (Settings > Talk & listen > FM broadcast step) only with the "bcast" token, the same way
 static bool bcast_rx;
 // P25 on this radio (UI_FEAT_P25: the VFO's mode tile offers it) only with the "p25" token; NXDN with "nxdn";
@@ -1876,10 +1887,15 @@ static bool knob_radio;
 static bool vol_held;		// ui_svc_volume_hold: the radio ignores the volume knob
 uint32_t ui_svc_features(void)
 {
-	return 0xFFFFFFFFu & ~(soft_volume ? 0 : UI_FEAT_VOLUME) & ~(bcast_rx ? 0 : UI_FEAT_BCAST) &
+	return 0xFFFFFFFFu & ~(no_sms ? UI_FEAT_SMS : 0) & ~(soft_volume ? 0 : UI_FEAT_VOLUME) & ~(bcast_rx ? 0 : UI_FEAT_BCAST) &
 	       ~(ref_trim ? 0 : UI_FEAT_REF_TRIM) &
 	       ~(knob_radio ? 0 : UI_FEAT_VOLUME_KNOB) & ~(p25_radio ? 0 : UI_FEAT_P25) &
-	       ~(nxdn_radio ? 0 : UI_FEAT_NXDN) & ~(m17_radio ? 0 : UI_FEAT_M17);
+	       ~(nxdn_radio ? 0 : UI_FEAT_NXDN) & ~(m17_radio ? 0 : UI_FEAT_M17) &
+#if CONFIG_M17 && CONFIG_M17_PACKET
+	       ~(m17_messages ? 0 : UI_FEAT_M17_PACKET);
+#else
+	       ~UI_FEAT_M17_PACKET;
+#endif
 }
 // My radio's names (ui_svc_name_*): placeholders, as the user's own would be; a save writes at once
 static char sim_names[UI_NAME_COUNT][17];
@@ -2479,6 +2495,71 @@ static void sim_m17_update(void)
 }
 #endif
 
+#if CONFIG_M17 && CONFIG_M17_PACKET
+void ui_svc_m17_msg_summary(ui_m17_msg_summary_t *out)
+{
+	*out = (ui_m17_msg_summary_t){ .received_seq = m17_seq, .last_received_id = m17_last_id,
+		.count = n_m17_inbox };
+	for (uint8_t i = 0; i < n_m17_inbox; i++)
+		out->unread += m17_inbox[i].m.unread;
+}
+bool ui_svc_m17_msg_get_at(uint16_t i, uint32_t *id, ui_msg_t *out)
+{
+	if (i >= n_m17_inbox)
+		return false;
+	*id = m17_inbox[i].id;
+	*out = m17_inbox[i].m;
+	out->age_ms = now_ms - m17_inbox[i].at;
+	return true;
+}
+static int m17_msg_index(uint32_t id)
+{
+	for (uint8_t i = 0; i < n_m17_inbox; i++)
+		if (m17_inbox[i].id == id)
+			return i;
+	return -1;
+}
+bool ui_svc_m17_msg_get(uint32_t id, ui_msg_t *out)
+{
+	int i = m17_msg_index(id);
+	uint32_t copied_id;
+	return i >= 0 && ui_svc_m17_msg_get_at((uint16_t)i, &copied_id, out);
+}
+bool ui_svc_m17_msg_read(uint32_t id)
+{
+	int i = m17_msg_index(id);
+	if (i < 0)
+		return false;
+	m17_inbox[i].m.unread = false;
+	return true;
+}
+bool ui_svc_m17_msg_delete(uint32_t id)
+{
+	int i = m17_msg_index(id);
+	if (i < 0)
+		return false;
+	memmove(&m17_inbox[i], &m17_inbox[i + 1], (n_m17_inbox - (unsigned)i - 1u) * sizeof m17_inbox[0]);
+	n_m17_inbox--;
+	return true;
+}
+static void add_m17_message(const char *call, const char *text, bool cut)
+{
+	if (n_m17_inbox == 4)
+		n_m17_inbox--;
+	memmove(&m17_inbox[1], &m17_inbox[0], n_m17_inbox * sizeof m17_inbox[0]);
+	n_m17_inbox++;
+	memset(&m17_inbox[0], 0, sizeof m17_inbox[0]);
+	m17_inbox[0].id = ++m17_last_id;
+	m17_seq++;
+	m17_inbox[0].at = now_ms;
+	m17_inbox[0].m.via = UI_MSG_VIA_M17;
+	m17_inbox[0].m.unread = true;
+	m17_inbox[0].m.cut = cut;
+	snprintf(m17_inbox[0].m.call, sizeof m17_inbox[0].m.call, "%s", call);
+	snprintf(m17_inbox[0].m.text, sizeof m17_inbox[0].m.text, "%s", text);
+}
+#endif
+
 uint16_t ui_svc_msg_count(void) { return n_inbox; }
 uint16_t ui_svc_msg_unread(void)
 {
@@ -2988,6 +3069,12 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 	view.zone_index = 0;
 	view.zone_pos = 2;	// 3 COUNTY DMR
 	n_inbox = 0;
+#if CONFIG_M17 && CONFIG_M17_PACKET
+	n_m17_inbox = 0;
+	m17_seq = 0;
+	m17_last_id = 65536u;
+	m17_messages = false;
+#endif
 	hotspot_on = rx_on = usb_net = usb_up = false;
 	board.netif = &sim_netif;
 	aprs_sim_reset();
@@ -3012,6 +3099,7 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 	now_ms = 1000;
 	load_channel();
 	soft_volume = false;
+	no_sms = false;
 	view.volume = -1;	// no level passed on yet (power-up)
 	view.volume_src = RVOL_KNOB;
 	bcast_rx = false;
@@ -3377,6 +3465,14 @@ static bool check(const char *kv, char *err, size_t len)
 		snprintf(got, sizeof got, "%d", (int)ui_svc_setting_get((uint8_t)atoi(key + 3)));
 	else if (strcmp(key, "radio_tot") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.tot_s);
 	else if (strcmp(key, "radio_backlight") == 0) snprintf(got, sizeof got, "%ld", (long)sim_rec.backlight_s);
+#if CONFIG_M17 && CONFIG_M17_PACKET
+	else if (strcmp(key, "m17count") == 0) snprintf(got, sizeof got, "%u", n_m17_inbox);
+	else if (strcmp(key, "m17unread") == 0) {
+		ui_m17_msg_summary_t summary;
+		ui_svc_m17_msg_summary(&summary);
+		snprintf(got, sizeof got, "%u", summary.unread);
+	}
+#endif
 	else if (strcmp(key, "count") == 0) snprintf(got, sizeof got, "%u", s.count);
 	else if (strcmp(key, "depth") == 0) snprintf(got, sizeof got, "%u", s.depth);
 	else if (strcmp(key, "hotspot") == 0) snprintf(got, sizeof got, "%u", hotspot_on);
@@ -4046,6 +4142,27 @@ static bool run_token(char *t, char *err, size_t len)
 		advance(200);
 		return true;
 	}
+#if CONFIG_M17 && CONFIG_M17_PACKET
+	if (strcmp(t, "m17messages") == 0) {
+		m17_messages = true;
+		return true;
+	}
+	if (strcmp(t, "m17msg") == 0 && arg != NULL) {
+		char call[10], text[UI_MSG_TEXT_MAX + 1], extra;
+		int cut;
+		if (sscanf(arg, "%9[^,],%143[^,],%d%c", call, text, &cut, &extra) != 3 || (cut != 0 && cut != 1)) {
+			snprintf(err, len, "bad m17msg");
+			return false;
+		}
+		for (char *p = text; *p; p++)
+			if (*p == '_')
+				*p = ' ';
+		m17_messages = true;
+		add_m17_message(call, text, cut != 0);
+		advance(200);
+		return true;
+	}
+#endif
 	if (strcmp(t, "msg") == 0 && arg != NULL) {
 		char text[UI_MSG_TEXT_MAX + 1];
 		unsigned src = 0;
@@ -4273,6 +4390,10 @@ static bool run_token(char *t, char *err, size_t len)
 	if (strcmp(t, "am") == 0) {		// this radio receives air band AM (CAP_AM_RX), until the next reset
 		board.caps |= CAP_AM_RX;
 		board.radio = &am_radio;
+		return true;
+	}
+	if (strcmp(t, "nosms") == 0) {
+		no_sms = true;
 		return true;
 	}
 	if (strcmp(t, "bcast") == 0) {		// this radio has a broadcast FM receiver

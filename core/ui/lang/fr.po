@@ -1082,7 +1082,7 @@ msgctxt "APRS_LABEL_PACKETS"
 msgid "Packets"
 msgstr "Paquets"
 
-#: core/ui/ui_aprs.c
+#: core/ui/ui_aprs.c core/ui/ui_menus.c
 msgctxt "HINT_OK_CHOOSE_BACK"
 msgid "OK choose  Back"
 msgstr "OK choisir  Retour"
@@ -1841,6 +1841,11 @@ msgstr "De "
 msgctxt "MSG_BODY_TO"
 msgid "To "
 msgstr "À "
+
+#: core/ui/ui_menus.c
+msgctxt "MSG_M17_BODY_STORED_CUT"
+msgid "[Stored text truncated]"
+msgstr "[Texte enregistré tronqué]"
 
 #: core/ui/ui_menus.c
 msgctxt "HINT_OK_CHOOSE_MORE_BACK"

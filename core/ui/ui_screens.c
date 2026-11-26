@@ -3221,7 +3221,11 @@ void ui_draw_banner(const ui_state_t *s)
 	} else {
 		nt = wrap_lines(f, bn->title, w - 4, 2, title, false);
 	}
-	int nx = bn->text[0] ? wrap_lines(f, bn->text, w - 4, 2, text, bn->kind == UI_BANNER_MESSAGE) : 0;
+	bool message = bn->kind == UI_BANNER_MESSAGE;
+#if CONFIG_M17_PACKET
+	message = message || bn->kind == UI_BANNER_M17_MESSAGE;
+#endif
+	int nx = bn->text[0] ? wrap_lines(f, bn->text, w - 4, 2, text, message) : 0;
 	int pad = gfx_height() >= UI_TALL_PX ? 2 : 1;
 	int h = (nt + nx + 1) * f->h + 2 * pad;
 	int y = L->hint_y - h;
@@ -3240,7 +3244,7 @@ void ui_draw_banner(const ui_state_t *s)
 		gfx_text(f, 2, ty, title[i], gfx_bpp() == 1 ? fg : bn->warn ? ui_col.warn : ui_col.fg);
 	for (int i = 0; i < nx; i++, ty += f->h)
 		gfx_text(f, 2, ty, text[i], fg);
-	const char *act = (bn->kind == UI_BANNER_MESSAGE || bn->kind == UI_BANNER_ZONE_OFFER || bn->kind == UI_BANNER_APRS_MESSAGE) ?
+	const char *act = (message || bn->kind == UI_BANNER_ZONE_OFFER || bn->kind == UI_BANNER_APRS_MESSAGE) ?
 		TR(BANNER_HINT_OPEN, "# Open") :
 		(bn->kind == UI_BANNER_CALL_ALERT || bn->kind == UI_BANNER_PRIVATE) ?
 			TR(BANNER_HINT_ACTIONS, "# Actions") : TR(BANNER_HINT_HIDE, "Back hide");

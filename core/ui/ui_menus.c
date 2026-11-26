@@ -389,7 +389,12 @@ static const tr_id_t canned[] = { TRN(MSG_BODY_CANNED_OK, "OK"), TRN(MSG_BODY_CA
 	TRN(MSG_BODY_CANNED_CALL_ME, "Call me"), TRN(MSG_BODY_CANNED_CANT_TALK, "Can't talk now") };
 #define CANNED_N	(sizeof canned / sizeof canned[0])
 // The inbox body and composer cannot be on screen at the same time.
+#if CONFIG_M17_PACKET
+// Prefix fits the longest current translations, nine-byte call, maximum age and cut marker, plus NUL.
+static char message_buffer[UI_MSG_TEXT_MAX + 64];
+#else
 static char message_buffer[UI_MSG_TEXT_MAX + 48];
+#endif
 static char aprs_to[AX25_CALL_LEN + 4];
 static char aprs_compose_to[AX25_CALL_LEN + 4];
 static uint8_t aprs_message_flags;
@@ -746,117 +751,143 @@ static bool aprs_new_available(void)
 #endif
 }
 
-static uint16_t msgs_count(void)
+#if CONFIG_M17_PACKET
+#define MSG_SCRATCH_DECL ui_msg_t *scratch = &ui_message_scratch
+#else
+#define MSG_SCRATCH_DECL ui_msg_t local_message; ui_msg_t *scratch = &local_message
+#endif
+
+enum { MSG_DMR, MSG_APRS, MSG_M17 };
+
+static uint16_t m17_count(void)
 {
-	return ui_svc_msg_count() + ui_svc_aprs_msg_count() + (aprs_new_available() ? 1u : 0u);
+#if CONFIG_M17_PACKET
+	ui_m17_msg_summary_t summary;
+	ui_svc_m17_msg_summary(&summary);
+	return summary.count;
+#else
+	return 0;
+#endif
 }
 
-// Both inboxes are newest first. Merge their small RAM lists by age for the shared Messages screen.
-static bool msg_row(uint16_t row, bool *aprs, uint16_t *index)
+static uint16_t msgs_count(void)
 {
-	uint16_t d = 0, a = 0;
-	uint16_t nd = ui_svc_msg_count(), na = ui_svc_aprs_msg_count();
-	if (row >= nd + na)
+	return ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count() + (aprs_new_available() ? 1u : 0u);
+}
+
+// Strictly younger wins: DMR precedes APRS on a tie, then M17.
+static bool msg_row(uint16_t row, uint8_t *via, uint16_t *index, uint32_t *id)
+{
+	MSG_SCRATCH_DECL;
+	uint16_t d = 0, a = 0, m = 0;
+	uint16_t nd = ui_svc_msg_count(), na = ui_svc_aprs_msg_count(), nm = m17_count();
+	if (row >= nd + na + nm)
 		return false;
 	for (uint16_t n = 0; n <= row; n++) {
-		bool take_aprs = d == nd;
-		if (!take_aprs && a < na) {
-			// One message at a time: both copies at once put this list on the UI task's deepest chain
-			uint32_t dmr_age;
-			{
-				ui_msg_t dm;
-				if (!ui_svc_msg_get(d, &dm))
-					return false;
-				dmr_age = dm.age_ms;
-			}
-			aprs_msg_t am;
-			if (!ui_svc_aprs_msg((uint8_t)a, &am, false))
-				return false;
-			take_aprs = ui_st.now_ms - am.ms < dmr_age;
+		uint32_t age = UINT32_MAX, mid = 0;
+		uint8_t choice = MSG_DMR;
+		bool found = false;
+		if (d < nd) {
+			if (!ui_svc_msg_get(d, scratch)) return false;
+			age = scratch->age_ms;
+			found = true;
 		}
-		*aprs = take_aprs;
-		*index = take_aprs ? a++ : d++;
+		if (a < na) {
+			aprs_msg_t am;
+			if (!ui_svc_aprs_msg((uint8_t)a, &am, false)) return false;
+			uint32_t aa = ui_st.now_ms - am.ms;
+			if (!found || aa < age) { choice = MSG_APRS; age = aa; found = true; }
+		}
+		if (m < nm) {
+			if (!ui_svc_m17_msg_get_at(m, &mid, scratch)) return false;
+			if (!found || scratch->age_ms < age) choice = MSG_M17;
+		}
+		*via = choice;
+		*id = choice == MSG_M17 ? mid : 0;
+		*index = choice == MSG_DMR ? d++ : choice == MSG_APRS ? a++ : m++;
 	}
 	return true;
 }
 
 static void msgs_item(uint16_t i, ui_item_t *it)
 {
-	uint16_t dmr_count = ui_svc_msg_count();
-	uint16_t aprs_count = ui_svc_aprs_msg_count();
-	if (aprs_new_available() && i == dmr_count + aprs_count) {
+	if (aprs_new_available() && i == ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count()) {
 		str_copy(it->label, sizeof it->label, TR(MSG_ROW_NEW_APRS, "New APRS message"));
 		return;
 	}
-	bool aprs;
+	uint8_t via;
 	uint16_t index;
-	if (!msg_row(i, &aprs, &index))
-		return;
-	if (aprs) {
+	uint32_t id;
+	if (!msg_row(i, &via, &index, &id)) return;
+	if (via == MSG_APRS) {
 		aprs_msg_t m;
-		if (!ui_svc_aprs_msg((uint8_t)index, &m, false))
-			return;
+		if (!ui_svc_aprs_msg((uint8_t)index, &m, false)) return;
 		sbuf_t b;
 		sb_init(&b, it->label, sizeof it->label);
-		sb_str(&b, m.from);
-		sb_str(&b, ": ");
-		sb_str(&b, m.text);
+		sb_str(&b, m.from); sb_str(&b, ": "); sb_str(&b, m.text);
 		ui_sb_age(it->value, sizeof it->value, ui_st.now_ms - m.ms);
 		it->flags |= UI_ITEM_PREVIEW;
-		if (!m.read)
-			it->flags |= UI_ITEM_WARN;
+		if (!m.read) it->flags |= UI_ITEM_WARN;
 		return;
 	}
-	ui_msg_t m;
-	if (!ui_svc_msg_get(index, &m))
-		return;
+	MSG_SCRATCH_DECL;
+	ui_msg_t *m = scratch;
+	if (!(via == MSG_M17 ? ui_svc_m17_msg_get(id, m) : ui_svc_msg_get(index, m))) return;
 	sbuf_t b;
 	sb_init(&b, it->label, sizeof it->label);
-	if (m.sent)
-		sb_str(&b, GLYPH_ARROW);
-	if (m.name[0])
-		sb_str(&b, m.name);
+	if (m->sent) sb_str(&b, GLYPH_ARROW);
+#if CONFIG_M17_PACKET
+	if (via == MSG_M17)
+		sb_str(&b, m->call);
 	else
-		sb_u32(&b, m.src, 1);
-	sb_str(&b, ": ");
-	sb_str(&b, m.text);
-	ui_sb_age(it->value, sizeof it->value, m.age_ms);
-	it->flags |= UI_ITEM_PREVIEW;	// the start of the message: cut at its end
-	if (m.unread)
-		it->flags |= UI_ITEM_WARN;
+#endif
+	if (m->name[0])
+		sb_str(&b, m->name);
+	else
+		sb_u32(&b, m->src, 1);
+	sb_str(&b, ": "); sb_str(&b, m->text);
+	ui_sb_age(it->value, sizeof it->value, m->age_ms);
+	it->flags |= UI_ITEM_PREVIEW;
+	if (m->unread) it->flags |= UI_ITEM_WARN;
 }
 
 static void msgs_select(uint16_t i, bool hold)
 {
 	(void)hold;
-	if (aprs_new_available() && i == ui_svc_msg_count() + ui_svc_aprs_msg_count())
+	if (aprs_new_available() && i == ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count()) {
 		ui_aprs_compose("");
-	else {
-		bool aprs;
-		uint16_t index;
-		if (msg_row(i, &aprs, &index))
-			ui_push(SCR_MESSAGE, aprs ? (uint16_t)(MSG_APRS_ARG | index) : index);
+		return;
 	}
+	uint8_t via;
+	uint16_t index;
+	uint32_t id;
+	if (!msg_row(i, &via, &index, &id)) return;
+#if CONFIG_M17_PACKET
+	if (via == MSG_M17) { ui_push_m17_message(SCR_MESSAGE, 0, id); return; }
+#endif
+	ui_push(SCR_MESSAGE, via == MSG_APRS ? (uint16_t)(MSG_APRS_ARG | index) : index);
 }
 
 static void msg_target_of(uint16_t i, ui_target_t *t)
 {
-	ui_msg_t m;
+	MSG_SCRATCH_DECL;
+	ui_msg_t *m = scratch;
 	memset(t, 0, sizeof *t);
-	if (ui_svc_msg_get(i, &m)) {
-		t->id = m.src;
-		strcpy(t->name, m.name);
-		t->saved = m.name[0] != 0;
+	if (ui_svc_msg_get(i, m)) {
+		t->id = m->src;
+		strcpy(t->name, m->name);
+		t->saved = m->name[0] != 0;
 	}
 }
 
 static void msgs_context(uint16_t i)
 {
-	bool aprs;
+	uint8_t via;
 	uint16_t index;
-	if (!msg_row(i, &aprs, &index))
+	uint32_t id;
+	if (!msg_row(i, &via, &index, &id) || via == MSG_M17)
 		return;
-	if (aprs) {
+	if (via == MSG_APRS) {
 		aprs_msg_t m;
 		if (ui_svc_aprs_msg((uint8_t)index, &m, false))
 			ui_aprs_compose(m.from);
@@ -879,6 +910,14 @@ static const ui_scr_def_t messages_screen = {
 
 enum { MV_READ, MV_REPLY_OK, MV_REPLY_WAY, MV_CALL, MV_DELETE, MV_COUNT };
 
+static uint32_t message_m17_id(void)
+{
+#if CONFIG_M17_PACKET
+	return ui_frame()->m17_msg_id;
+#else
+	return 0;
+#endif
+}
 static bool message_aprs(void) { return (ui_frame()->arg & MSG_APRS_ARG) != 0; }
 static uint16_t message_index(void) { return MSG_INDEX(ui_frame()->arg); }
 static uint8_t message_aprs_index(void) { return (uint8_t)message_index(); }
@@ -890,12 +929,16 @@ static const char *msg_body(void);
 // decided at each draw, a row would appear or go when "9m ago" became "10m ago", and OK on Call could land on Delete
 static uint8_t msg_action(uint16_t i)
 {
+	if (message_m17_id())
+		return (ui_frame()->arg & MSG_LONG_ARG) && i == 0 ? MV_READ : MV_DELETE;
 	return (uint8_t)(i + ((ui_frame()->arg & MSG_LONG_ARG) ? MV_READ : MV_REPLY_OK));
 }
 
 static void msg_enter(void)
 {
-	if (message_aprs()) {
+	if (message_m17_id()) {
+		(void)ui_svc_m17_msg_read(message_m17_id());
+	} else if (message_aprs()) {
 		aprs_msg_t m;
 		(void)ui_svc_aprs_msg(message_aprs_index(), &m, true);
 	} else {
@@ -907,11 +950,18 @@ static void msg_enter(void)
 	l.name = msg_title();
 	l.body = msg_body();
 	l.count = MV_COUNT;
-	if (!ui_list_body_fits(&ui_st, &l))
+	bool full = !ui_list_body_fits(&ui_st, &l);
+#if CONFIG_M17_PACKET
+	if (message_m17_id() && ui_svc_m17_msg_get(message_m17_id(), &ui_message_scratch) &&
+	    ui_message_scratch.cut)
+		full = true;
+#endif
+	if (full)
 		ui_frame()->arg |= MSG_LONG_ARG;
 }
 
-static uint16_t msg_count(void) { return (uint16_t)(MV_COUNT - msg_action(0)); }
+static uint16_t msg_count(void) { return message_m17_id() ? (uint16_t)(1 + !!(ui_frame()->arg & MSG_LONG_ARG)) :
+	(uint16_t)(MV_COUNT - msg_action(0)); }
 
 static void msg_item(uint16_t i, ui_item_t *it)
 {
@@ -931,11 +981,17 @@ static void msg_select(uint16_t i, bool hold)
 	(void)hold;
 	uint8_t a = msg_action(i);
 	if (a == MV_READ) {
+		#if CONFIG_M17_PACKET
+		if (message_m17_id()) {
+			ui_push_m17_message(SCR_MESSAGE_READ, ui_frame()->arg, message_m17_id());
+			return;
+		}
+#endif
 		ui_push(SCR_MESSAGE_READ, ui_frame()->arg);
 		return;
 	}
 	i = a;
-	if (!message_aprs())
+	if (!message_aprs() && !message_m17_id())
 		msg_target_of(message_index(), &ui_target);
 	switch (i) {
 	case MV_REPLY_OK:
@@ -956,7 +1012,8 @@ static void msg_select(uint16_t i, bool hold)
 			ui_talk(&ui_target, false);
 		break;
 	case MV_DELETE:
-		if (message_aprs() ? ui_svc_aprs_msg_delete(message_aprs_index()) :
+		if (message_m17_id() ? ui_svc_m17_msg_delete(message_m17_id()) :
+		    message_aprs() ? ui_svc_aprs_msg_delete(message_aprs_index()) :
 		    ui_svc_msg_delete(message_index())) {
 			ui_pop();
 			ui_toast(TR(MSG_TOAST_DELETED, "Message deleted"));
@@ -972,7 +1029,7 @@ static void msg_select(uint16_t i, bool hold)
 static bool msg_target(uint16_t i, ui_target_t *t)
 {
 	(void)i;
-	if (message_aprs())
+	if (message_aprs() || message_m17_id())
 		return false;
 	msg_target_of(message_index(), t);
 	return t->id != 0;
@@ -981,6 +1038,8 @@ static bool msg_target(uint16_t i, ui_target_t *t)
 static void msg_context(uint16_t i)
 {
 	(void)i;
+	if (message_m17_id())
+		return;
 	if (message_aprs()) {
 		aprs_msg_t m;
 		if (ui_svc_aprs_msg(message_aprs_index(), &m, false))
@@ -998,13 +1057,17 @@ static const char *msg_title(void)
 	sbuf_t b;
 	sb_init(&b, t, sizeof t);
 	uint16_t row = 0, index;
-	bool aprs;
-	while (msg_row(row, &aprs, &index) &&
-	       (aprs != message_aprs() || index != message_index()))
+	uint8_t via;
+	uint32_t id;
+	while (msg_row(row, &via, &index, &id) &&
+	       (message_m17_id() ? via != MSG_M17 || id != message_m17_id() :
+	        via != (message_aprs() ? MSG_APRS : MSG_DMR) || index != message_index()))
 		row++;
+	uint16_t total = ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count();
+	if (row >= total) return TR(MSG_TOAST_DELETED, "Message deleted");
 	sb_u32(&b, row + 1u, 1);
 	sb_str(&b, TR(PART_OF, " of "));
-	sb_u32(&b, ui_svc_msg_count() + ui_svc_aprs_msg_count(), 1);
+	sb_u32(&b, total, 1);
 	return t;
 }
 
@@ -1024,27 +1087,44 @@ static const char *msg_body(void)
 		sb_str(&b, m.text);
 		return message_buffer;
 	}
-	ui_msg_t m;
-	if (!ui_svc_msg_get(message_index(), &m))
+	MSG_SCRATCH_DECL;
+	ui_msg_t *m = scratch;
+	if (!(message_m17_id() ? ui_svc_m17_msg_get(message_m17_id(), m) : ui_svc_msg_get(message_index(), m)))
 		return TR(MSG_TOAST_DELETED, "Message deleted");
-	// "From Joe Smith, 2m ago" (the ID where there is no name; # gives the station's actions), then the text
 	sbuf_t b;
 	sb_init(&b, message_buffer, sizeof message_buffer);
-	sb_str(&b, m.sent ? TR(MSG_BODY_TO, "To ") : TR(MSG_BODY_FROM, "From "));
-	if (m.name[0])
-		sb_str(&b, m.name);
+	sb_str(&b, m->sent ? TR(MSG_BODY_TO, "To ") : TR(MSG_BODY_FROM, "From "));
+#if CONFIG_M17_PACKET
+	if (message_m17_id())
+		sb_str(&b, m->call);
 	else
-		sb_u32(&b, m.src, 1);
+#endif
+	if (m->name[0])
+		sb_str(&b, m->name);
+	else
+		sb_u32(&b, m->src, 1);
 	sb_str(&b, ", ");
-	sb_age_long(&b, m.age_ms);
+	sb_age_long(&b, m->age_ms);
 	sb_chr(&b, '\n');
-	sb_str(&b, m.text);
+#if CONFIG_M17_PACKET
+	if (message_m17_id() && m->cut) {
+		sb_str(&b, TR(MSG_M17_BODY_STORED_CUT, "[Stored text truncated]"));
+		sb_chr(&b, '\n');
+	}
+#endif
+	sb_str(&b, m->text);
 	return message_buffer;
 }
 
+static const char *msg_hint(void)
+{
+	return message_m17_id() ? TR(HINT_OK_CHOOSE_BACK, "OK choose  Back") :
+		TR(HINT_OK_CHOOSE_MORE_BACK, "OK choose  # more  Back");
+}
+
 static const ui_scr_def_t message_screen = {
-	.name = "message", .flags = SF_LIST | SF_FIELD, .prefix = TRN(WORD_MESSAGE, "Message"),
-	.hint = TRN(HINT_OK_CHOOSE_MORE_BACK, "OK choose  # more  Back"),
+	.name = "message", .flags = SF_LIST | SF_FIELD | SF_HINT_FN, .prefix = TRN(WORD_MESSAGE, "Message"),
+	.hint_fn = msg_hint,
 	.count = msg_count, .item = msg_item, .select = msg_select, .context = msg_context, .target = msg_target,
 	.title = msg_title, .body = msg_body, .enter = msg_enter,
 };
@@ -7857,7 +7937,7 @@ static const char *set_why_not(const set_item_t *s)
 			feats() & UI_FEAT_EMERGENCY ? NULL :
 				TR(WHY_EMERGENCY_NOT_IN_BUILD, "Emergency: not in this build");
 	case UI_SET_MESSAGE_TONE:
-		return (feats() & UI_FEAT_SMS) || CONFIG_APRS_AFSK ? NULL :
+		return (feats() & (UI_FEAT_SMS | UI_FEAT_M17_PACKET)) || CONFIG_APRS_AFSK ? NULL :
 			TR(WHY_MESSAGES_NOT_IN_BUILD, "Messages: not in this build");
 	case UI_SET_VIBRATE:
 		return feats() & UI_FEAT_VIBRATE ? NULL :

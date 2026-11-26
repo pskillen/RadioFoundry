@@ -58,6 +58,7 @@ extern radio_view_t ui_svc_view;
 #define UI_FEAT_P25		(1u << 22)	// P25 on this board (CONFIG_P25, radio_p25_fits): the VFO's mode tile offers it
 #define UI_FEAT_NXDN		(1u << 23)	// NXDN on this board (CONFIG_NXDN, radio_nxdn_fits): the same
 #define UI_FEAT_M17		(1u << 24)	// M17 on this board (CONFIG_M17, radio_m17_fits): the same
+#define UI_FEAT_M17_PACKET	(1u << 25)	// M17 packet receive enabled and supported by the board
 uint32_t ui_svc_features(void);
 // The parts of it each package reports (ui_svc_features ORs them): dmr-voice / radio core, dmr-data, storage-cps,
 // radio-features
@@ -207,11 +208,17 @@ void ui_svc_volume_hold(bool hold);
 
 // --- Messages and signaling (dmr-data) ---
 #define UI_MSG_TEXT_MAX	143
+enum { UI_MSG_VIA_DMR, UI_MSG_VIA_M17 };
 typedef struct {
 	uint32_t src;		// sender (or, for sent ones, recipient)
 	bool group;		// sent to a talkgroup
 	bool unread;
 	bool sent;		// one we sent
+#if CONFIG_M17_PACKET
+	uint8_t via;		// UI_MSG_VIA_* (DMR is zero)
+	bool cut;		// stored text was truncated
+	char call[10];		// M17 sender callsign
+#endif
 	uint32_t age_ms;	// how long ago
 	char name[17];		// sender's name if known
 	char text[UI_MSG_TEXT_MAX + 1];
@@ -221,6 +228,16 @@ uint16_t ui_svc_msg_unread(void);
 bool ui_svc_msg_get(uint16_t i, ui_msg_t *out);
 void ui_svc_msg_read(uint16_t i);		// mark read
 bool ui_svc_msg_delete(uint16_t i);
+// M17 snapshots are independent of the DMR inbox; IDs are nonzero and remain stable across insertions.
+typedef struct {
+	uint32_t received_seq, last_received_id;
+	uint8_t count, unread;
+} ui_m17_msg_summary_t;
+void ui_svc_m17_msg_summary(ui_m17_msg_summary_t *out);
+bool ui_svc_m17_msg_get_at(uint16_t i, uint32_t *id, ui_msg_t *out);
+bool ui_svc_m17_msg_get(uint32_t id, ui_msg_t *out);
+bool ui_svc_m17_msg_read(uint32_t id);
+bool ui_svc_m17_msg_delete(uint32_t id);
 // Queue a text message; the result comes back as a ui_notify() event
 bool ui_svc_msg_send(uint32_t dst, bool group, const char *text);
 bool ui_svc_msg_reply(uint16_t i, const char *text);

@@ -2,7 +2,7 @@
 
 # Messages, Call Alert and Radio Check
 
-DMR text messages, call alert and radio check work on DMR channels. APRS text messages can also be sent over FM on
+DMR text messages, call alert and radio check work on DMR channels. M17 text messages can be received on supported M17 channels. APRS text messages can also be sent over FM on
 builds with an AFSK transmit path. The [Radio reference](23-radios.md) says which radios have each path verified.
 None of them needs the codec. DMR sending needs a DMR channel you may transmit on and your DMR ID; APRS sending
 needs a valid callsign in **Settings > My radio**, an amateur APRS frequency and a board with AFSK transmit.
@@ -28,7 +28,7 @@ Messages.
 
    | Row | Does |
    |---|---|
-   | Full message | Shows the whole text on its own page. **Up** and **Down** scroll it, **Back** returns. Only when the text is too long for the screen, which ends it with "…" |
+   | Full message | Shows the whole text on its own page. **Up** and **Down** scroll it, **Back** returns. When the text is too long for the screen, which ends it with "…", or stored M17 text was truncated |
    | Reply "OK" | Sends "OK" to the sender |
    | Reply "On my way" | Sends "On my way" to the sender |
    | Call | Makes the sender the talk target for now |
@@ -36,14 +36,14 @@ Messages.
 
 **#** on a DMR message opens the actions for its sender. **PTT** in an open DMR message calls the sender. The Call
 action is unavailable for APRS messages, whose sender is a callsign. **#** on an APRS message opens a composer addressed
-to that callsign.
+to that callsign. M17 messages show the sender callsign and offer Full message and Delete; reply, Call and sender PTT are unavailable. A **[Stored text truncated]** marker means the received text exceeded storage, independently of the screen preview.
 
 <img src="../ux/screens/160x120i5/messages.png" width="200" alt="Messages">
 <img src="../ux/screens/160x120i5/message_view.png" width="200" alt="A message">
 <img src="../ux/screens/160x120i5/message_long.png" width="200" alt="A long message: the Full message row, and its whole text">
 <img src="../ux/screens/160x120i5/message_read.png" width="200" alt="">
 
-The radio keeps DMR and APRS messages in memory. They are lost when the radio turns off.
+The radio keeps DMR, APRS and M17 messages in memory. They are lost when the radio turns off.
 
 ## Sending a message
 

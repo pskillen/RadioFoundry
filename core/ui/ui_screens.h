@@ -32,6 +32,9 @@ typedef enum {
 	UI_BANNER_INFO,		// anything else ("Hotspot started by host. Back to stop.")
 	UI_BANNER_ZONE_OFFER,	// another radio offers a zone or channel: CONTEXT opens the offer
 	UI_BANNER_APRS_MESSAGE,	// APRS message addressed to us: CONTEXT opens the APRS messages screen
+#if CONFIG_M17_PACKET
+	UI_BANNER_M17_MESSAGE,	// M17 message: id is the stable inbox reference
+#endif
 } ui_banner_kind_t;
 
 typedef struct {
@@ -40,7 +43,7 @@ typedef struct {
 	bool hold;		// stays until opened, hidden with BACK or what it is about is gone (until_ms unused)
 	uint8_t name_at;	// where the station's name starts in title (0: none): a title too long breaks there
 	uint32_t until_ms;
-	uint32_t id;		// the station it is about (0 = none)
+	uint32_t id;		// station ID, or stable M17 inbox reference
 	uint16_t msg;		// UI_BANNER_MESSAGE: the message's index in the inbox
 	char title[UI_BANNER_TEXT];
 	char text[UI_BANNER_TEXT];

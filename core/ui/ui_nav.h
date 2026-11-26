@@ -69,6 +69,9 @@ typedef struct {
 	uint8_t scr;
 	uint16_t focus, top;
 	uint16_t arg;		// zone index, settings group, message index, info page
+#if CONFIG_M17_PACKET
+	uint32_t m17_msg_id;	// nonzero: stable M17 message reference; zero: DMR/APRS
+#endif
 } ui_frame_t;
 
 // A station or talkgroup that actions apply to
@@ -135,6 +138,11 @@ const radio_view_t *ui_view(void);
 ui_frame_t *ui_frame(void);
 uint8_t ui_depth(void);
 void ui_push(uint8_t scr, uint16_t arg);
+#if CONFIG_M17_PACKET
+extern ui_msg_t ui_message_scratch;
+// Sets the reference before the screen enter hook and list callbacks. IDs must be nonzero.
+void ui_push_m17_message(uint8_t scr, uint16_t arg, uint32_t id);
+#endif
 void ui_pop(void);
 #if CONFIG_BACKLIGHT_TEST
 // The backlight tests: hold the light at a percent (0-100) against the dim and off times, or -1 to let it go

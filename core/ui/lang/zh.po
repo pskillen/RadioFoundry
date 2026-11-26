@@ -1084,7 +1084,7 @@ msgctxt "APRS_LABEL_PACKETS"
 msgid "Packets"
 msgstr "数据包"
 
-#: core/ui/ui_aprs.c
+#: core/ui/ui_aprs.c core/ui/ui_menus.c
 msgctxt "HINT_OK_CHOOSE_BACK"
 msgid "OK choose  Back"
 msgstr "OK 选  返回"
@@ -1843,6 +1843,11 @@ msgstr "来自 "
 msgctxt "MSG_BODY_TO"
 msgid "To "
 msgstr "至 "
+
+#: core/ui/ui_menus.c
+msgctxt "MSG_M17_BODY_STORED_CUT"
+msgid "[Stored text truncated]"
+msgstr "[存储的消息不全]"
 
 #: core/ui/ui_menus.c
 msgctxt "HINT_OK_CHOOSE_MORE_BACK"
