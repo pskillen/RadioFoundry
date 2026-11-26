@@ -2461,8 +2461,7 @@ static bool text_key_fn(const input_event_t *ev)
 				text_key = k;
 			} else {
 				text_idx = 0;
-				text_m17_take(text_char(set, 0), false);
-				text_key = k;
+				text_key = text_m17_take(text_char(set, 0), false) ? k : -1;
 			}
 			text_ms = now;
 			ui_dirty();

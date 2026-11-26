@@ -1062,6 +1062,11 @@ static const flow_t flows[] = {
 	  "screen=m17-callsign toast=Letters writes=0", 1, false },
 	{ "S M17 callsign a rejected character is not saved", "m17 ok 7 0 down down ok", "0 ok",
 	  "screen=group toast=Saved writes=1 shows=Q0TEST", 2, true },
+	// The second toast is still visible after the first would have expired (1800 ms).
+	{ "S M17 callsign rejects two quick spaces", "m17 ok 7 0 down down ok 2 wait:1100 2 2 long:1 2 2 2 expect:showsraw=AB1C_",
+	  "0 expect:toast=Letters wait:500 0 wait:1350", "screen=m17-callsign showsraw=AB1C_ toast=Letters writes=0", 2, false },
+	{ "S M17 callsign appends after rejected spaces", "m17 ok 7 0 down down ok 2 wait:1100 2 2 long:1 2 2 2 expect:showsraw=AB1C_", "0 0 2",
+	  "screen=m17-callsign showsraw=AB1CA_ writes=0", 3, false },
 	{ "S M17 callsign cancel", "m17 ok 7 0 down down ok", "2 back back",
 	  "screen=group writes=0 shows=Q0TEST", 3, false },
 	{ "S M17 callsign save failed", "m17 m17fail ok 7 0 down down ok", "2 ok",
