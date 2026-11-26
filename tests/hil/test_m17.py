@@ -14,6 +14,9 @@ Nothing is sent.
 test_m17_callsign_on_radio: opt-in `--allow-codeplug-write`. Types a callsign on Settings > My radio and checks
 `m17.run.call`. The radio region is restored after. Nothing is sent.
 
+test_m17_channel_on_radio: opt-in `--allow-codeplug-write`. Plants a receive-only kind-6 channel, then sets CAN 15
+in the channel editor and checks `m17.run.can`. The codeplug is put back after. Nothing is sent.
+
 test_m17_bert_rx_from_bench, test_m17_bert_tx_off_air, test_m17_lsf_off_air: opt-in `--allow-rf`. The bench
 transmitter and receiver are not wired into this file yet, so the bodies skip rather than transmit.
 """
@@ -142,6 +145,39 @@ def test_m17_stored_channel(radio, backup_dir):
         assert v.get("m17.run.call") == RADIO_CALL, v
     radio.wait_for(lambda x: x.get("ch.kind") == "0" and x.get("m17.on") != "1", 5.0,
                    sections=("core", "channel", "m17"), what="the channel back as it was, M17 stopped")
+
+
+@pytest.mark.feature("m17")
+@pytest.mark.codeplug_write
+def test_m17_channel_on_radio(radio, backup_dir):
+    """The channel editor saves CAN on a stored M17 channel. Nothing is sent."""
+    m17_view(radio)
+    if "CHANNEL_EDIT" not in radio.features() and "UI_SETTINGS" not in radio.features():
+        skip("not_built", "built without the channel editor")
+    import cps_client
+    from test_cps import codeplug_edited, pick_channel, read_backup
+    regions = cps_client.REGIONS["radio"]
+    probe, _ = read_backup(radio, backup_dir, "m17chan", regions)
+    lo, hi = cps_client.SETTINGS_AREA
+    if cps_client.area_state(probe[lo:hi]) != "valid":
+        skip("state", "the codeplug settings area isn't valid: the restore couldn't take the tag back")
+    core = radio.core()
+    number = pick_channel(radio, probe)
+    if core.get("vfo") == "1" or number != as_int(core.get("channel_number"), 0):
+        skip("state", "the radio isn't on a stored channel")
+    with codeplug_edited(radio, backup_dir, lambda img: make_m17(img, number), "m17ui", regions):
+        radio.go_home()
+        for key in ("ok", "5", "ok", "down", "down", "down", "ok", "1", "5", "ok"):
+            radio.press(key)
+            time.sleep(0.3)
+        try:
+            radio.wait_for(lambda v: v.get("ui.screen") == "channel", 3.0, sections=("link",),
+                           what="the channel editor")
+        except AssertionError:
+            skip("state", "the channel editor didn't open")
+        radio.press("ok", LONG)
+        radio.wait_for(lambda x: x.get("m17.run.can") == "15", 5.0, sections=("m17",),
+                       what="CAN 15 from the channel editor")
 
 
 @pytest.mark.feature("m17")

@@ -2158,6 +2158,11 @@ msgid "{M17 callsign|M17 call}"
 msgstr "{Indicativo M17|M17}"
 
 #: core/ui/ui_menus.c
+msgctxt "M17_LABEL_TALK_TO"
+msgid "Talk to"
+msgstr "Hablar a"
+
+#: core/ui/ui_menus.c
 msgctxt "SATELLITE_TLE_TITLE_LINE1_UPPER"
 msgid "1 ABC"
 msgstr "1 ABC"
@@ -2196,6 +2201,11 @@ msgstr "{Atrás borrar  # ABC/123/abc  OK listo|Atrás borr.  # modo  OK}"
 msgctxt "TEXT_HINT_SEND"
 msgid "{Back delete  # ABC/123/abc  OK send|Back del  # mode  OK}"
 msgstr "{Atrás borrar  # ABC/123/abc  OK enviar|Atrás borr.  # modo  OK}"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_DST"
+msgid "Not an M17 address"
+msgstr "No es una dirección M17"
 
 #: core/ui/ui_menus.c
 msgctxt "CHAN_ROW_NEW_FROM_CURRENT"
@@ -2256,6 +2266,16 @@ msgstr "Modo"
 msgctxt "CHAN_LABEL_RATE"
 msgid "Rate"
 msgstr "Velocidad"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_LABEL_CAN"
+msgid "CAN"
+msgstr "CAN"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_LABEL_CAN_SQUELCH"
+msgid "CAN squelch"
+msgstr "Squelch CAN"
 
 #: core/ui/ui_menus.c core/ui/ui_screens.c
 msgctxt "WORD_RX_ONLY"
@@ -2441,6 +2461,11 @@ msgstr "ID máximo es 16776415"
 msgctxt "CHAN_TOAST_DCS_DIGITS"
 msgid "DCS codes use digits 0-7"
 msgstr "Códigos DCS: dígitos 0-7"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_CAN"
+msgid "CAN is 0 to 15"
+msgstr "CAN es de 0 a 15"
 
 #: core/ui/ui_menus.c
 msgctxt "CHAN_TOAST_NAC_REPEATER"

@@ -50,6 +50,7 @@ typedef enum {
 	SCR_BL_TEST,			// Settings > Advanced > Backlight tests
 #endif
 	SCR_M17_CALL,			// the radio-wide M17 callsign (Settings > My radio; CONFIG_M17)
+	SCR_M17_CHAN_DST,		// an M17 channel's Talk to (the channel editor; CONFIG_M17)
 	SCR_COUNT
 } ui_scr_t;
 

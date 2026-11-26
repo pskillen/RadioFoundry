@@ -768,7 +768,7 @@ bool ui_svc_setting_set(uint8_t id, int32_t value)
 static struct {
 	uint16_t number;
 	channel_t ch;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 	bool air_set;		// saved with a block (ui_svc_write_channel_air)
 	ui_air_conv_t air;
 #endif
@@ -794,7 +794,7 @@ static int sim_write(uint16_t number, const channel_t *ch)
 		n_edits++;
 	sim_edits[i].number = number;
 	sim_edits[i].ch = *ch;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 	sim_edits[i].air_set = false;
 #endif
 	sim_rec.codeplug_writes++;
@@ -809,7 +809,7 @@ bool ui_svc_write_channel(uint16_t number, const channel_t *ch, uint16_t from)
 	return sim_write(number, ch) >= 0;
 }
 
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 // The block goes with the channel: a plain channel in P25 or NXDN becomes one of the kind, as the storage job makes it
 bool ui_svc_write_channel_air(uint16_t number, const channel_t *ch, uint16_t from, const ui_air_conv_t *conv)
 {
@@ -818,6 +818,11 @@ bool ui_svc_write_channel_air(uint16_t number, const channel_t *ch, uint16_t fro
 		return sim_held;
 	channel_t c = *ch;
 	if (c.kind == CODEPLUG_KIND_NONE) {
+#if CONFIG_M17
+		if (c.mode == RADIO_MODE_M17)
+			c.kind = CODEPLUG_KIND_M17;
+		else
+#endif
 		c.kind = c.mode == RADIO_MODE_P25 ? CODEPLUG_KIND_P25 : CODEPLUG_KIND_NXDN;
 		c.mode = RADIO_MODE_DMR;	// the stand-in record
 	}
@@ -969,6 +974,8 @@ static uint8_t sim_zone_size[3];	// zonesize:Z,N: zone Z has its first N channel
 uint32_t codeplug_serial(void) { return sim_cp_serial; }
 #if CONFIG_M17
 static char sim_m17_call[10];
+static char sim_m17_dst[8][10];
+static uint8_t sim_m17_dst_n;
 static bool sim_m17_fail;
 static uint8_t sim_kv_serial;
 uint8_t codeplug_kv_serial(void) { return (uint8_t)(sim_kv_serial + (uint8_t)sim_cp_serial); }
@@ -1754,6 +1761,83 @@ static bool nxdn_radio;
 static bool m17_radio;
 #if CONFIG_M17
 bool radio_m17_fits(void) { return m17_radio; }
+
+#include "m17/m17.h"
+
+// The UI test does not link the codec. Empty and ALL are broadcast; any other legal address is remembered so a
+// saved channel shows the same text again. The wire encoding is m17CodeplugTest's.
+bool m17_dst_parse(const char *text, uint64_t *dst)
+{
+	char clean[10];
+	size_t n = 0;
+
+	if (text == NULL)
+		text = "";
+	while (text[n] != '\0' && n < 9) {
+		char c = text[n];
+		if (c >= 'a' && c <= 'z')
+			c = (char)(c - 'a' + 'A');
+		if (c != ' ' && !((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '/' || c == '.'))
+			return false;
+		if (c == ' ' && n == 0)
+			return false;
+		clean[n++] = c;
+	}
+	if (text[n] != '\0')
+		return false;
+	clean[n] = '\0';
+	if (n == 0 || strcmp(clean, "ALL") == 0) {
+		*dst = M17_ADDR_BROADCAST;
+		return true;
+	}
+	for (uint8_t i = 0; i < sim_m17_dst_n; i++) {
+		if (strcmp(sim_m17_dst[i], clean) == 0) {
+			*dst = (uint64_t)i + 1u;
+			return true;
+		}
+	}
+	if (sim_m17_dst_n >= 8)
+		return false;
+	memcpy(sim_m17_dst[sim_m17_dst_n], clean, n + 1u);
+	*dst = (uint64_t)sim_m17_dst_n + 1u;
+	sim_m17_dst_n++;
+	return true;
+}
+
+bool m17_addr_decode(const uint8_t in[M17_ADDR_BYTES], char *out, size_t outsz)
+{
+	uint64_t v = 0;
+
+	if (out == NULL || outsz < 4)
+		return false;
+	for (uint8_t i = 0; i < M17_ADDR_BYTES; i++)
+		v = (v << 8) | in[i];
+	if (v == M17_ADDR_BROADCAST) {
+		strcpy(out, "ALL");
+		return true;
+	}
+	if (v == 0 || v > sim_m17_dst_n)
+		return false;
+	if (strlen(sim_m17_dst[v - 1u]) + 1u > outsz)
+		return false;
+	strcpy(out, sim_m17_dst[v - 1u]);
+	return true;
+}
+
+bool m17_chan_load(uint16_t number, const channel_t *ch, m17_chan_t *out)
+{
+	const ui_air_conv_t *air;
+
+	if (ch->kind != CODEPLUG_KIND_M17)
+		return false;
+	out->can = 0;
+	out->can_squelch = true;
+	out->dst = M17_ADDR_BROADCAST;
+	air = sim_air(number);
+	if (air != NULL)
+		*out = air->m17;
+	return true;
+}
 #endif
 // Hardware options (Settings > Advanced > Hardware, hal_hwopt.h) only with the "hwopt" token: a revision that starts
 // unset and a plain option
@@ -2809,6 +2893,7 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 	sim_m17_call[0] = '\0';
 	sim_m17_fail = false;
 	sim_kv_serial = 0;
+	sim_m17_dst_n = 0;
 #endif
 #if CONFIG_NXDN
 	memset(&view.nxdn, 0, sizeof view.nxdn);
@@ -3544,8 +3629,8 @@ static bool run_token(char *t, char *err, size_t len)
 		sim_rec.codeplug_writes--;	// the codeplug as found, not a write of the UI's
 		return true;
 	}
-#if CONFIG_P25 || CONFIG_NXDN
-	if (strcmp(t, "chkind") == 0) {		// stored channel n is a P25 or NXDN channel: its tag, over a stand-in record
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
+	if (strcmp(t, "chkind") == 0) {		// stored channel n is a P25, NXDN or M17 channel: its tag, over a stand-in record
 		unsigned n = 0;
 		char k[8] = "";
 		channel_t c;
@@ -3561,7 +3646,8 @@ static bool run_token(char *t, char *err, size_t len)
 				if (*ch == '_')
 					*ch = ' ';
 		}
-		c.kind = strcmp(k, "nxdn") == 0 ? CODEPLUG_KIND_NXDN : CODEPLUG_KIND_P25;
+		c.kind = strcmp(k, "nxdn") == 0 ? CODEPLUG_KIND_NXDN :
+			 strcmp(k, "m17") == 0 ? CODEPLUG_KIND_M17 : CODEPLUG_KIND_P25;
 		c.mode = RADIO_MODE_DMR;
 		if (sim_write((uint16_t)n, &c) < 0) {
 			snprintf(err, len, "no room for %s", t);

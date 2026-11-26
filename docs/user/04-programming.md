@@ -231,6 +231,9 @@ Pick **M17** in the channel form's **Mode**. **Talk to** sets the destination in
 | Play only this CAN | Play calls on the channel's CAN. Clear the setting to hear every CAN. |
 | Talk to | A callsign or reflector, up to 9 characters from A–Z, 0–9, `-`, `/` and `.`, with spaces allowed inside. Blank or `ALL` calls everyone. |
 
+On a stored M17 channel the radio edits **CAN**, **CAN squelch** and **Talk to** in the channel's own settings.
+A new M17 channel starts at CAN 0, with squelch on, talking to everyone.
+
 Set your **M17 callsign** on the **Radio** tab, or on the radio under **Settings > My radio > M17 callsign**. If it
 is blank, the radio uses the first word of the radio name, up to a space or `-`. M17 voice transmission requires a
 valid callsign from one of these sources.

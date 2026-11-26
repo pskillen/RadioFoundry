@@ -110,7 +110,13 @@ The radio runs the channel at 12.5 kHz regardless of the base record's bandwidth
 
 ### 2.3 Writing from the radio
 
-The Codeplug Editor writes kind 6 channels. A writer for kind 6 on the radio is still pending.
+The Codeplug Editor writes kind 6 channels. On the radio, the channel editor's CAN, CAN squelch and Talk to rows
+write the same block for a channel whose mode is M17. CAN is 0–15. CAN squelch starts on. Talk to accepts the
+destination alphabet, including a space inside, and a blank or `ALL` is broadcast. OK on an address the alphabet
+rejects does not leave the editor. The save writes the safe base record (DMR, receive only, 12.5 kHz, no subtone)
+and then the live kind-6 tag with system `0xFF`. A tag already live for that channel is rewritten in place, so
+flag bits the editor does not use and any bytes after the 7-byte block stay. A rewrite that fails leaves the save
+failed. Copying the channel takes the source tag along, then rewrites the block.
 
 ## 3. On the radio
 

@@ -225,6 +225,8 @@ static const struct { const char *name, *script; } gallery[] = {
 #if CONFIG_M17
 	{ "m17_callsign", "m17 ok 7 0 down down ok 9 long:1 2 9" },
 	{ "m17_callsign_fallback", "m17 ok 7 0" },
+	{ "m17_channel", "m17 ok 5 ok down down ok down" },
+	{ "m17_channel_destination", "m17 ok 5 ok down down ok down down down ok back back back 2 2" },
 #endif
 	{ "volume_muted", "softvol volkey down down down down down down down down" },
 	{ "hotspot", "hotspot:on" },

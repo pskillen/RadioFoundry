@@ -31,6 +31,11 @@ bool m17_call_decode(const uint8_t *b, int len, char out[M17_CP_CALL_LEN]);
 bool m17_callsign_pick(const uint8_t *b, int len, const char *radio_name, char out[M17_CP_CALL_LEN]);
 // Load the parameters of a live M17 tag on channel number.
 bool m17_chan_load(uint16_t number, const channel_t *ch, m17_chan_t *out);
+// Store ch as a kind-6 channel with m as its block. The base record is the safe DMR, receive-only, 12.5 kHz shape;
+// the tag carries transmit allowed and system 0xFF. A live tag is rewritten in place (unknown flag bits and any
+// bytes after the block stay). A failed rewrite of a live tag writes nothing further. False when the record or the
+// tag could not be written.
+bool m17_chan_store(uint16_t number, const channel_t *ch, const m17_chan_t *m);
 // Read the stored record and pick a callsign with radio_name as the fallback.
 bool m17_callsign_load(const char *radio_name, char out[M17_CP_CALL_LEN]);
 // The explicit record only. False, and out empty, when it is absent, blank or invalid (the fallback is separate).

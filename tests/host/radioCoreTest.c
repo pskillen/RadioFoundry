@@ -11786,6 +11786,15 @@ bool m17_chan_load(uint16_t number, const channel_t *ch, m17_chan_t *out)
 	return true;
 }
 
+bool m17_chan_store(uint16_t number, const channel_t *ch, const m17_chan_t *m)
+{
+	(void)ch;
+	if (number < 1 || number > NCH)
+		return false;
+	stored_m17[number] = *m;
+	return true;
+}
+
 bool m17_callsign_load(const char *radio_name, char out[M17_CP_CALL_LEN])
 {
 	strcpy(m17_name_seen, radio_name);

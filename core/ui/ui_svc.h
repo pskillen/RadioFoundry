@@ -24,6 +24,9 @@
 #if CONFIG_NXDN
 #include "nxdn/nxdn_codeplug.h"
 #endif
+#if CONFIG_M17
+#include "m17/m17_codeplug.h"
+#endif
 
 // The UI services' one radio view copy (the UI task's only; too big for its stack). A service fetches it with
 // radio_get_view and reads it before returning: nothing may hold it across a call into another service
@@ -104,14 +107,17 @@ bool ui_svc_save_channel(void);
 // codeplug storage in this build
 void ui_svc_next_aes_key(channel_t *ch);
 bool ui_svc_write_channel(uint16_t number, const channel_t *ch, uint16_t from);
-#if CONFIG_P25 || CONFIG_NXDN
-// A P25 or NXDN channel's own settings, its tag's parameter block (p25-codeplug.md 2, nxdn-codeplug.md 2)
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
+// A P25, NXDN or M17 channel's own settings, its tag's parameter block
 typedef union {
 #if CONFIG_P25
 	p25_conv_t p25;
 #endif
 #if CONFIG_NXDN
 	nxdn_conv_t nxdn;
+#endif
+#if CONFIG_M17
+	m17_chan_t m17;
 #endif
 } ui_air_conv_t;
 // ui_svc_write_channel for a P25 or NXDN channel (ch's kind, or a plain one in that mode) with conv as its block: the

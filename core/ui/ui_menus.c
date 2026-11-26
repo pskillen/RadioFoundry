@@ -20,6 +20,10 @@
 #if CONFIG_P25
 #include "p25/p25_codeplug.h"
 #endif
+#if CONFIG_M17
+#include "m17/m17.h"
+#include "m17/m17_codeplug.h"
+#endif
 #include "dmr/dmrDataService.h"
 #include "config.h"
 #include "hal_time.h"
@@ -1306,6 +1310,11 @@ static bool ced_is_p25(const channel_t *ch)
 	return CONFIG_P25 && (ch->kind == CODEPLUG_KIND_P25 || (ch->kind == CODEPLUG_KIND_NONE && ch->mode == RADIO_MODE_P25));
 }
 
+static bool ced_is_m17(const channel_t *ch)
+{
+	return CONFIG_M17 && ch->kind == CODEPLUG_KIND_M17;
+}
+
 #if CONFIG_CHANNEL_LIST
 // The same for NXDN
 static bool ced_is_nxdn(const channel_t *ch)
@@ -2125,14 +2134,17 @@ enum { TEXT_NAME, TEXT_MESSAGE, TEXT_CALLSIGN,
 #if CONFIG_SATELLITE_TLE
 	TEXT_SATELLITE,
 #endif
-#if CONFIG_M17 && CONFIG_UI_SETTINGS
+#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
 	TEXT_M17,
+	TEXT_M17_DST,
 #endif
 	TEXT_PREFIXES };
 static uint8_t text_prefix;
-#if CONFIG_M17 && CONFIG_UI_SETTINGS
+#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
 enum { TEXT_PROFILE_FREE, TEXT_PROFILE_M17_CALL, TEXT_PROFILE_M17_DST };
 static uint8_t text_profile;
+#endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
 static char m17_edit[10];
 static char m17_shown[10];
 static uint8_t m17_kv_at;
@@ -2159,13 +2171,22 @@ static void text_open(char *target, uint8_t max, uint8_t screen)
 	if (screen == SCR_SATELLITE_TEXT)
 		text_prefix = TEXT_SATELLITE;
 #endif
-#if CONFIG_M17 && CONFIG_UI_SETTINGS
+#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
 	text_profile = TEXT_PROFILE_FREE;
+#if CONFIG_UI_SETTINGS
 	if (screen == SCR_M17_CALL) {
 		text_prefix = TEXT_M17;
 		text_profile = TEXT_PROFILE_M17_CALL;
 		text_max = max;
 	}
+#endif
+#if CONFIG_CHANNEL_EDIT
+	if (screen == SCR_M17_CHAN_DST) {
+		text_prefix = TEXT_M17_DST;
+		text_profile = TEXT_PROFILE_M17_DST;
+		text_max = max;
+	}
+#endif
 #endif
 	ui_push(screen, 0);
 }
@@ -2272,7 +2293,7 @@ static void text_append(char c)
 	text_buf[text_len] = 0;
 }
 
-#if CONFIG_M17 && CONFIG_UI_SETTINGS
+#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
 // Callsign: A-Z, 0-9, - / . Fold a-z. Destination (the channel editor) also allows a space inside.
 static bool text_m17_ok(char c)
 {
@@ -2351,8 +2372,9 @@ static void text_draw(void)
 #if CONFIG_SATELLITE_TLE
 		TRN(SATELLITE_2, "Satellite"),
 #endif
-#if CONFIG_M17 && CONFIG_UI_SETTINGS
+#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
 		TRN(M17_LABEL_CALLSIGN, TEXT_ALT_OPEN "M17 callsign" TEXT_ALT_NEXT "M17 call" TEXT_ALT_CLOSE),
+		TRN(M17_LABEL_TALK_TO, "Talk to"),
 #endif
 	};
 	static const char *const modes[TEXT_MODES] = { "ABC", "123", "abc" };
@@ -2430,7 +2452,7 @@ static bool text_key_fn(const input_event_t *ev)
 	if (ev->action >= ACT_DIGIT_0 && ev->action <= ACT_DIGIT_9 && press) {
 		int8_t k = (int8_t)(ev->action - ACT_DIGIT_0);
 		const char *set = keys[k];
-#if CONFIG_M17 && CONFIG_UI_SETTINGS
+#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
 		if (text_profile != TEXT_PROFILE_FREE) {
 			if (text_mode == TEXT_DIGITS || ev->gesture == GESTURE_LONG) {
 				text_m17_take((char)('0' + k), false);
@@ -2468,7 +2490,7 @@ static bool text_key_fn(const input_event_t *ev)
 	int dir = ev->action == ACT_NAV_UP ? 1 : ev->action == ACT_NAV_DOWN ? -1 :
 		ev->action == ACT_ENC_STEP ? (ev->value > 0 ? 1 : -1) : 0;
 	if (dir != 0 && ev->gesture != GESTURE_UP) {
-#if CONFIG_M17 && CONFIG_UI_SETTINGS
+#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
 		if (text_profile != TEXT_PROFILE_FREE) {
 			text_m17_step(dir);	// the allowed alphabet only; down from its first character deletes
 			text_key = -1;
@@ -2515,19 +2537,29 @@ static bool text_key_fn(const input_event_t *ev)
 	}
 	if (ev->action == ACT_SELECT && press) {
 		if (!(board.caps & CAP_KEYPAD) && ev->gesture == GESTURE_PRESS) {
-#if CONFIG_M17 && CONFIG_UI_SETTINGS
+#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
 			if (text_profile != TEXT_PROFILE_FREE)
 				text_m17_take(text_len > 0 ? text_buf[text_len - 1] : 'A', false);
 			else
 #endif
 				text_append(text_len > 0 ? text_buf[text_len - 1] : 'A');	// the next character, started as this one
 		} else {
-#if CONFIG_M17 && CONFIG_UI_SETTINGS
+#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
 			if (text_profile != TEXT_PROFILE_FREE && !text_m17_commit()) {
 				ui_toast(TR(M17_TOAST_CHAR, "Letters, digits and - / ."));
 				ui_dirty();
 				return true;
 			}
+#if CONFIG_CHANNEL_EDIT
+			if (text_profile == TEXT_PROFILE_M17_DST) {
+				uint64_t dst;
+				if (!m17_dst_parse(text_buf, &dst)) {
+					ui_toast(TR(M17_TOAST_DST, "Not an M17 address"));
+					ui_dirty();
+					return true;
+				}
+			}
+#endif
 #endif
 			if (text_target != text_buf)
 				strcpy(text_target, text_buf);
@@ -2760,7 +2792,7 @@ static const ui_scr_def_t chlist_screen = {
 // ======================= One channel's settings, edited in place (ui.md 2.1) =======================
 // Without CONFIG_CHANNEL_EDIT the rows are read only and OK goes to the channel
 
-enum { CE_NAME, CE_NUMBER, CE_MODE, CE_CODE, CE_RATE, CE_RX, CE_TX, CE_POWER, CE_RX_ONLY, CE_BW, CE_RX_TONE, CE_TX_TONE, CE_VOX,
+enum { CE_NAME, CE_NUMBER, CE_MODE, CE_CODE, CE_RATE, CE_M17_CAN, CE_M17_SQ, CE_M17_DST, CE_RX, CE_TX, CE_POWER, CE_RX_ONLY, CE_BW, CE_RX_TONE, CE_TX_TONE, CE_VOX,
        CE_BURST, CE_AES, CE_CC, CE_TS, CE_CONTACT, CE_LIST, CE_ID, CE_DMO, CE_BEEP, CE_ALIAS1, CE_ALIAS2, CE_TOT, CE_SCAN, CE_ECO,
        CE_ZONES, CE_GO, CE_SHARE, CE_SAVE, CE_SAVE_NEW, CE_COUNT, CE_NONE = 0xFF };
 
@@ -2769,12 +2801,19 @@ static uint16_t ced_num;		// its number, 0 = no such channel
 #if CONFIG_CHANNEL_EDIT
 static uint16_t ced_src;		// the stored channel it was read from (a copy's source), 0 = none (the VFO)
 #endif
-#if CONFIG_P25 || CONFIG_NXDN
-static ui_air_conv_t ced_air;		// a P25 or NXDN channel's own settings, read once on entry (the list redraws often)
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
+static ui_air_conv_t ced_air;		// a P25, NXDN or M17 channel's own settings, read once on entry (the list redraws often)
 #if CONFIG_CHANNEL_EDIT
 static ui_air_conv_t ced_air_orig;	// as stored
 #endif
+#if CONFIG_M17
+static char ced_m17_text[M17_ADDR_CHARS_MAX + 1];	// Talk to, as text
+#if CONFIG_CHANNEL_EDIT
+static char ced_m17_text_orig[M17_ADDR_CHARS_MAX + 1];
+#endif
+#endif
 
+#if CONFIG_P25 || CONFIG_NXDN
 // A P25 or NXDN channel's settings where none are stored: the default NAC both ways; NXDN at 9600 bit/s on RAN 1
 static void ced_air_default(uint8_t mode)
 {
@@ -2794,6 +2833,7 @@ static void ced_air_default(uint8_t mode)
 #endif
 	(void)mode;
 }
+#endif
 #endif
 static bool ced_keys_available;
 static uint8_t ced_rows[CE_COUNT];
@@ -2846,7 +2886,7 @@ static const struct { uint8_t off, len, bit; } ced_fields[CE_ZONES] = {
 // The Mode row's steps, in the order OK goes through them (channel-modes.md 2.4): the plain modes, the air modes, then
 // a kind of its own (a trunked channel). Each is offered where it can run; the step back to the one the channel was
 // opened with restores it as stored (its system, its NAC or RAN), so a slip never costs a channel its mode
-enum { CED_FM, CED_DMR, CED_P25, CED_NXDN, CED_KIND, CED_STEPS };
+enum { CED_FM, CED_DMR, CED_P25, CED_NXDN, CED_M17, CED_KIND, CED_STEPS };
 
 static uint8_t ced_step_of(const channel_t *ch)
 {
@@ -2854,6 +2894,8 @@ static uint8_t ced_step_of(const channel_t *ch)
 		return CED_P25;
 	if (ced_is_nxdn(ch))
 		return CED_NXDN;
+	if (ced_is_m17(ch))
+		return CED_M17;
 	if (ch->kind != CODEPLUG_KIND_NONE)
 		return CED_KIND;
 	return CONFIG_DMR && ch->mode == RADIO_MODE_DMR ? CED_DMR : CED_FM;
@@ -2877,6 +2919,8 @@ static bool ced_step_ok(uint8_t s, bool listen)
 		return !listen && (orig || (!into && (feats() & UI_FEAT_P25) != 0));
 	case CED_NXDN:
 		return !listen && (orig || (!into && (feats() & UI_FEAT_NXDN) != 0));
+	case CED_M17:
+		return CONFIG_M17 && !listen && (orig || (!into && (feats() & UI_FEAT_M17) != 0));
 	default:
 		return !listen && orig;
 	}
@@ -2890,8 +2934,11 @@ static void ced_step_set(channel_t *c, uint8_t s)
 		c->kind = ced_orig.kind;
 		c->system = ced_orig.system;
 		c->mode = ced_orig.mode;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 		ced_air = ced_air_orig;
+#endif
+#if CONFIG_M17
+		strcpy(ced_m17_text, ced_m17_text_orig);
 #endif
 		return;
 	}
@@ -2910,6 +2957,18 @@ static void ced_step_set(channel_t *c, uint8_t s)
 		c->kind = CODEPLUG_KIND_NXDN;
 		c->mode = RADIO_MODE_NXDN;
 		ced_air_default(RADIO_MODE_NXDN);
+	}
+#endif
+#if CONFIG_M17
+	if (s == CED_M17) {
+		c->kind = CODEPLUG_KIND_M17;
+		c->mode = RADIO_MODE_DMR;
+		c->system = 0xFFu;
+		c->bw = RADIO_BW_12K5;
+		ced_air.m17.can = 0;
+		ced_air.m17.can_squelch = true;
+		ced_air.m17.dst = M17_ADDR_BROADCAST;
+		strcpy(ced_m17_text, "ALL");
 	}
 #endif
 }
@@ -2959,6 +3018,17 @@ static bool ced_changed(uint8_t r)
 	if (r == CE_CODE || r == CE_RATE)
 		return ced_air_changed(r);
 #endif
+#if CONFIG_M17
+	if (r == CE_M17_CAN || r == CE_M17_SQ || r == CE_M17_DST) {
+		if (ced_step_of(&ced_ch) != ced_step_of(&ced_orig))
+			return true;
+		if (r == CE_M17_CAN)
+			return ced_air.m17.can != ced_air_orig.m17.can;
+		if (r == CE_M17_SQ)
+			return ced_air.m17.can_squelch != ced_air_orig.m17.can_squelch;
+		return strcmp(ced_m17_text, ced_m17_text_orig) != 0;
+	}
+#endif
 	const uint8_t *a = (const uint8_t *)&ced_ch + ced_fields[r].off, *b = (const uint8_t *)&ced_orig + ced_fields[r].off;
 	// The Mode row shows the kind: a kind's channel made plain is a change also where the record's mode is the same
 	if (r == CE_MODE && (ced_ch.kind != ced_orig.kind || ced_ch.system != ced_orig.system))
@@ -2982,7 +3052,7 @@ static void ced_rx_band(channel_t *c)
 	c->rx_only = true;
 	c->tx_hz = c->rx_hz;
 	if (radio_listen_band(c->rx_hz)) {
-		if (ced_is_p25(c) || ced_is_nxdn(c)) {
+		if (ced_is_p25(c) || ced_is_nxdn(c) || ced_is_m17(c)) {
 			c->kind = CODEPLUG_KIND_NONE;
 			c->system = CODEPLUG_SYSTEM_NONE;
 		}
@@ -3011,6 +3081,10 @@ static void ced_from_view(void)
 }
 #endif
 
+#if CONFIG_M17
+static void ced_m17_show(const m17_chan_t *m);
+#endif
+
 // ced_air for ch: a stored channel's block, read at number (before a copy's rename: the tag is the source's name's); a
 // plain channel in P25 or NXDN, the radio's settings from its view
 static void ced_air_read(uint16_t number, const channel_t *ch)
@@ -3020,9 +3094,11 @@ static void ced_air_read(uint16_t number, const channel_t *ch)
 	ui_svc_next_aes_key(&first);
 	ced_keys_available = first.kind == CODEPLUG_KIND_DMR_AES;
 #endif
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 #if CONFIG_P25 || CONFIG_NXDN
 	const radio_view_t *v = ui_view();
 	bool here = ch->kind == CODEPLUG_KIND_NONE && (v->vfo ? number == 0 : v->channel_number == number);
+#endif
 	memset(&ced_air, 0, sizeof ced_air);
 #if CONFIG_P25
 	if (ced_is_p25(ch)) {
@@ -3051,8 +3127,22 @@ static void ced_air_read(uint16_t number, const channel_t *ch)
 		}
 	}
 #endif
+#if CONFIG_M17
+	strcpy(ced_m17_text, "ALL");
+	if (ced_is_m17(ch)) {
+		if (!m17_chan_load(number, ch, &ced_air.m17)) {
+			ced_air.m17.can = 0;
+			ced_air.m17.can_squelch = true;
+			ced_air.m17.dst = M17_ADDR_BROADCAST;
+		}
+		ced_m17_show(&ced_air.m17);
+	}
+#endif
 #if CONFIG_CHANNEL_EDIT
 	ced_air_orig = ced_air;
+#if CONFIG_M17
+	strcpy(ced_m17_text_orig, ced_m17_text);
+#endif
 #endif
 #else
 	(void)number;
@@ -3060,10 +3150,26 @@ static void ced_air_read(uint16_t number, const channel_t *ch)
 #endif
 }
 
+#if CONFIG_M17
+static void ced_m17_show(const m17_chan_t *m)
+{
+	uint8_t b[M17_ADDR_BYTES];
+	uint64_t v = m->dst;
+
+	for (int i = (int)M17_ADDR_BYTES - 1; i >= 0; i--) {
+		b[i] = (uint8_t)v;
+		v >>= 8;
+	}
+	if (!m17_addr_decode(b, ced_m17_text, sizeof ced_m17_text))
+		strcpy(ced_m17_text, "ALL");
+}
+#endif
+
 static void ced_build(void)
 {
 	bool listen = radio_listen_band(ced_ch.rx_hz);
-	bool p25 = ced_is_p25(&ced_ch), nxdn = ced_is_nxdn(&ced_ch), air = p25 || nxdn;
+	bool p25 = ced_is_p25(&ced_ch), nxdn = ced_is_nxdn(&ced_ch), m17 = ced_is_m17(&ced_ch);
+	bool air = p25 || nxdn || m17;
 	bool dmr = CONFIG_DMR && ced_ch.mode == RADIO_MODE_DMR && !listen && !air;
 	bool edit = CONFIG_CHANNEL_EDIT;
 	bool fresh = false, changed = false, into = false;
@@ -3083,8 +3189,11 @@ static void ced_build(void)
 		bool tone = r == CE_RX_TONE || r == CE_TX_TONE;
 		// P25 and NXDN: no sub-audio tones or width; of the digital rows the talk target and unit ID, P25's
 		// talkaround; the NAC or RAN, NXDN's rate
-		bool air_row = air && ((r == CE_CONTACT && CONFIG_DMR) || r == CE_ID || (r == CE_DMO && p25) ||
+		bool m17_row = m17 && !into && (r == CE_M17_CAN || r == CE_M17_SQ || r == CE_M17_DST);
+		bool air_row = (p25 || nxdn) && ((r == CE_CONTACT && CONFIG_DMR) || r == CE_ID || (r == CE_DMO && p25) ||
 				       (r == CE_CODE && !into) || (r == CE_RATE && nxdn && !into));
+		if ((r == CE_M17_CAN || r == CE_M17_SQ || r == CE_M17_DST) && !m17_row)
+			continue;
 		if (r == CE_CODE || r == CE_RATE ? !air_row : air && (fm_only || (dmr_only && !air_row)))
 			continue;
 		if (!air_row && ((fm_only && dmr) || (tone && listen) || (dmr_only && !dmr) || (r == CE_MODE && !CONFIG_DMR)))
@@ -3275,8 +3384,10 @@ static void sb_ced_code(sbuf_t *b, const channel_t *ch, bool editing)
 
 static void chinfo_item(uint16_t i, ui_item_t *it)
 {
-	static const tr_id_t labels[CE_COUNT] = { TRN(LABEL_NAME, "Name"), TRN(CHAN_LABEL_NUMBER, "Number"),
-		TRN(LABEL_MODE, "Mode"), TRX(CHAN_LABEL_NAC, "NAC"), TRN(CHAN_LABEL_RATE, "Rate"), TRX(CHAN_LABEL_RX, "RX"), TRX(CHAN_LABEL_TX, "TX"), TRN(LABEL_POWER, "Power"),
+	static const tr_id_t labels[CE_COUNT] = { 		TRN(LABEL_NAME, "Name"), TRN(CHAN_LABEL_NUMBER, "Number"),
+		TRN(LABEL_MODE, "Mode"), TRX(CHAN_LABEL_NAC, "NAC"), TRN(CHAN_LABEL_RATE, "Rate"),
+		TRN(M17_LABEL_CAN, "CAN"), TRN(M17_LABEL_CAN_SQUELCH, "CAN squelch"), TRN(M17_LABEL_TALK_TO, "Talk to"),
+		TRX(CHAN_LABEL_RX, "RX"), TRX(CHAN_LABEL_TX, "TX"), TRN(LABEL_POWER, "Power"),
 		TRN(WORD_RX_ONLY, "RX only"), TRN(CHAN_LABEL_BANDWIDTH, "Bandwidth"),
 		TRN(CHAN_LABEL_RX_TONE, "RX CTCSS/DCS"), TRN(CHAN_LABEL_TX_TONE, "TX CTCSS/DCS"), TRX(WORD_VOX, "VOX"),
 		TRN(WORD_TONE_BURST, "Tone burst"), TRN(CHAN_AES_KEY, "AES key"), TRN(CHAN_LABEL_COLOR_CODE, "Color code"),
@@ -3348,6 +3459,21 @@ static void chinfo_item(uint16_t i, ui_item_t *it)
 #if CONFIG_NXDN
 		sb_str(&b, ced_air.nxdn.rate9600 ? "9600 bit/s" : "4800 bit/s");
 #endif
+		break;
+#endif
+#if CONFIG_M17
+	case CE_M17_CAN:
+#if CONFIG_CHANNEL_EDIT
+		sb_u32(&b, editing && ced_edit == CE_M17_CAN ? (uint32_t)ced_val : ced_air.m17.can, 1);
+#else
+		sb_u32(&b, ced_air.m17.can, 1);
+#endif
+		break;
+	case CE_M17_SQ:
+		sb_onoff(&b, ced_air.m17.can_squelch);
+		break;
+	case CE_M17_DST:
+		sb_str(&b, ced_m17_text[0] != '\0' ? ced_m17_text : "ALL");
 		break;
 #endif
 	case CE_RX:
@@ -3498,7 +3624,8 @@ static const char *ced_problem(void)
 		return TR(CHAN_WHY_RX_ONLY_BAND_SET_FM, "Receive only band: set FM");
 	// The contact is whom PTT calls, so a channel that never transmits needs none
 	// (P25 and NXDN: none is talk group 1)
-	if (CONFIG_DMR && c->mode == RADIO_MODE_DMR && !c->rx_only && c->contact == 0 && !ced_is_p25(c) && !ced_is_nxdn(c))
+	if (CONFIG_DMR && c->mode == RADIO_MODE_DMR && !c->rx_only && c->contact == 0 && !ced_is_p25(c) &&
+	    !ced_is_nxdn(c) && !ced_is_m17(c))
 		return TR(CHAN_WHY_PICK_TX_CONTACT, "Pick a TX contact first");
 #if CONFIG_NXDN
 	// A DMR channel's own ID kept when the Mode row made it NXDN: past NXDN's range, as the ID row refuses it
@@ -3529,6 +3656,10 @@ static bool ced_write(uint16_t num, bool as_new)
 	// NXDN; unchanged, the tag is written as without the editor (a plain channel in P25 or NXDN takes the radio's
 	// settings, a copy its source's tag)
 	if ((ced_is_p25(&ced_ch) || ced_is_nxdn(&ced_ch)) && (ced_air_changed(CE_CODE) || ced_air_changed(CE_RATE)))
+		return ui_svc_write_channel_air(num, &ced_ch, ced_src, &ced_air);
+#endif
+#if CONFIG_M17
+	if (ced_is_m17(&ced_ch))
 		return ui_svc_write_channel_air(num, &ced_ch, ced_src, &ced_air);
 #endif
 	return ui_svc_write_channel(num, &ced_ch, ced_src);
@@ -3567,8 +3698,11 @@ static void ced_save(bool as_new)
 	ced_src = num;
 	ui_frame()->arg = num;
 	ced_orig = ced_ch;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 	ced_air_orig = ced_air;
+#endif
+#if CONFIG_M17
+	strcpy(ced_m17_text_orig, ced_m17_text);
 #endif
 	sbuf_t b;
 	sb_init(&b, msg, sizeof msg);
@@ -3632,6 +3766,15 @@ static void ced_spin(int dir)
 		ced_len = 0;
 		ced_tone = tones_step(&ced_tone, dir);
 		break;
+#if CONFIG_M17
+	case CE_M17_CAN:
+		ced_val += dir;
+		if (ced_val < 0)
+			ced_val = 0;
+		if (ced_val > (int32_t)M17_CP_CAN_MAX)
+			ced_val = (int32_t)M17_CP_CAN_MAX;
+		break;
+#endif
 	default:
 		break;
 	}
@@ -3688,6 +3831,18 @@ static void ced_digit(char d)
 		ced_typed = true;
 		break;
 	}
+#if CONFIG_M17
+	case CE_M17_CAN:
+		if (!ced_typed)
+			v = d - '0';
+		if (v > (int32_t)M17_CP_CAN_MAX) {
+			ui_toast(TR(M17_TOAST_CAN, "CAN is 0 to 15"));
+			break;
+		}
+		ced_val = v;
+		ced_typed = true;
+		break;
+#endif
 	default:
 		break;
 	}
@@ -3772,6 +3927,15 @@ static void ced_commit(void)
 	case CE_CC:
 		c->color_code = (uint8_t)ced_val;
 		break;
+#if CONFIG_M17
+	case CE_M17_CAN:
+		if (ced_val > (int32_t)M17_CP_CAN_MAX) {
+			ui_toast(TR(M17_TOAST_CAN, "CAN is 0 to 15"));
+			return;
+		}
+		ced_air.m17.can = (uint8_t)ced_val;
+		break;
+#endif
 	case CE_TOT:
 		if (ced_val % CE_TOT_STEP != 0) {
 			ui_toast(TR(CHAN_TOAST_TIMEOUT_RANGE, "Not changed: 0 to 495, steps of 15"));
@@ -3796,6 +3960,26 @@ static void ced_commit(void)
 	}
 	ced_edit = CE_NONE;
 }
+
+#if CONFIG_M17 && CONFIG_CHANNEL_EDIT
+static void m17_dst_kept(void)
+{
+	uint64_t dst;
+
+	if (m17_dst_parse(ced_m17_text, &dst))
+		ced_air.m17.dst = dst;
+}
+
+static void m17_dst_open(void)
+{
+	text_open(ced_m17_text, M17_ADDR_CHARS_MAX, SCR_M17_CHAN_DST);
+	text_done = m17_dst_kept;
+}
+
+static const ui_scr_def_t m17_dst_screen = {
+	.name = "m17-channel-destination", .flags = 0, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
+};
+#endif
 
 static bool chinfo_key(const input_event_t *ev)
 {
@@ -3898,6 +4082,19 @@ static void chinfo_select(uint16_t i, bool hold)
 		ced_val = c->power < board.power_count ? c->power : board.power_count;
 		break;
 	case CE_RX_ONLY: c->rx_only = !c->rx_only; break;
+#if CONFIG_M17
+	case CE_M17_CAN:
+		ced_edit = r;
+		ced_val = ced_air.m17.can;
+		ced_typed = false;
+		break;
+	case CE_M17_SQ:
+		ced_air.m17.can_squelch = !ced_air.m17.can_squelch;
+		break;
+	case CE_M17_DST:
+		m17_dst_open();
+		break;
+#endif
 	case CE_BW: c->bw = c->bw == RADIO_BW_25K ? RADIO_BW_12K5 : RADIO_BW_25K; break;
 	case CE_RX_TONE:
 	case CE_TX_TONE:
@@ -8451,6 +8648,9 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 #endif
 #if CONFIG_M17 && CONFIG_UI_SETTINGS
 	[SCR_M17_CALL] = &m17_call_screen,
+#endif
+#if CONFIG_M17 && CONFIG_CHANNEL_EDIT
+	[SCR_M17_CHAN_DST] = &m17_dst_screen,
 #endif
 #if CONFIG_CRASH_SCREEN
 	[SCR_CRASH] = &crash_screen,
