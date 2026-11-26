@@ -33,6 +33,9 @@ typedef struct {
 #define RADIO_M17_ON		0x01u	// the engine runs on this channel
 #define RADIO_M17_RX		0x02u	// a call is being received
 #define RADIO_M17_LATE		0x04u	// ... and was entered without its link setup frame
+#if CONFIG_M17_VOICE
+#define RADIO_M17_VOICE_MEM	0x08u	// the session has room for codec scratch and state
+#endif
 
 typedef enum {
 	RADIO_M17_RX_NONE,
@@ -209,6 +212,21 @@ bool radio_m17_bert_on(void);
 // session needs
 const void *radio_m17_engine_mem(void);
 size_t radio_m17_engine_bytes(void);
+
+#if CONFIG_M17_VOICE
+#include "radio/radio_lend.h"
+
+#define RADIO_M17_VOICE_QUEUE_BYTES	512u
+
+typedef struct {
+	void *scratch;
+	void *state;
+} radio_m17_voice_mem_t;
+
+// Plan placement in a gathered pool. Returns the engine block, or NULL when it cannot fit.
+// Both voice pointers are NULL when either voice region cannot fit.
+void *radio_m17_lend_place(const radio_lend_t *blocks, uint8_t n, radio_m17_voice_mem_t *voice);
+#endif
 #endif
 
 #endif

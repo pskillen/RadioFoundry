@@ -44,8 +44,8 @@ typedef struct {
 	uint32_t (*encode_flags)(void);
 	// Optional: the codec's working memory, lent while no DMR voice runs (another voice path, P25's decoder, uses it
 	// then). Returns it (8-byte aligned) and its size in *len; the codec's next call rebuilds its own state, so the
-	// borrower must be done with it before DMR voice starts again. A platform that lends defines
-	// HAL_VOCODER_LEND_BYTES (the size it always lends) for every core file, so the borrower links no copy of its own
+	// borrower must be done with it before DMR voice starts again. A platform can lend without defining
+	// HAL_VOCODER_LEND_BYTES. P25 only drops its own block when that macro gives a guaranteed lend size.
 	void *(*lend)(size_t *len);
 } hal_vocoder_t;
 

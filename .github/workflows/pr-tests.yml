@@ -73,7 +73,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with:
           persist-credentials: false
-          submodules: false   # the host tests use none of third_party
+          submodules: false
+      - name: Check out pinned c2fx headers for the M17 lend tests
+        run: git submodule update --init -- third_party/c2fx
       - name: Install gcovr, tshark, numpy, pytest, pyserial
         run: |
           set -eu

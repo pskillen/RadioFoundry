@@ -9,6 +9,9 @@
 
 ROOT    := ../..
 CORE    := $(ROOT)/core
+TP_ROOT := $(ROOT)
+include $(ROOT)/platform/third_party.mk
+
 CC      ?= cc
 PYTHON  ?= python3
 # COVERAGE=1: gcov instrumentation (GCC and clang both take --coverage); each test writes its .gcda files here
@@ -468,6 +471,16 @@ radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
 		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ $(RCM17) -lm
 
+TESTS   += m17LendTestDecoder4504 m17LendTestEncoder5392
+C2FX_HEADERS := $(patsubst -I%,%,$(call TP_INCLUDES,-I$(ROOT)/third_party/c2fx/include))
+m17LendTestDecoder4504: M17_LEND_FLAGS = -DC2FX_NO_ENCODER
+m17LendTestDecoder4504 m17LendTestEncoder5392: m17LendTest.c m17RadioTest.c $(M17RX) $(wildcard $(CORE)/radio/*.h) \
+                       $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h) $(CORE)/nxdn/nxdn_engine.h \
+                       $(C2FX_HEADERS)/c2fx.h $(C2FX_HEADERS)/c2fx_types.h
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -I$(C2FX_HEADERS) $(M17_LEND_FLAGS) -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
+		-DCONFIG_P25=1 -DCONFIG_NXDN=1 -DCONFIG_NXDN_SCRAMBLER=1 -DCONFIG_M17_VOICE=1 \
+		-o $@ m17LendTest.c $(M17RX) -lm
+
 # M17 message state tests include the radio core test harness.
 TESTS   += m17MessageRadioTest
 m17MessageRadioTest: m17MessageRadioTest.c $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/call/*.h) $(CORE)/dmr/dmrDataService.h \
@@ -610,6 +623,12 @@ boardBandTest: boardBandTest.c $(ROOT)/hal/board.h
 	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -o $@ boardBandTest.c
 
 run: run-core
+run: run-m17-lend
+.PHONY: run-m17-lend
+run-m17-lend: m17LendTestDecoder4504 m17LendTestEncoder5392
+	./m17LendTestDecoder4504
+	./m17LendTestEncoder5392
+
 run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 m17MessageRadioTest m17MessageDebugTest m17MessageDebugTestNoPacket radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
           rx2LinkTest keyassignTest powerSwitchTest powerKeyTest boardBandTest batteryTest
 	./aprsRadioTest
