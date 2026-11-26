@@ -334,12 +334,12 @@ CONFIG_M17_PACKET ?= $(CONFIG_M17)
 CONFIG_M17_VOICE ?= n
 # Derived, never set by hand (a command line or a board's config.mk that sets one stops the build): AIR the air
 # interface, on with any air-framed mode (P25, NXDN, M17); IMBE the full-rate voice decoder and MBE the MBE core, with
-# P25
+# P25; MBE is also on with M17 voice
 $(foreach f,AIR IMBE MBE,$(if $(filter-out undefined,$(origin CONFIG_$(f))),$(error CONFIG_$(f) is derived from CONFIG_P25 \
-	CONFIG_NXDN and CONFIG_M17 ($(origin CONFIG_$(f))): set those instead)))
+	CONFIG_NXDN CONFIG_M17 and CONFIG_M17_VOICE ($(origin CONFIG_$(f))): set those instead)))
 CONFIG_AIR := $(if $(filter y,$(CONFIG_P25) $(CONFIG_NXDN) $(CONFIG_M17)),y,n)
 CONFIG_IMBE := $(CONFIG_P25)
-CONFIG_MBE := $(CONFIG_IMBE)
+CONFIG_MBE := $(if $(filter y,$(CONFIG_IMBE) $(CONFIG_M17_VOICE)),y,n)
 # diagnostics: debug link commands that open an air interface session and move raw symbols, for bench tests (needs an
 # air-framed mode such as P25 or NXDN, and DEBUGLINK; docs/spec/debuglink.md)
 CONFIG_AIR_RAW ?= n

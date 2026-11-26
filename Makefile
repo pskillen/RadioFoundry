@@ -336,7 +336,13 @@ endif
 BIN_SECTIONS ?= .isr_vector .text .rodata .ARM.extab .ARM .preinit_array .init_array .fini_array .data .ccmdata
 
 APP_OBJ := $(APP_SRC:%.c=$(BUILD)/%.o) $(APP_ASM:%.S=$(BUILD)/%.o)
-TP_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(filter %.c,$(PLATFORM_3P_SRC))) $(patsubst %.s,$(BUILD)/%.o,$(filter %.s,$(PLATFORM_3P_SRC)))
+# c2fx 0.2.0 decoder-only external-DSP archive (the pin's Makefile defines this list).
+ifeq ($(CONFIG_M17_VOICE),y)
+C2FX_SRC := $(addprefix third_party/c2fx/src/,c2fx_version.c tables/c2_3200_tab.c dsp/c2fx_exp2_tab.c \
+	c2fx_frame.c c2fx_quant.c c2fx_lpc.c c2fx_envelope.c c2fx_phase.c c2fx_synth.c c2fx_lost.c c2fx_decode.c)
+C2FX_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(C2FX_SRC))
+endif
+TP_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(filter %.c,$(PLATFORM_3P_SRC))) $(patsubst %.s,$(BUILD)/%.o,$(filter %.s,$(PLATFORM_3P_SRC))) $(C2FX_OBJ)
 OBJ := $(APP_OBJ) $(TP_OBJ)
 
 # No built-in suffix rules (the .S -> .s rule deletes sources on case-insensitive file systems, gotchas 13.3)
@@ -412,6 +418,10 @@ $(shell python3 tools/gen_http_assets.py $(if $(filter y,$(CONFIG_NET_HTTP_GZIP)
 endif
 endif
 $(APP_OBJ) $(TP_OBJ): $(BUILD)/flags
+# Unlike the other third-party code, c2fx builds with firmware warnings enabled.
+$(C2FX_OBJ): CFLAGS_3P = $(CFLAGS_APP) -DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP \
+	$(call TP_INCLUDES,-Ithird_party/c2fx/include -Ithird_party/c2fx/src/tables -Ithird_party/c2fx/src/dsp)
+$(BUILD)/third_party/c2fx/src/c2fx_version.o: CFLAGS_3P += -DC2FX_VERSION=\"0.2.0\"
 $(BUILD)/core/hostlink/build_info.o: CFLAGS_APP += -DRFOUNDRY_FEATURES_OFF=\"$(RFOUNDRY_OFF)\" -DRFOUNDRY_PRESET=\"$(RFOUNDRY_PRESET)\"
 $(VERSION_OBJ): $(BUILD)/version
 $(VERSION_OBJ): CFLAGS_APP += -DRFOUNDRY_GIT=\"$(RFOUNDRY_VERSION)\" -DRFOUNDRY_GIT_ID=$(RFOUNDRY_GIT_ID) -DRFOUNDRY_GIT_DIRTY=$(RFOUNDRY_GIT_DIRTY) \

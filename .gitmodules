@@ -13,3 +13,6 @@
 [submodule "third_party/tinyusb"]
 	path = third_party/tinyusb
 	url = https://github.com/hathach/tinyusb.git
+[submodule "third_party/c2fx"]
+	path = third_party/c2fx
+	url = https://github.com/pskillen/c2fx.git
