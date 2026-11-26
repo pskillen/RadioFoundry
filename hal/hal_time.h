@@ -9,6 +9,8 @@
 uint32_t hal_millis(void);
 // Microseconds, wraps every 71 minutes: for timing inside a millisecond
 uint32_t hal_micros(void);
+// Platform cycle counter. Use an unsigned difference to measure across a wrap.
+uint32_t hal_cycles(void);
 // Sleeps the calling task once the RTOS runs; busy-waits before that
 void hal_delay_ms(uint32_t ms);
 // Always a busy wait

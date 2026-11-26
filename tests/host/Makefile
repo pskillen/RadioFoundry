@@ -226,6 +226,16 @@ c2fxSeamTest: c2fxSeamTest.c $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/incl
 		-DC2FX_VECTOR=\"$(abspath $(C2FX_DIR)/vectors/chirp_80_400hz.c2)\" \
 		-I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables -I$(C2FX_DIR)/src/dsp -o $@ c2fxSeamTest.c $(C2FX_DSP) $(C2FX_SRC)
 
+TESTS += m17BenchTest
+M17BENCH := $(CORE)/m17/m17_bench.c $(CORE)/debuglink/debuglink_m17_bench.c $(CORE)/debuglink/dl_fmt.c
+m17BenchTest: m17BenchTest.c $(M17BENCH) $(CORE)/m17/m17_bench.h $(CORE)/debuglink/debuglink_m17_bench.h \
+              $(ROOT)/hal/hal_time.h $(wildcard stubs/m17_bench_rtos/*.h) \
+              $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/include/*.h $(C2FX_DIR)/src/*/*.h)
+	$(CC) $(CFLAGS) -Wshadow -DCONFIG_M17=1 -DCONFIG_M17_VOICE=1 \
+		-DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.0\" \
+		-Istubs/m17_bench_rtos -I$(ROOT)/hal -I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables \
+		-I$(C2FX_DIR)/src/dsp -o $@ m17BenchTest.c $(M17BENCH) $(C2FX_DSP) $(C2FX_SRC)
+
 # The full-rate voice encoder (core/mbe): the quantizer against the dequantizer
 TESTS   += imbeEncTest
 imbeEncTest: imbeEncTest.c $(MBE) $(wildcard $(CORE)/mbe/*.h) $(CORE)/dsp/fxp.h
@@ -336,6 +346,7 @@ run: $(TESTS)
 	./fxpTest
 	./mbeTest | tail -1
 	./c2fxSeamTest
+	./m17BenchTest
 	./imbeEncTest | tail -1
 	for v in $(VOICE_SETS); do ./imbeVoiceGen --check $(VOICE)/$$v.pcm $(VOICE)/$$v.imbe || exit 1; done
 	./airSoftmodemTest | tail -1

@@ -21,6 +21,8 @@ def pytest_addoption(parser):
                      "one radio in USB network mode)")
     g.addoption("--allow-rf", action="store_true",
                 help="tests may transmit (the SDR bench's transmitter; the radio only in tests marked radio_tx)")
+    g.addoption("--m17-bench", action="store_true",
+                help="run the receive-only codec bench on the selected M17 channel")
     g.addoption("--allow-service-stop", action="store_true",
                 help="accepted and ignored: a bench board stops nothing (bench_service tests need only --bench-api)")
     g.addoption("--allow-usb-switch", action="store_true",

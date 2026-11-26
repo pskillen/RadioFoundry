@@ -70,6 +70,11 @@ uint32_t hal_micros(void)
 	return now_us;
 }
 
+uint32_t hal_cycles(void)
+{
+	return hrc_cycles();
+}
+
 void hal_delay_us(uint32_t n)
 {
 	while (n > 0) {
