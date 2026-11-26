@@ -143,7 +143,7 @@ Focus a row and press **OK**:
 
 | Row | What OK does |
 |---|---|
-| Mode | steps to the next mode: FM, DMR, then P25 and NXDN on a radio that runs them. Stepping on comes back to the mode the channel had, with its settings as they were |
+| Mode | steps to the next available mode: FM, DMR, P25, NXDN, or M17. Stepping on comes back to the mode the channel had, with its settings as they were |
 | Two choices (timeslot, bandwidth, RX only, scan, VOX, tone burst, direct mode, beeps, talker alias, battery saver) | switches to the other one |
 | Power, RX CTCSS/DCS, TX CTCSS/DCS, color code, TX time-out | opens a picker: turn the knob (or Up / Down) to the value, **OK** keeps it, **Back** cancels. Color code and time-out also take digits |
 | RX CTCSS/DCS, TX CTCSS/DCS, typed | type a CTCSS tone with its tenths digit: **8 8 5** is 88.5, **1 3 1 8** is 131.8. Under 60 the digits are whole Hz: **6 7** is 67.0, **1 0 0** is 100.0. Start with **0** for a DCS code: **0 2 3** is D023N. **Back** takes the last digit back. For an inverted DCS code, turn the knob one step: each code's I follows its N (D023N, D023I, D025N) |
@@ -202,9 +202,8 @@ A save that fails shows "Couldn't save: ..." and the change stays for now only.
 
 ## The VFO
 
-The VFO is an FM VFO or, on a radio with DMR, a DMR VFO. It keeps its mode like its frequency. Everything you change in
-the VFO (mode, color code, timeslot, talk target) is kept, also when you go to a channel and come back, and after a
-restart.
+The VFO keeps its frequency and mode when you go to a channel or restart. It also keeps DMR settings such as color
+code, timeslot, and talk target. For M17 and its temporary Talk to setting, see [Select M17 in the VFO](24-m17.md#select-m17-in-the-vfo).
 
 1. **OK**, **4** (Zones). The VFO is the first row.
 2. Press **OK**. Home shows the frequency large, and the radio says "VFO: type a frequency".
@@ -293,8 +292,8 @@ In the VFO, **\***, **5** (**\***, **6** in the DMR VFO) is **TX freq** (the spl
 
 ### DMR in the VFO
 
-**\***, **4** in the VFO switches it between FM and DMR on the same frequency ("VFO: DMR"), and to P25 and NXDN after DMR on a
-radio that runs them ([P25 in the VFO](#p25-in-the-vfo), [NXDN in the VFO](#nxdn-in-the-vfo)). In DMR the quick settings are the DMR ones:
+**\***, **4** in the VFO cycles through FM, DMR, P25, NXDN, and M17 on the same frequency, skipping unavailable modes.
+In DMR the quick settings are the DMR ones:
 
 | Key | Tile | What it does in the DMR VFO |
 |---|---|---|
@@ -316,8 +315,8 @@ radio that runs them ([P25 in the VFO](#p25-in-the-vfo), [NXDN in the VFO](#nxdn
 
 ### P25 in the VFO
 
-On a radio that runs P25 ([feature matrix](../feature-matrix.md)), P25 is one of the VFO's modes: **\***, **4** goes FM, DMR, P25, then FM again
-("VFO: P25"). The VFO keeps the mode when the radio is switched off.
+On a radio that runs P25, use **\***, **4** to cycle the VFO to P25 ("VFO: P25"). The VFO keeps the mode when the
+radio is switched off. See the [feature matrix](../feature-matrix.md) for availability.
 
 - It hears clear P25 voice calls on network access code 293, to every talkgroup. Encrypted calls stay silent.
 - PTT sends a P25 voice call to talkgroup 1 from your P25 unit ID, or your DMR ID when the codeplug has none.
@@ -343,8 +342,8 @@ silent.
 - **NAC** sets the network access code both ways. Type its hex digits; **Up** and **Down** step the last digit
   through 0-9 and A-F, so for 1A5 type 1, 9, **Up**, 5. F7E receives every NAC. The talk group is **TX contact**, your
   unit ID **Own ID**.
-- **OK** on Mode steps to NXDN (on a radio that runs it), FM, DMR, then back to P25 with its settings as they were, so
-  a slip costs nothing. Saving the channel as another mode removes its P25 settings: the radio asks first ("Save as
+- **OK** on Mode cycles through the available modes and back to P25 with its settings as they were.
+  Saving the channel as another mode removes its P25 settings: the radio asks first ("Save as
   FM?", "Save as DMR?", or "Unsaved Changes" for NXDN), and "No, keep editing" is the default. **Save as new channel** leaves the P25 channel as it is.
 - Scan stops on P25 channels and holds on a call you would hear there. Dual watch takes one as A or B.
 
@@ -410,7 +409,7 @@ it says NXDN, set the RAN and rate, and save. A channel made NXDN starts with RA
 squelch and the group (when a contact has that group; else group 1).
 
 - Home shows it as in the VFO. The channel's settings show "NXDN" as the mode.
-- **OK** on Mode steps to FM, DMR, P25 (on a radio that runs it), then back to NXDN with its settings as they were.
+- **OK** on Mode cycles through the available modes and back to NXDN with its settings as they were.
   Saving the channel as another mode removes its NXDN settings: the radio asks first ("Save as FM?", "Save as
   DMR?", or "Unsaved Changes" for P25).
 - **RAN** (0-63) and **Rate** (9600 or 4800 bit/s) are in the channel's settings, with the group (**TX contact**) and

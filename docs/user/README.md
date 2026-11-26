@@ -39,6 +39,7 @@ The chapters below name the command line tools as alternatives.
 15. [USB network mode](15-usb-network.md): IP over DMR, the status page, rig control, KISS, TFTP, SNMP, control station
 16. [Battery and power](16-battery-and-power.md)
 18. [Satellite tracking](18-satellite.md): install selected TLE records on a PC, then track from the radio
+24. [M17](24-m17.md): callsign, VFO and channels, CAN squelch, temporary destinations, and incoming calls
 
 ### Reference
 
