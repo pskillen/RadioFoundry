@@ -88,6 +88,10 @@ The image is one `.bin` from 0x0800C000, and an update erases and writes only th
 the codec in sectors 10 and 11 are 0xFF after a merge and are never executed. The DM-1701's settings and codeplug live
 in the external SPI flash, so nothing else writes internal flash.
 
+The default image is 678,008 bytes (59,272 free, link time optimization, 2273e30e). To leave room for M17 voice,
+`boards/dm1701/config.mk` builds it without the split duplex repeater (`HOTSPOT_SPLIT`, 19,424 B) and P25 trunking
+(`P25_TRUNK`, 14,124 B); both build when switched on.
+
 The manufacturer's firmware, and RadioFoundry builds from before the codec moved, keep the codec code in sectors 7 and 8, which the
 application now covers. A release or manifest with two ranges (the application and a sector 9 data part) is from
 before the move and is refused. Moving a radio to this layout writes the codec once, from the manufacturer's firmware file or from a
@@ -2165,7 +2169,7 @@ against the SDR bench, at the lowest power:
 | P25 conventional transmit ([p25.md](p25.md) 9, `test_p25_tx_off_air`) | 19 units, 153 voice frames, none bad, no voice bit corrected; outer deviation 1924 Hz, carrier 75 Hz low |
 | P25 conventional receive (`test_p25_rx_from_bench`) | at -117 dBm: 72 of 72 voice frames, 1 bad, played |
 | A stored P25 or NXDN channel written over CPS | runs the mode on its own parameters, plain again after the restore. One that transmits, keyed: P25 with the channel's NAC, 153 voice frames, none bad; NXDN at 4800 bit/s with the channel's RAN, unit and group, 40 frames, no CRC failure |
-| P25 trunked ([p25-trunking.md](p25-trunking.md), `test_p25_trunk_tx`) | the bench's control channel held; registration, affiliation and voice requests heard off air; two calls keyed on the granted channel, each a header, 5 pairs of voice units and a terminator; back on the control channel after. A call granted to another unit followed to a second transmitter and played (by hand) |
+| P25 trunked ([p25-trunking.md](p25-trunking.md), `test_p25_trunk_tx` (a `CONFIG_P25_TRUNK=y` build)) | the bench's control channel held; registration, affiliation and voice requests heard off air; two calls keyed on the granted channel, each a header, 5 pairs of voice units and a terminator; back on the control channel after. A call granted to another unit followed to a second transmitter and played (by hand) |
 | NXDN transmit ([nxdn.md](nxdn.md), `test_nxdn_tx_off_air`) | 9600 bit/s: 78 frames, outer deviation 2399 Hz; 4800 bit/s: 40 frames, 1012 Hz; no CRC failure |
 | NXDN receive (`test_nxdn_rx_from_bench`, `test_nxdn_rx_speech`) | through the FM copy, at both rates: a call's frames and its 40 voice frames, no CRC failure; a speech recording's frames, 64 of 64 at 9600 bit/s and 136 of 136 at 4800 bit/s into the vocoder, none bad, decoded PCM peak 15,400 and 16,700. A DMR call right after is received whole |
 
