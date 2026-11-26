@@ -1310,12 +1310,13 @@ static bool ced_is_p25(const channel_t *ch)
 	return CONFIG_P25 && (ch->kind == CODEPLUG_KIND_P25 || (ch->kind == CODEPLUG_KIND_NONE && ch->mode == RADIO_MODE_P25));
 }
 
+#if CONFIG_CHANNEL_LIST
+// Whether ch is a stored M17 channel (the channel editor's only callers are under the channel list)
 static bool ced_is_m17(const channel_t *ch)
 {
 	return CONFIG_M17 && ch->kind == CODEPLUG_KIND_M17;
 }
 
-#if CONFIG_CHANNEL_LIST
 // The same for NXDN
 static bool ced_is_nxdn(const channel_t *ch)
 {
