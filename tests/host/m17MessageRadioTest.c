@@ -96,6 +96,33 @@ static void packet_provider_done(uint8_t why, bool underrun)
 	packet_tick(1);
 }
 
+static void test_packet_poll_jitter_clear(void)
+{
+	packet_setup();
+	packet_submit(m17_destination("INFO"), sm.view.m17_selected.generation);
+	packet_ready();
+	for (unsigned i = 0; i < 200 && !hw.keyed; i++) {
+		packet_poll(28);
+		packet_tick(RADIO_TICK_MS);
+	}
+	CHECK(hw.keyed && completions == 0);
+	packet_provider_done(AIR_TX_END_DRAINED, false);
+	packet_result(RADIO_M17_MSG_TX_SENT);
+}
+
+static void test_packet_poll_jitter_busy(void)
+{
+	packet_setup();
+	packet_submit(m17_destination("INFO"), sm.view.m17_selected.generation);
+	hw.st.carrier = true;
+	for (unsigned i = 0; i < 200 && completions == 0; i++) {
+		packet_poll(30);
+		packet_tick(RADIO_TICK_MS);
+	}
+	packet_result(RADIO_M17_MSG_TX_BUSY);
+	hw.st.carrier = false;
+}
+
 static void test_packet_carrier(void)
 {
 	packet_setup();
@@ -120,7 +147,7 @@ static void test_packet_carrier(void)
 	rx_signal(120, true);
 	packet_poll(RADIO_POLL_MS);
 	packet_poll(RADIO_POLL_MS);
-	packet_poll(RADIO_POLL_MS + 1);	// late poll begins a new interval
+	packet_poll(3u * RADIO_POLL_MS + 1);	// late poll begins a new interval
 	packet_poll(RADIO_POLL_MS);
 	packet_tick(0);
 	CHECK(!hw.keyed);
@@ -242,6 +269,8 @@ static void test_packet_completion(void)
 
 int main(void)
 {
+	test_packet_poll_jitter_clear();
+	test_packet_poll_jitter_busy();
 	test_packet_carrier();
 	test_packet_context_and_guards();
 	test_packet_completion();

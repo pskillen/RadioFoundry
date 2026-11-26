@@ -104,6 +104,8 @@ static void ptt_release(radio_sm_t *sm, bool roger, uint32_t now_ms);
 enum { M17_MSG_IDLE, M17_MSG_WAIT, M17_MSG_READY, M17_MSG_SENDING };
 
 #define M17_MSG_WAIT_MS	5000u
+// Poll jitter on radios whose status read is slow can exceed RADIO_POLL_MS between samples.
+#define M17_MSG_SAMPLE_GAP_MS	(3u * RADIO_POLL_MS)
 // A maximum packet takes under 1.5 s on air. Allow provider lead, tail and scheduling before closing a stalled session.
 #define M17_MSG_MAX_TX_MS	2500u
 #define M17_MSG_RX_SETTLE_MS	RADIO_SAVE_SETTLE_MS
@@ -7134,7 +7136,7 @@ static void __attribute__((noinline)) m17_msg_sample(radio_sm_t *sm, const radio
 		return;		// tick also enforces this when status polling exits early
 
 	if (sm->m17_msg.phase == M17_MSG_READY ||
-	    (sm->m17_msg.sampled && now_ms - sm->m17_msg.sample_ms > RADIO_POLL_MS)) {
+	    (sm->m17_msg.sampled && now_ms - sm->m17_msg.sample_ms > M17_MSG_SAMPLE_GAP_MS)) {
 		// A grant or a clear interval cannot survive a gap in the observations.
 		sm->m17_msg.phase = M17_MSG_WAIT;
 		m17_csma_init(&sm->m17_msg.csma);
