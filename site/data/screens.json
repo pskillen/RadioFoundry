@@ -70,6 +70,54 @@
     "DMR"
    ]
   },
+  "m17_home": {
+   "group": "home",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_tx_denied": {
+   "group": "home",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_rx": {
+   "group": "home",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_rx_encrypted": {
+   "group": "home",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_rx_late": {
+   "group": "home",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_rx_meta": {
+   "group": "home",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_rx_other_can": {
+   "group": "home",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_rx_via": {
+   "group": "home",
+   "needs": [
+    "M17"
+   ]
+  },
   "home_vfo": {
    "group": "home",
    "needs": [
@@ -256,6 +304,18 @@
     "VFO_DMR"
    ]
   },
+  "m17_talk_to": {
+   "group": "calls",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_talk_to_other": {
+   "group": "calls",
+   "needs": [
+    "M17"
+   ]
+  },
   "recent": {
    "group": "calls",
    "needs": []
@@ -428,6 +488,18 @@
    "needs": [
     "CHANNEL_LIST",
     "CHANNEL_EDIT"
+   ]
+  },
+  "m17_channel": {
+   "group": "channels",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_channel_destination": {
+   "group": "channels",
+   "needs": [
+    "M17"
    ]
   },
   "channel_discard": {
@@ -845,6 +917,18 @@
    "group": "settings",
    "needs": [
     "DMR"
+   ]
+  },
+  "m17_callsign": {
+   "group": "settings",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_callsign_fallback": {
+   "group": "settings",
+   "needs": [
+    "M17"
    ]
   },
   "volume_muted": {
