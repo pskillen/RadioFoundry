@@ -62,6 +62,11 @@ uint32_t hal_micros(void)
 	return now_us;
 }
 
+uint32_t hal_cycles(void)
+{
+	return DWT->CYCCNT;
+}
+
 void hal_delay_us(uint32_t n)
 {
 	uint32_t per_us = SystemCoreClock / 1000000u;

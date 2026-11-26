@@ -1449,6 +1449,28 @@ class DebugLink:
         payload += raw
         self.radio(OP_M17, bytes(payload))
 
+    def m17_bench(self):
+        """Run the receive codec bench (RADIO op 44 cmd 5) and read its result."""
+        v = self.view(["m17"])
+        if "c2.scratch" not in v:
+            raise DebugLinkError("M17 codec bench is unavailable", ST_UNAVAILABLE)
+        if v.get("m17.on") != "1":
+            raise DebugLinkError("M17 is not running on the selected channel", ST_REFUSED)
+        if v.get("m17.voice_mem") != "1":
+            raise DebugLinkError("M17 has no codec memory", ST_UNAVAILABLE)
+        try:
+            self.request(RADIO, bytes([OP_M17, 5]), timeout=max(self.timeout, 3.0))
+        except DebugLinkError as e:
+            if e.status == ST_UNAVAILABLE:
+                raise DebugLinkError("M17 has no codec memory", e.status) from e
+            if e.status == ST_REFUSED:
+                raise DebugLinkError("M17 codec bench did not complete on the audio task", e.status) from e
+            raise
+        v = self.view(["m17"])
+        keys = ("c2.dec_cycles", "c2.dec_crc", "c2.audio_free", "c2.scratch", "c2.dec_bytes", "c2.enc",
+                "m17.voice_mem")
+        return {key: v[key] for key in keys}
+
     def vfo_sfr(self, role, inbound_ts=1, framing=0, hang=0):
         """The VFO's SFR role (RADIO op 38; sfr.md 4), saved with the VFO: role a SFR_ROLES name or 0..4, the inbound
         slot 1 / 2, framing 0..3, hang 0..3: a codeplug channel's SFR byte A. The outbound color code is the VFO's own.
@@ -2084,9 +2106,9 @@ def cmd_radio(link, a):
             else:
                 raise SystemExit(usage)
         link.nxdn_settings_update(**kw)
-    elif op == "m17":                 # m17 ... | m17 bert rx|tx|stop | m17 message DST TEXT...
+    elif op == "m17":
         usage = ("m17 [can=N] [squelch=0|1] [dst=CALL] [call=CALL] | m17 bert rx|tx|stop | "
-                 "m17 message DST TEXT...")
+                 "m17 message DST TEXT... | m17 bench")
         if args[:1] == ["bert"]:
             if len(args) != 2 or args[1] not in ("rx", "tx", "stop"):
                 raise SystemExit(usage)
@@ -2095,6 +2117,11 @@ def cmd_radio(link, a):
             if len(args) < 3:
                 raise SystemExit(usage)
             link.m17_message(args[1], " ".join(args[2:]))
+        elif args[:1] == ["bench"]:
+            if len(args) != 1:
+                raise SystemExit(usage)
+            for key, value in link.m17_bench().items():
+                print(f"{key}={value}")
         else:
             kw = {}
             for a in args:
@@ -3032,6 +3059,9 @@ def main(argv=None):
                                   "usb-settings", "ppp", "vibrate", "mode", "cc", "ts", "sfr", "copy-vfo", "voice-test", "dtmf",
                                   "tx-limit", "tx-drive", "pa-keyup", "pa-sweep", "pa-keyrun", "p25", "nxdn", "m17"])
     p.add_argument("args", nargs="*")
+    p = sub.add_parser("m17", help="M17 codec bench (selected M17 channel, receive only)")
+    p.add_argument("op", choices=["bench"])
+    p.set_defaults(args=[])
     p = sub.add_parser("data", help="DMR data: sms, call alert, radio check, settings, inbox")
     p.add_argument("op", choices=["sms", "alert", "check", "settings", "inbox", "read", "emergency", "em-settings",
                                   "ip-settings", "ip-send", "tx-spacing"])
@@ -3164,6 +3194,8 @@ def main(argv=None):
                 print(f"PTT held {a.seconds:g} s, released")
             elif a.cmd == "radio":
                 return cmd_radio(link, a)
+            elif a.cmd == "m17":
+                return cmd_radio(link, argparse.Namespace(op="m17", args=[a.op]))
             elif a.cmd == "volume":
                 return cmd_volume(link, a)
             elif a.cmd == "data":

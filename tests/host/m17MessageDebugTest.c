@@ -72,10 +72,25 @@ static void test_msg_op_dispatch(void)
 	CHECK(m17_op((const uint8_t[]){ 3 }, 1) == DL_ST_OK);
 }
 
+#if !CONFIG_M17_VOICE
+static void test_bench_voice_off(void)
+{
+	char buf[768];
+
+	CHECK(m17_op((const uint8_t[]){ 5 }, 1) == DL_ST_BAD_ARG);
+	view_text(buf, sizeof buf);
+	CHECK(strstr(buf, "c2.") == NULL);
+	CHECK(strstr(buf, "m17.voice_mem=") == NULL);
+}
+#endif
+
 int main(void)
 {
 	test_view_packet_keys();
 	test_msg_op_dispatch();
+#if !CONFIG_M17_VOICE
+	test_bench_voice_off();
+#endif
 	printf("# m17MessageDebugTest passed\n");
 	return 0;
 }

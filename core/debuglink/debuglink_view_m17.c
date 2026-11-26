@@ -7,6 +7,9 @@
 #if CONFIG_M17
 #include "m17/m17.h"
 #include "radio/radio_m17.h"
+#if CONFIG_DEBUGLINK && CONFIG_M17_VOICE
+#include "debuglink/debuglink_m17_bench.h"
+#endif
 #endif
 
 #if CONFIG_M17 && CONFIG_M17_PACKET
@@ -78,6 +81,9 @@ void debuglink_view_m17(const radio_view_t *v, dl_text_t *t)
 	}
 #else
 	dl_text(t, "m17.packet.built=0\n");
+#endif
+#if CONFIG_DEBUGLINK && CONFIG_M17_VOICE
+	debuglink_m17_bench_view(t);
 #endif
 #else
 	(void)v;
