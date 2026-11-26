@@ -4201,6 +4201,27 @@ void radio_req_m17_settings(const radio_m17_settings_t *s)
 	req(RREQ_M17_SET, 0);
 }
 void radio_req_m17_bert(uint8_t cmd) { req(RREQ_M17_BERT, cmd); }
+#if CONFIG_M17_PACKET
+uint64_t test_m17_msg_send_serial;
+uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const char *text, size_t length)
+{
+	(void)generation;
+	(void)destination;
+	(void)text;
+	(void)length;
+	return test_m17_msg_send_serial;
+}
+uint64_t radio_req_m17_msg_send_display(uint32_t generation, uint64_t destination, const char *text)
+{
+	return radio_req_m17_msg_send(generation, destination, text, text != NULL ? strlen(text) : 0);
+}
+bool radio_get_m17_msg_tx_result(radio_m17_msg_tx_result_t *out)
+{
+	if (out)
+		*out = (radio_m17_msg_tx_result_t){ 0 };
+	return false;
+}
+#endif
 #endif
 // Not under test here: debuglink_view_radio.c, linked for the volume operation, refers to them
 void radio_req_scan_dual(uint16_t pos) { (void)pos; }

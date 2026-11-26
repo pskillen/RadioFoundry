@@ -328,6 +328,8 @@ run: $(TESTS)
 	./m17MessageRxTest
 	./m17MessageTxRequestTest
 	./m17MessageTxAdapterTest
+	./m17MessageDebugTest
+	./m17MessageDebugTestNoPacket
 	./airSessionTxEndTest
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest
@@ -441,7 +443,7 @@ radioCoreTestP25Nxdn: $(RCP25NX) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE
 # M17 only (no P25, no NXDN): the air-mode table has one row, and PTT does not ask for the DMR vocoder
 TESTS   += radioCoreTestM17
 RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c $(M17MSG) \
-           $(CORE)/hostlink/build_info.c $(CORE)/debuglink/debuglink_view_m17.c
+           $(CORE)/radio/radio_m17_msg_tx.c $(CORE)/hostlink/build_info.c $(CORE)/debuglink/debuglink_view_m17.c
 radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/call/*.h) $(CORE)/dmr/dmrDataService.h \
                   $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
@@ -453,6 +455,15 @@ m17MessageRadioTest: m17MessageRadioTest.c $(RCM17) $(wildcard $(CORE)/radio/*.h
                      $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
 		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ m17MessageRadioTest.c $(filter-out radioCoreTest.c,$(RCM17)) -lm
+
+TESTS   += m17MessageDebugTest m17MessageDebugTestNoPacket
+M17DBG  := $(CORE)/radio/radio_m17_msg_tx.c $(filter-out radioCoreTest.c,$(RCM17))
+m17MessageDebugTest: m17MessageDebugTest.c $(M17DBG) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/m17/*.h)
+	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
+		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ m17MessageDebugTest.c $(M17DBG) -lm
+m17MessageDebugTestNoPacket: m17MessageDebugTestNoPacket.c $(CORE)/debuglink/debuglink_view_m17.c $(CORE)/debuglink/dl_fmt.c
+	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DCONFIG_M17=1 -DCONFIG_M17_PACKET=0 -o $@ m17MessageDebugTestNoPacket.c \
+		$(CORE)/debuglink/debuglink_view_m17.c $(CORE)/debuglink/dl_fmt.c
 
 # The same with APRS: what the data service hears goes into the station list (a DMR APRS position, docs/spec/aprs.md 8.2)
 TESTS   += radioCoreTestAprs

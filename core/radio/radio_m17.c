@@ -55,6 +55,8 @@ static uint32_t last_received_id;
 static radio_m17_packet_stats_t packet_stats;
 static m17_packet_rx_stats_t packet_base;	// last protocol counters folded into packet_stats
 static uint8_t packet_tx_status;		// radio task only; survives releasing the engine lend
+static radio_m17_packet_rx_snap_t packet_rx_snap;
+static radio_m17_packet_tx_snap_t packet_tx_snap;
 
 static void m17_tx_abort(void);
 
@@ -122,6 +124,43 @@ void radio_m17_packet_stats(radio_m17_packet_stats_t *out)
 	inbox_unlock();
 }
 
+void radio_m17_packet_rx_snap(radio_m17_packet_rx_snap_t *out)
+{
+	if (!out)
+		return;
+	inbox_lock();
+	*out = packet_rx_snap;
+	inbox_unlock();
+}
+
+void radio_m17_packet_tx_snap(radio_m17_packet_tx_snap_t *out)
+{
+	if (!out)
+		return;
+	inbox_lock();
+	*out = packet_tx_snap;
+	inbox_unlock();
+}
+
+void radio_m17_packet_tx_snap_arm(uint64_t serial, uint64_t dst)
+{
+	inbox_lock();
+	packet_tx_snap.tx_seq = serial;
+	packet_tx_snap.tx_dst = dst;
+	packet_tx_snap.tx_result = 0;
+	inbox_unlock();
+}
+
+void radio_m17_packet_tx_snap_note(uint64_t serial, uint8_t reason)
+{
+	if (serial == 0)
+		return;
+	inbox_lock();
+	if (packet_tx_snap.tx_seq == serial)
+		packet_tx_snap.tx_result = reason;
+	inbox_unlock();
+}
+
 // The radio task folds the provider's counters with the scheduler held. The session baseline is
 // dropped at each RX reset or close, and observers copy only the accumulated counters.
 static void packet_capture(const m17_packet_rx_stats_t *live)
@@ -159,9 +198,20 @@ static void rx_packet(const uint8_t *data, uint16_t len, void *ctx)
 
 	inbox_lock();
 	switch (result) {
-	case RADIO_M17_MSG_ADMITTED:
+	case RADIO_M17_MSG_ADMITTED: {
+		radio_m17_msg_summary_t summary;
+
 		last_received_id = radio_m17_msg_store_add(&inbox, &b->msg, now);
+		radio_m17_msg_store_summary(&inbox, &summary);
+		packet_rx_snap.rx_seq = summary.received_seq;
+		packet_rx_snap.rx_len = (uint16_t)(len > 0 ? len - 1u : 0u);
+		packet_rx_snap.rx_cut = b->msg.cut;
+		(void)m17_addr_decode(b->msg.caller, packet_rx_snap.rx_src, sizeof packet_rx_snap.rx_src);
+		packet_rx_snap.rx_wire_len = (uint8_t)(packet_rx_snap.rx_len < RADIO_M17_PACKET_DL_HEX_MAX ?
+			packet_rx_snap.rx_len : RADIO_M17_PACKET_DL_HEX_MAX);
+		memcpy(packet_rx_snap.rx_wire, data, packet_rx_snap.rx_wire_len);
 		break;
+	}
 	case RADIO_M17_MSG_UNSUPPORTED_TYPE:
 		packet_stats.unsupported_type++;
 		break;
@@ -187,6 +237,8 @@ void radio_m17_init(void)
 	last_received_id = 0;
 	packet_tx_status = RADIO_M17_PACKET_TX_NONE;
 	memset(&packet_stats, 0, sizeof packet_stats);
+	memset(&packet_rx_snap, 0, sizeof packet_rx_snap);
+	memset(&packet_tx_snap, 0, sizeof packet_tx_snap);
 	inbox_unlock();
 #endif
 	set = defaults;

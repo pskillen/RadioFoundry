@@ -158,6 +158,24 @@ typedef struct {
 	uint16_t fec_peak;
 } radio_m17_packet_stats_t;
 
+// Snapshot bytes shown as m17.packet.rx_hex (wire type and text, no final NUL).
+#define RADIO_M17_PACKET_DL_HEX_MAX 48u
+
+typedef struct {
+	uint32_t rx_seq;
+	char rx_src[RADIO_M17_CALL_LEN];
+	uint16_t rx_len;
+	bool rx_cut;
+	uint8_t rx_wire_len;
+	uint8_t rx_wire[RADIO_M17_PACKET_DL_HEX_MAX];
+} radio_m17_packet_rx_snap_t;
+
+typedef struct {
+	uint64_t tx_seq;	// the armed request serial; correlate with admission
+	uint64_t tx_dst;
+	uint8_t tx_result;	// 0 while in flight, else radio_m17_msg_tx_reason_t
+} radio_m17_packet_tx_snap_t;
+
 typedef struct {
 	void (*lock)(void);
 	void (*unlock)(void);
@@ -173,6 +191,11 @@ bool radio_m17_inbox_copy_at(size_t index, radio_m17_msg_entry_t *out);
 bool radio_m17_inbox_read(uint32_t id);
 bool radio_m17_inbox_delete(uint32_t id);
 void radio_m17_packet_stats(radio_m17_packet_stats_t *out);
+void radio_m17_packet_rx_snap(radio_m17_packet_rx_snap_t *out);
+void radio_m17_packet_tx_snap(radio_m17_packet_tx_snap_t *out);
+// Radio task: update the last armed or completed message send for the debug link.
+void radio_m17_packet_tx_snap_arm(uint64_t serial, uint64_t dst);
+void radio_m17_packet_tx_snap_note(uint64_t serial, uint8_t reason);
 #endif
 
 // Radio task. 1: count received BERT from here, 2: the next transmission is BERT, 3: stop and return to voice.

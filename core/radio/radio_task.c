@@ -111,6 +111,7 @@ static void m17_msg_complete(uint64_t serial, uint8_t reason)
 {
 	vTaskSuspendAll();
 	(void)radio_m17_msg_tx_complete(&m17_msg_tx, serial, reason);
+	radio_m17_packet_tx_snap_note(serial, reason);
 	(void)xTaskResumeAll();
 }
 #endif
@@ -777,6 +778,9 @@ static uint64_t m17_msg_submit(uint64_t serial)
 		(void)xTaskResumeAll();
 		return 0;
 	}
+	vTaskSuspendAll();
+	radio_m17_packet_tx_snap_arm(serial, m17_msg_tx.request.destination);
+	(void)xTaskResumeAll();
 	return serial;
 }
 
