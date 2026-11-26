@@ -201,6 +201,9 @@ typedef enum {
 	RREQ_NXDN_SET,		// radio_task.c: the pending NXDN settings were copied (radio_nxdn_set_settings); applied here
 	RREQ_M17_SET,		// radio_task.c: the pending M17 settings were copied (radio_m17_set_settings); applied here
 	RREQ_M17_BERT,		// arg: 1 count received BERT, 2 transmit BERT, 3 stop
+#if CONFIG_M17
+	RREQ_M17_TALK_TO,	// arg and arg2 carry the low and high words of the destination
+#endif
 	// New request types go above
 
 	RREQ_COUNT		// KEEP LAST: sizes req_flags[] (radio_sm.c)
@@ -226,6 +229,9 @@ typedef struct {
 	uint8_t type;		// radio_req_type_t
 	int32_t arg;
 	uint32_t arg2;
+#if CONFIG_M17
+	uint32_t generation;	// RREQ_M17_TALK_TO
+#endif
 } radio_req_t;
 
 #if CONFIG_DMR
@@ -298,6 +304,13 @@ typedef struct {
 	int16_t volume_sent;		// last level given to board.radio->volume, -1 = none yet
 	int16_t knob_seen;		// the knob's position last put in view.volume_knob, -1 = none yet
 	bool vol_hold;			// RREQ_VOLUME_HOLD: the level stays, the knob is ignored
+
+#if CONFIG_M17
+	uint64_t m17_override;		// temporary choice for view.m17_selected; zero selects its base
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+	bool m17_dual_scoped;		// the full watch selects a pane; the debug scan uses the tuned channel
+#endif
+#endif
 
 	bool ptt;			// PTT held
 	bool host_audio;		// this PTT is a host audio session's (USRP): its audio, not the microphone

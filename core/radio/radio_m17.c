@@ -113,7 +113,7 @@ static uint64_t own_addr(const char *call)
 }
 
 // A temporary M17 mode on a channel without stored M17 settings squelches on its CAN (decision 35).
-static void params(const channel_t *ch, uint16_t number, m17_engine_cfg_t *c)
+void radio_m17_base(const channel_t *ch, uint16_t number, radio_m17_settings_t *out)
 {
 	radio_m17_settings_t s = set;
 	m17_chan_t cc;
@@ -125,15 +125,22 @@ static void params(const channel_t *ch, uint16_t number, m17_engine_cfg_t *c)
 	} else if (number != 0) {
 		s.can_squelch = true;
 	}
-	if (s.callsign[0] == '\0')
-		m17_callsign_load(radio_name, s.callsign);
-	applied = s;
+	*out = s;
+}
+
+static void params(const radio_m17_settings_t *base, uint64_t dst, m17_engine_cfg_t *c)
+{
+	applied = *base;
+	if (applied.callsign[0] == '\0')
+		m17_callsign_load(radio_name, applied.callsign);
+	if (dst != 0)
+		applied.dst = dst;
 	memset(c, 0, sizeof *c);
-	c->own = own_addr(s.callsign);
-	c->dst = s.dst;
-	c->can = s.can;
-	c->rx_can = s.can;
-	c->can_squelch = s.can_squelch;
+	c->own = own_addr(applied.callsign);
+	c->dst = applied.dst;
+	c->can = applied.can;
+	c->rx_can = applied.can;
+	c->can_squelch = applied.can_squelch;
 	c->tx_kind = M17_TX_VOICE;
 	c->silence = NULL;
 }
@@ -201,7 +208,7 @@ static m17_block_t *place(void)
 	return NULL;
 }
 
-bool radio_m17_begin(const channel_t *ch, uint16_t number)
+bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst)
 {
 	m17_engine_cfg_t cfg;
 	m17_block_t *b;
@@ -214,7 +221,7 @@ bool radio_m17_begin(const channel_t *ch, uint16_t number)
 		return false;
 	}
 	memset(b, 0, sizeof *b);
-	params(ch, number, &cfg);
+	params(base, dst, &cfg);
 	m17_engine_init(&b->tx, &cfg, NULL, NULL);
 	m17_rx_init(&b->rx, NULL, NULL);
 	m17_rx_set_can(&b->rx, cfg.rx_can, cfg.can_squelch);
@@ -292,15 +299,17 @@ void radio_m17_retuned(void)
 	air_session_retuned(&blk->session);
 }
 
-void radio_m17_apply(const channel_t *ch, uint16_t number)
+bool radio_m17_apply(const radio_m17_settings_t *base, uint64_t dst)
 {
 	m17_engine_cfg_t cfg;
 
 	if (blk == NULL || air_session_tx_state(&blk->session) != AIR_TX_IDLE)
-		return;
-	params(ch, number, &cfg);
+		return false;
+	params(base, dst, &cfg);
+	cfg.tx_kind = blk->tx.cfg.tx_kind;
 	blk->tx.cfg = cfg;
 	m17_rx_set_can(&blk->rx, cfg.rx_can, cfg.can_squelch);
+	return true;
 }
 
 bool radio_m17_in_force(radio_m17_settings_t *out)
@@ -426,8 +435,10 @@ static uint8_t m17_tx_state(void)
 
 static void m17_tx_clear(void)
 {
-	if (blk != NULL)
+	if (blk != NULL) {
 		air_session_tx_clear(&blk->session);
+		blk->tx.cfg.tx_kind = M17_TX_VOICE;	// a BERT transmission was selected for this key-up
+	}
 }
 
 const radio_air_ops_t radio_m17_air = {

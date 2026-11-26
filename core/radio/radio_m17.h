@@ -52,6 +52,23 @@ typedef struct {
 #if CONFIG_M17
 #include "radio/radio_air.h"
 
+// Identity of a selected M17 channel. A change to another mode makes this view unavailable.
+typedef struct {
+	bool is_vfo;
+	uint8_t vfo_index;
+	union {
+		struct { uint32_t rx_hz, tx_hz; } vfo;
+		struct { uint16_t zone, pos, number; } stored;
+	};
+} radio_m17_context_t;
+
+typedef struct {
+	uint64_t base_dst, effective_dst;
+	uint32_t generation;		// zero when there is no selected M17 channel
+	radio_m17_context_t context;
+	uint8_t can;
+} radio_m17_selected_t;
+
 extern const radio_air_ops_t radio_m17_air;
 
 void radio_m17_init(void);
@@ -72,14 +89,16 @@ void radio_m17_set_radio_name(const char *name);
 // The parameters in force, as settings: false when the engine isn't running
 bool radio_m17_in_force(radio_m17_settings_t *out);
 
-// Radio task. begin: the board tuned in its digital mode, its DMR stack stopped. number is the stored channel
-// (0: the VFO). A blank callsign still starts (a BERT needs none). False: no memory, no provider or no fit
-bool radio_m17_begin(const channel_t *ch, uint16_t number);
+// Radio task. Resolve the stored channel's block or the session settings (number 0: VFO).
+void radio_m17_base(const channel_t *ch, uint16_t number, radio_m17_settings_t *out);
+// The board is tuned in digital mode, its DMR stack stopped. A blank callsign still starts for BERT.
+// dst is the selected channel's temporary destination, or zero to use its base.
+bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst);
 void radio_m17_end(void);
 bool radio_m17_running(void);
 void radio_m17_retuned(void);
-// The settings changed: the engine takes them (not while transmitting)
-void radio_m17_apply(const channel_t *ch, uint16_t number);
+// The settings changed: true if an idle engine took them.
+bool radio_m17_apply(const radio_m17_settings_t *base, uint64_t dst);
 // Every tick: the view and the counters. True when the view changed
 bool radio_m17_poll(radio_m17_view_t *v);
 // Why the last prepare refused: 0, or 1 when a voice or packet transmission has no callsign. Anything else stays 0

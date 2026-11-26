@@ -528,7 +528,8 @@ typedef struct {
 	radio_nxdn_view_t nxdn;	// NXDN conventional (docs/spec/nxdn.md 6): the same
 #endif
 #if CONFIG_M17
-	radio_m17_view_t m17;	// M17 conventional (docs/spec/m17.md 10): the same
+	radio_m17_view_t m17;	// M17 conventional (docs/spec/m17.md 10): running engine
+	radio_m17_selected_t m17_selected;	// selected channel, even while dual watch samples the other pane
 #endif
 #if CONFIG_DMR_TRUNK
 	radio_t3_brief_t t3;
@@ -646,6 +647,8 @@ void radio_req_nxdn_settings(const radio_nxdn_settings_t *s);
 // The M17 settings (RAM only, radio_m17.h): the same. BERT is 1 count, 2 transmit, 3 stop
 void radio_req_m17_settings(const radio_m17_settings_t *s);
 void radio_req_m17_bert(uint8_t cmd);
+// Queue a 48-bit destination for the selected generation. Zero selects Default.
+bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst);
 #endif
 #if CONFIG_DMR
 void radio_req_reply_cancel(void);		// BACK on Home: end the DMR reply window

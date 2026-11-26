@@ -117,16 +117,16 @@ static void test_lend_engine_size(void)
 
 static void test_lend_p25_block(void)
 {
-	channel_t ch;
+	radio_m17_settings_t base;
 	const void *p;
 
-	memset(&ch, 0, sizeof ch);
 	voc_on = false;
 	p25_return = p25_mem;
 	p25_len = sizeof p25_mem;
 	radio_m17_init();
 	radio_m17_reset_stats();
-	CHECK(radio_m17_begin(&ch, 0));
+	radio_m17_settings(&base);
+	CHECK(radio_m17_begin(&base, 0));
 	p = radio_m17_engine_mem();
 	CHECK(in_block(p, p25_mem, sizeof p25_mem));
 	CHECK(radio_m17_running());
@@ -135,10 +135,9 @@ static void test_lend_p25_block(void)
 
 static void test_lend_vocoder_block(void)
 {
-	channel_t ch;
+	radio_m17_settings_t base;
 	const void *p;
 
-	memset(&ch, 0, sizeof ch);
 	voc_on = true;
 	voc_p = voc_mem;
 	voc_len = sizeof voc_mem;
@@ -146,7 +145,8 @@ static void test_lend_vocoder_block(void)
 	p25_len = 0;
 	radio_m17_init();
 	radio_m17_reset_stats();
-	CHECK(radio_m17_begin(&ch, 0));
+	radio_m17_settings(&base);
+	CHECK(radio_m17_begin(&base, 0));
 	p = radio_m17_engine_mem();
 	CHECK(in_block(p, voc_mem, sizeof voc_mem));
 	CHECK(radio_m17_running());
@@ -155,10 +155,9 @@ static void test_lend_vocoder_block(void)
 
 static void test_lend_too_small(void)
 {
-	channel_t ch;
+	radio_m17_settings_t base;
 	radio_m17_stats_t st;
 
-	memset(&ch, 0, sizeof ch);
 	voc_on = true;
 	voc_p = tiny_mem;
 	voc_len = sizeof tiny_mem;
@@ -166,7 +165,8 @@ static void test_lend_too_small(void)
 	p25_len = 0;
 	radio_m17_init();
 	radio_m17_reset_stats();
-	CHECK(!radio_m17_begin(&ch, 0));
+	radio_m17_settings(&base);
+	CHECK(!radio_m17_begin(&base, 0));
 	CHECK(!radio_m17_running());
 	CHECK(radio_m17_engine_mem() == NULL);
 	radio_m17_stats(&st);

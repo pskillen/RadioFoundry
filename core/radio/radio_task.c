@@ -734,6 +734,17 @@ void radio_req_nxdn_settings(const radio_nxdn_settings_t *s)
 }
 #endif
 #if CONFIG_M17
+bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst)
+{
+	if (requests == NULL || generation == 0 || dst >> 48 != 0)
+		return false;
+	const radio_req_t req = {
+		.type = RREQ_M17_TALK_TO, .arg = (int32_t)(uint32_t)dst, .arg2 = (uint32_t)(dst >> 32),
+		.generation = generation,
+	};
+	return send(&req, pdMS_TO_TICKS(50));
+}
+
 void radio_req_m17_settings(const radio_m17_settings_t *s)
 {
 	if (view_lock == NULL) {

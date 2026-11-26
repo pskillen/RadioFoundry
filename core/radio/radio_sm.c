@@ -41,6 +41,7 @@
 #endif
 #if CONFIG_M17
 #include "radio/radio_m17.h"
+#include "m17/m17.h"
 #endif
 #if CONFIG_P25
 #include "radio/radio_p25.h"	// P25 conventional (docs/spec/p25.md 7)
@@ -886,6 +887,37 @@ static bool satellite_tx_active(const radio_sm_t *sm)
 static void satellite_apply_pending(radio_sm_t *sm, uint32_t now_ms);
 #endif
 
+#if CONFIG_M17
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+static bool dual_running(const radio_sm_t *sm);
+static bool dual_here(const radio_sm_t *sm, uint8_t i);
+
+static bool m17_watching(const radio_sm_t *sm)
+{
+	return sm->m17_dual_scoped && dual_running(sm);
+}
+#endif
+
+static bool m17_selected_loaded(const radio_sm_t *sm)
+{
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+	return !m17_watching(sm) || dual_here(sm, sm->dual_sel);
+#else
+	(void)sm;
+	return true;
+#endif
+}
+
+static void m17_clear_selection(radio_sm_t *sm)
+{
+	if (sm->view.m17_selected.generation != 0) {
+		sm->view.m17_selected = (radio_m17_selected_t){ 0 };
+		sm->m17_override = 0;
+		changed(sm);
+	}
+}
+#endif
+
 static void tune(radio_sm_t *sm, uint32_t now_ms)
 {
 	#if CONFIG_SATELLITE_TLE
@@ -921,6 +953,10 @@ static void tune(radio_sm_t *sm, uint32_t now_ms)
 			sm->base_mode = RADIO_MODE_FM;
 		set_temporary(sm);
 	}
+#if CONFIG_M17
+	if (sm->view.ch.mode != RADIO_MODE_M17 && m17_selected_loaded(sm))
+		m17_clear_selection(sm);
+#endif
 #if CONFIG_AM_RX
 	sm->view.am = radio_am_channel(&sm->view.ch);	// an FM channel in the air band: AM, no sub-audio
 #endif
@@ -4593,6 +4629,67 @@ static const zone_t *dual_read(const radio_sm_t *sm, const radio_dual_ref_t *r, 
 	       scan_listens(ch, z->channels[r->pos]) ? z : NULL;
 }
 
+#if CONFIG_DUAL_WATCH
+static zone_t dual_zone_scratch;		// the radio task reads off-receiver zones for RX2 and the selected view
+
+#if CONFIG_M17
+static void m17_select_base(radio_sm_t *sm, const radio_m17_context_t *ctx, const radio_m17_settings_t *base);
+static void m17_select_effective(radio_sm_t *sm, uint64_t dst);
+static void m17_configure_loaded(radio_sm_t *sm, bool begin);
+
+static void m17_refresh_other(radio_sm_t *sm)
+{
+	if (m17_selected_loaded(sm))
+		return;
+
+	uint8_t i = sm->dual_sel;
+	const radio_dual_ref_t *ref = &sm->dual[i];
+	radio_m17_context_t ctx = { .is_vfo = ref->vfo };
+	channel_t ch;
+	uint16_t number = 0;
+
+	if (ref->vfo) {
+		bool current = ref->pos == sm->vfo_idx;
+		if (!VFO_AVAILABLE || !(current ? sm->vfo_seeded : sm->vfo_other.seeded)) {
+			m17_clear_selection(sm);
+			return;
+		}
+		ch = current ? sm->vfo_ch : sm->vfo_other.ch;
+		ctx.vfo_index = (uint8_t)ref->pos;
+		ctx.vfo.rx_hz = ch.rx_hz;
+		ctx.vfo.tx_hz = ch.tx_hz;
+	} else {
+		const zone_t *z = dual_read(sm, ref, &dual_zone_scratch, &ch);
+		if (z == NULL) {
+			m17_clear_selection(sm);
+			return;
+		}
+		number = z->channels[ref->pos];
+		ctx.stored.zone = ref->zone;
+		ctx.stored.pos = ref->pos;
+		ctx.stored.number = number;
+		if (sm->dual_keep[i].valid)
+			ch.mode = sm->dual_keep[i].mode;
+	}
+	if (ch.mode != RADIO_MODE_M17 || radio_listen_band(ch.rx_hz) || !radio_m17_fits()) {
+		m17_clear_selection(sm);
+		return;
+	}
+
+	radio_m17_settings_t base;
+	radio_m17_base(&ch, number, &base);
+	m17_select_base(sm, &ctx, &base);
+	m17_select_effective(sm, sm->m17_override != 0 ? sm->m17_override : base.dst);
+}
+
+static void m17_refresh_selection(radio_sm_t *sm)
+{
+	m17_refresh_other(sm);
+	m17_configure_loaded(sm, false);
+}
+#endif
+#endif
+
 static bool dual_ok(const radio_sm_t *sm, const radio_dual_ref_t *r)
 {
 	if (r->vfo) {
@@ -4707,6 +4804,10 @@ static bool dual_tune(radio_sm_t *sm, uint8_t i, uint32_t now_ms)
 	const zone_t *z = dual_read(sm, r, NULL, &ch);
 #endif
 	if (z == NULL) {
+#if CONFIG_M17 && CONFIG_DUAL_WATCH
+		if (m17_watching(sm) && i == sm->dual_sel)
+			m17_clear_selection(sm);
+#endif
 		return false;
 	}
 	if (z != &sm->zone) {
@@ -4729,7 +4830,6 @@ static bool dual_tune(radio_sm_t *sm, uint8_t i, uint32_t now_ms)
 // Channel i's settings for the second receiver. False: it can't be read now
 static bool rx2_settings(radio_sm_t *sm, uint8_t i, rx2_tune_t *t)
 {
-	static zone_t buf;		// only the radio task uses it
 	const radio_dual_ref_t *r = &sm->dual[i];
 	channel_t ch;
 	memset(t, 0, sizeof(*t));
@@ -4738,7 +4838,7 @@ static bool rx2_settings(radio_sm_t *sm, uint8_t i, rx2_tune_t *t)
 			return false;
 		}
 		ch = r->pos == sm->vfo_idx ? sm->vfo_ch : sm->vfo_other.ch;
-	} else if (dual_read(sm, r, &buf, &ch) == NULL) {
+	} else if (dual_read(sm, r, &dual_zone_scratch, &ch) == NULL) {
 		return false;
 	}
 	if (air_mode(ch.mode)) {
@@ -4877,6 +4977,9 @@ static void scan_stop(radio_sm_t *sm, bool cancel, uint32_t now_ms)
 		return;
 	}
 	uint8_t kind = sc->kind;
+#if CONFIG_M17 && CONFIG_DUAL_WATCH
+	bool refresh = m17_watching(sm) && !dual_here(sm, sm->dual_sel);
+#endif
 	if (kind == SCAN_DUAL) {
 		rx2_release(sm);
 		dual_busy_set(sm, 0);
@@ -4888,7 +4991,13 @@ static void scan_stop(radio_sm_t *sm, bool cancel, uint32_t now_ms)
 	if (cancel) {
 		if (kind == SCAN_DUAL) {
 			if (!dual_here(sm, sm->dual_sel)) {
-				dual_tune(sm, sm->dual_sel, now_ms);	// dual watch: back on the selected channel
+				bool restored = dual_tune(sm, sm->dual_sel, now_ms);
+#if CONFIG_M17 && CONFIG_DUAL_WATCH
+				if (restored)
+					refresh = false;	// tune reconciled it
+#else
+				(void)restored;
+#endif
 			}
 		} else if (kind == SCAN_VFO) {
 			if (sm->view.ch.rx_hz != sc->origin_hz) {
@@ -4909,6 +5018,10 @@ static void scan_stop(radio_sm_t *sm, bool cancel, uint32_t now_ms)
 	if (hear_all && sm->view.ch.mode == RADIO_MODE_DMR) {
 		set_hear_all_latch(sm, true);
 	}
+#endif
+#if CONFIG_M17 && CONFIG_DUAL_WATCH
+	if (refresh)
+		m17_configure_loaded(sm, false);
 #endif
 	scan_publish(sm);
 }
@@ -5104,7 +5217,7 @@ static void scan_start(radio_sm_t *sm, uint8_t kind, uint32_t lo_hz, uint32_t hi
 // Dual watch on ref[0] and ref[1], ref[sel] selected. Asked again with the same pair: only the selection changes. A
 // new pair keeps the receiver where it is (a call it holds too) if that channel is still one of the two, else it
 // starts on the selected one
-static void dual_start(radio_sm_t *sm, const radio_dual_ref_t ref[2], uint8_t sel, uint32_t now_ms)
+static void dual_start(radio_sm_t *sm, const radio_dual_ref_t ref[2], uint8_t sel, bool full, uint32_t now_ms)
 {
 	scan_t *sc = &sm->scan;
 	if (sel > 1 || dual_same(&ref[0], &ref[1]) || !dual_ok(sm, &ref[0]) || !dual_ok(sm, &ref[1])) {
@@ -5122,6 +5235,13 @@ static void dual_start(radio_sm_t *sm, const radio_dual_ref_t ref[2], uint8_t se
 		}
 	}
 #endif
+#if CONFIG_M17 && CONFIG_DUAL_WATCH
+	if (full && m17_watching(sm) && (sel != sm->dual_sel || !dual_same(&sm->dual[sel], &ref[sel])))
+		m17_clear_selection(sm);
+	sm->m17_dual_scoped = full;
+#else
+	(void)full;
+#endif
 	sm->dual[0] = ref[0];
 	sm->dual[1] = ref[1];
 	sm->dual_sel = sel;
@@ -5133,6 +5253,16 @@ static void dual_start(radio_sm_t *sm, const radio_dual_ref_t ref[2], uint8_t se
 			here = true;
 		}
 	}
+	if (!running) {
+		scan_cfg_t cfg;
+		scan_config(sm, SCAN_DUAL, &cfg);
+		scan_begin(sc, SCAN_DUAL, &cfg, now_ms);
+		activity(sm, now_ms);
+	}
+#if CONFIG_M17 && CONFIG_DUAL_WATCH
+	if (here)
+		m17_refresh_selection(sm);	// the selection can change without a tune
+#endif
 	if (running && here) {
 #if CONFIG_DUAL_WATCH
 		if (board.rx2 != NULL) {
@@ -5141,12 +5271,6 @@ static void dual_start(radio_sm_t *sm, const radio_dual_ref_t ref[2], uint8_t se
 		}
 #endif
 		return;
-	}
-	if (!running) {
-		scan_cfg_t cfg;
-		scan_config(sm, SCAN_DUAL, &cfg);
-		scan_begin(sc, SCAN_DUAL, &cfg, now_ms);
-		activity(sm, now_ms);
 	}
 #if CONFIG_DUAL_WATCH
 	if (board.rx2 != NULL && rx2_engage(sm, now_ms)) {
@@ -5157,6 +5281,9 @@ static void dual_start(radio_sm_t *sm, const radio_dual_ref_t ref[2], uint8_t se
 	if (!here) {
 		if (!dual_tune(sm, sel, now_ms)) {
 			scan_end(sc);
+#if CONFIG_M17 && CONFIG_DUAL_WATCH
+			m17_configure_loaded(sm, false);
+#endif
 			scan_publish(sm);
 			return;
 		}
@@ -5223,7 +5350,7 @@ static void dual_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms
 		return;
 	}
 	radio_dual_ref_t ref[2] = { dual_ref(a), dual_ref(b) };
-	dual_start(sm, ref, (b & RADIO_DUAL_SEL) != 0 ? 1 : 0, now_ms);
+	dual_start(sm, ref, (b & RADIO_DUAL_SEL) != 0 ? 1 : 0, true, now_ms);
 }
 #endif
 
@@ -5423,7 +5550,7 @@ static void scan_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms
 			{ sm->view.vfo, sm->view.vfo ? 0 : sm->view.zone_index, sm->view.vfo ? 0 : sm->view.zone_pos },
 			{ false, sm->view.zone_index, (uint16_t)req->arg2 },
 		};
-		dual_start(sm, ref, 0, now_ms);
+		dual_start(sm, ref, 0, false, now_ms);
 		break;
 	}
 	case RSCAN_TOGGLE:
@@ -6519,6 +6646,85 @@ static uint16_t air_number(const radio_sm_t *sm)
 }
 #endif
 
+#if CONFIG_M17
+static bool m17_same_context(const radio_m17_context_t *a, const radio_m17_context_t *b)
+{
+	if (a->is_vfo != b->is_vfo)
+		return false;
+	if (a->is_vfo)
+		return a->vfo_index == b->vfo_index && a->vfo.rx_hz == b->vfo.rx_hz && a->vfo.tx_hz == b->vfo.tx_hz;
+	return a->stored.zone == b->stored.zone && a->stored.pos == b->stored.pos && a->stored.number == b->stored.number;
+}
+
+static void m17_select_base(radio_sm_t *sm, const radio_m17_context_t *ctx, const radio_m17_settings_t *base)
+{
+	// Keep increasing through a radio-core restart, so a picker from before it cannot address the new session.
+	static uint32_t generation;
+	radio_m17_selected_t *v = &sm->view.m17_selected;
+	bool same = v->generation != 0 && m17_same_context(&v->context, ctx);
+	if (!same) {
+		sm->m17_override = 0;
+		v->context = *ctx;
+		v->effective_dst = base->dst;
+	}
+	if (!same || v->base_dst != base->dst) {
+		if (++generation == 0)
+			generation++;
+		v->generation = generation;
+		v->base_dst = base->dst;
+		changed(sm);
+	}
+	if (v->can != base->can) {
+		v->can = base->can;
+		changed(sm);
+	}
+}
+
+static void m17_select_effective(radio_sm_t *sm, uint64_t dst)
+{
+	if (sm->view.m17_selected.effective_dst != dst) {
+		sm->view.m17_selected.effective_dst = dst;
+		changed(sm);
+	}
+}
+
+// Reconcile against the loaded channel. dual_at still names the previous side during a watch hop.
+static void m17_configure_loaded(radio_sm_t *sm, bool begin)
+{
+	const channel_t *ch = &sm->view.ch;
+	bool selected = m17_selected_loaded(sm);
+	uint16_t number = air_number(sm);
+	if (ch->mode != RADIO_MODE_M17 || (!sm->view.vfo && (!sm->have_channels || number == 0))) {
+		if (selected)
+			m17_clear_selection(sm);
+		return;
+	}
+
+	radio_m17_settings_t base;
+	radio_m17_base(ch, number, &base);
+	uint64_t dst = 0;
+	if (selected) {
+		radio_m17_context_t ctx = { .is_vfo = sm->view.vfo };
+		if (ctx.is_vfo) {
+			ctx.vfo_index = sm->view.vfo_index;
+			ctx.vfo.rx_hz = ch->rx_hz;
+			ctx.vfo.tx_hz = ch->tx_hz;
+		} else {
+			ctx.stored.zone = sm->view.zone_index;
+			ctx.stored.pos = sm->view.zone_pos;
+			ctx.stored.number = number;
+		}
+		m17_select_base(sm, &ctx, &base);
+		dst = sm->m17_override;
+	}
+	bool applied = begin ? radio_m17_begin(&base, dst) : radio_m17_apply(&base, dst);
+	if (applied && selected)
+		m17_select_effective(sm, dst != 0 ? dst : base.dst);
+	if (radio_m17_poll(&sm->view.m17))
+		changed(sm);
+}
+#endif
+
 #if CONFIG_AIR
 // --- Air-framed modes (P25, NXDN, M17): each module runs its engine; here, when it runs and the transmitter, the
 // same for each (radio_air.h). One runs at a time. The row whose engine is running wins; otherwise the channel's ---
@@ -6674,8 +6880,7 @@ static void air_begin(radio_sm_t *sm)
 #endif
 #if CONFIG_M17
 	case RADIO_MODE_M17:
-		radio_m17_begin(&sm->view.ch, air_number(sm));
-		radio_m17_poll(&sm->view.m17);
+		m17_configure_loaded(sm, true);
 		break;
 #endif
 #if CONFIG_P25
@@ -6785,7 +6990,7 @@ static void air_apply(radio_sm_t *sm)
 #endif
 #if CONFIG_M17
 	case RADIO_MODE_M17:
-		radio_m17_apply(&sm->view.ch, air_number(sm));
+		m17_configure_loaded(sm, false);
 		break;
 #endif
 #if CONFIG_P25
@@ -8296,12 +8501,18 @@ static void reload(radio_sm_t *sm, uint32_t now_ms)
 		if (VFO_AVAILABLE) {
 			enter_vfo(sm, now_ms);
 		} else {
+#if CONFIG_M17
+			m17_clear_selection(sm);
+#endif
 			strcpy(sm->view.ch.name, "No channels");
 			changed(sm);
 		}
 	} else {
 		tune(sm, now_ms);
 	}
+#if CONFIG_M17 && CONFIG_SCAN && CONFIG_DUAL_WATCH
+	m17_refresh_other(sm);
+#endif
 }
 
 #if CONFIG_NET_USRP
@@ -8686,6 +8897,10 @@ static void vfo_tx_request(radio_sm_t *sm, const radio_req_t *req, bool busy)
 	}
 	sm->vfo_ch.tx_hz = tx;
 	sm->view.ch.tx_hz = tx;
+#if CONFIG_M17
+	if (sm->view.ch.mode == RADIO_MODE_M17)
+		m17_configure_loaded(sm, false);	// the split changes the selection without a receive tune
+#endif
 #if CONFIG_DMR
 	dmr_reconfigure_sfr(sm);
 #else
@@ -9147,10 +9362,27 @@ static void nxdn_set_request(radio_sm_t *sm)
 // The settings, taken now when the engine is idle. No rate to restart on
 static void m17_set_request(radio_sm_t *sm)
 {
-	if (radio_m17_running())
-		radio_m17_apply(&sm->view.ch, air_number(sm));
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+	m17_refresh_other(sm);
+#endif
+	m17_configure_loaded(sm, false);
 	radio_m17_poll(&sm->view.m17);
 	changed(sm);
+}
+
+static void m17_talk_to_request(radio_sm_t *sm, const radio_req_t *req)
+{
+	const radio_m17_selected_t *v = &sm->view.m17_selected;
+	uint64_t dst = ((uint64_t)req->arg2 << 32) | (uint32_t)req->arg;
+	if (v->generation == 0 || req->generation != v->generation || dst > M17_ADDR_BROADCAST ||
+	    sm->hotspot || BENCH_HELD(sm) || codeplug_serial() != sm->codeplug_serial || ZONES_MOVED(sm))
+		return;
+
+	sm->m17_override = dst;
+	if (!m17_selected_loaded(sm))
+		m17_select_effective(sm, dst != 0 ? dst : v->base_dst);
+	else if (!sm->air_tx)
+		m17_configure_loaded(sm, false);	// otherwise air_tick rechecks the context when TX ends
 }
 
 // BERT: count, or key a BERT transmission on an M17 channel that is already running, or stop
@@ -9206,6 +9438,12 @@ static void bench_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_m
 
 void radio_sm_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms)
 {
+#if CONFIG_M17
+	if (req->type == RREQ_M17_TALK_TO) {
+		m17_talk_to_request(sm, req);
+		return;
+	}
+#endif
 	sm->led_now = now_ms;
 	uint8_t flags = req->type < RREQ_COUNT ? req_flags[req->type] : 0;
 	if ((flags & (RQ_ALERT | RQ_KEEP_APRS)) == 0) {
