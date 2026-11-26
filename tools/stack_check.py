@@ -46,6 +46,7 @@ TASK_RE = re.compile(r'\bxTaskCreate(?:Static)?\s*\(\s*&?\s*(' + IDENT + r')\s*,
 CHAIN = IDENT + r'(?:\s*(?:\.|->)\s*' + IDENT + r'|\s*\[[^\]]*\])*'
 CALLEE_RE = re.compile(r'\(?\s*\*?\s*(' + CHAIN + r')\s*\)?\s*\(')
 CALLBASE_RE = re.compile(r'\(?\s*(' + IDENT + r')\s*\(\s*\)\s*\)?\s*(?:\.|->)\s*(' + CHAIN + r')\s*\(')
+COMPOUND_RE = re.compile(r'\(\s*(?:const\s+)?(?:struct\s+)?(' + IDENT + r')\s*\)\s*\{')
 ASSIGN_RE = re.compile(r'(?<![\w.>\]])(' + CHAIN + r')\s*=(?!=)\s*([^;{}]+?)\s*;')
 DECL_FNPTR_RE = re.compile(r'\(\s*\*\s*(' + IDENT + r')\s*\)\s*\([^()]*\)\s*=\s*([^;{}]+?)\s*[;,]')
 CALL_RE = re.compile(r'\b(' + IDENT + r')\s*\(')
@@ -637,8 +638,8 @@ class CModel:
         return ("key", self.chain_key(ft, off, name))
 
     def value_refs(self, ft, off, val):
-        """What an expression stored into a pointer may refer to. A plain name chain (maybe cast, maybe &) exactly;
-        anything else (a conditional, a macro, an atomic load) by every name in it that isn't called"""
+        """What an expression stored into a pointer may refer to. Resolve plain name chains and conditional branches
+        directly. Compound literals bind through their fields. Approximate other expressions by their names."""
         v = val.strip()
         v = re.sub(r"^\(\s*[\w\s\*]+\)\s*(?=[&\w(])", "", v)	# a cast
         v = v.lstrip("&").strip()
@@ -653,6 +654,11 @@ class CModel:
             return []
         if re.fullmatch(CHAIN, v):
             return [self.name_ref(ft, off, v)]
+        literal = COMPOUND_RE.match(v)
+        if literal and match_close(v, literal.end() - 1) == len(v) - 1:
+            # The expression produces a struct value or its address. scan_values binds its callbacks to their
+            # own fields. Following them from the aggregate would mix unrelated data and callback pointers.
+            return []
         refs = []
         for m in re.finditer(r"(?<![\w.>])(" + CHAIN + r")(?![\w\s]*\()", v):
             if m.group(1) not in KEYWORDS and m.group(1) not in QUALIFIERS:
@@ -711,7 +717,7 @@ class CModel:
             self.parse_init(ft, t[b + 1:match_close(t, b)], m.group(1), bool(m.group(3)), m.start())
             if ft.enclosing(m.start()) is None:
                 self.file_vars.setdefault((ft.path, m.group(2)), m.group(1))
-        for m in re.finditer(r"\(\s*(?:const\s+)?(?:struct\s+)?(" + IDENT + r")\s*\)\s*\{", t):
+        for m in COMPOUND_RE.finditer(t):
             if self.struct(m.group(1)) is not None:
                 b = m.end() - 1
                 self.parse_init(ft, t[b + 1:match_close(t, b)], m.group(1), False, m.start())
@@ -1552,6 +1558,11 @@ static void task_c(void *p) { add(1, dev.ops->go(2)); }
 static void isr_x(void) { leaf(); }
 void irq_install(int n, cb_t fn);
 static void wire(void) { irq_install(3, isr_x); irq_install(4, &deep_isr); }
+typedef struct { void (*each)(cb_t cb); } iter_t;
+typedef struct { const iter_t *iter; } screen_t;
+static void iterate(cb_t cb) { cb(); }
+static const screen_t screen = { .iter = &(const iter_t){ .each = iterate } };
+static void filter(void) { screen.iter->each(leaf); }
 """
 
 SELF_CI = """\
@@ -1574,6 +1585,7 @@ edge: { sourcename: "t.c:task_b" targetname: "__indirect_call" label: "t.c:15:45
 node: { title: "start" label: "start\\nt.c:16:6\\n8 bytes (dynamic,bounded)" }
 node: { title: "xTaskCreate" label: "xTaskCreate\\nt.h:1:6" shape : ellipse }
 node: { title: "t.c:isr_x" label: "isr_x\\nt.c:25:13\\n12 bytes (static)" }
+node: { title: "t.c:iterate" label: "iterate\\nt.c:30:13\\n8 bytes (static)" }
 edge: { sourcename: "start" targetname: "xTaskCreate" label: "t.c:19:2" }
 }
 """
@@ -1660,6 +1672,11 @@ def self_test():
         b, path = an.depth("t.c:task_b")
         check(b == 16 + 8 and [t for t, _l in path] == ["t.c:task_b", "t.c:run_cb"],
               "a callback parameter and a macro call: %d" % b)
+        check(not model.targets(("m", model.resolve_type("screen_t"), "iter")),
+              "a pointer to a compound literal has no callback targets")
+        check(model.targets(("m", model.resolve_type("iter_t"), "each")) == {"t.c:iterate"} and
+              model.targets(("p", "t.c:iterate", 0)) == {"t.c:leaf"},
+              "a compound literal's callback member binds both the iterator and its visitor")
         model.binds.clear()
         an2 = Analysis(g, model, Table(), DEFAULT_LIB_BYTES)
         an2.depth("t.c:task_a")
