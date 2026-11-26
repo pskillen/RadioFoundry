@@ -4558,6 +4558,11 @@ msgid "{PTT once  OK use  Hold OK set|OK use  Hold OK set}"
 msgstr "{PTT 1x OK val mtnOK|OK val mtnOK}"
 
 #: core/ui/ui_menus.c
+msgctxt "M17_ROW_TALK_OTHER"
+msgid "Other…"
+msgstr "Autre…"
+
+#: core/ui/ui_menus.c
 msgctxt "M17_TOAST_TALK_TO_FAILED"
 msgid "Couldn't queue Talk to"
 msgstr "Impossible de définir la destination"

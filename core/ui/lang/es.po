@@ -4558,6 +4558,11 @@ msgid "{PTT once  OK use  Hold OK set|OK use  Hold OK set}"
 msgstr "{PTT una vez  OK usar  Mant OK fijar|OK usar  Mant OK fijar}"
 
 #: core/ui/ui_menus.c
+msgctxt "M17_ROW_TALK_OTHER"
+msgid "Other…"
+msgstr "Otro…"
+
+#: core/ui/ui_menus.c
 msgctxt "M17_TOAST_TALK_TO_FAILED"
 msgid "Couldn't queue Talk to"
 msgstr "No se pudo aplicar el destino"

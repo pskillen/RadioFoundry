@@ -238,12 +238,19 @@ On the home screen an M17 channel shows **M17**, a line **CAN n** then the desti
 **CAN n** beside the power. The VFO's mode cycle includes M17 on a radio that carries it. Pressing PTT with no
 callsign shows **M17: set your callsign**. A radio that can hear M17 but not send it shows **M17: receive only**.
 
-Open **Quick settings > 8 Talk to** to choose `ALL`, `ECHO`, `INFO` or `UNLINK` for the current M17 channel or
-VFO. **Default** shows and restores the channel's programmed destination or the VFO's base destination. OK
-returns to Quick settings and Back returns to Home. Quick shows the destination in use, as does the transmit
-line on single-channel Home. The choice is temporary
-and leaves the programmed destination in the channel editor. Changing channels or VFO frequencies, leaving M17,
-selecting a different dual-watch pane, or restarting clears the choice.
+Open **Quick settings > 8 Talk to** for the current M17 channel or VFO. The rows are **Default**, `ALL`, `ECHO`,
+`INFO`, `UNLINK` and **Other…**, in that order. **Default** shows and restores the channel's programmed
+destination or the VFO's base destination.
+
+Choose **Other…** to open **Talk to** with the destination in use, or an empty field when calling everyone.
+Enter a callsign or reflector such as `M17-M17 A`. Lowercase becomes uppercase. Leave the field blank or enter
+`ALL` to call everyone. OK applies the choice and returns to Quick settings. If the address is invalid, the editor
+stays open so you can fix it. Back deletes a character or cancels on an empty field. Hold Back where supported to
+cancel and go Home.
+
+Quick and single-channel Home show the temporary destination in use. To change the programmed destination, edit
+**Talk to** in the channel's own settings and save the channel. Changing channels or VFO frequencies, leaving M17,
+selecting a different dual-watch pane, or restarting clears the temporary choice.
 
 Set your **M17 callsign** on the **Radio** tab, or on the radio under **Settings > My radio > M17 callsign**. If it
 is blank, the radio uses the first word of the radio name, up to a space or `-`. M17 voice transmission requires a

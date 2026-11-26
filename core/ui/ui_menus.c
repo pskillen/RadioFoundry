@@ -2105,7 +2105,7 @@ uint8_t ui_menus_zones_moved(ui_frame_t *stack, uint8_t sp, uint32_t from, uint3
 }
 #endif
 
-#if CONFIG_CHANNEL_EDIT || CONFIG_APRS_AFSK || CONFIG_DMR_SMS || CONFIG_SATELLITE_TLE || (CONFIG_M17 && CONFIG_UI_SETTINGS)
+#if CONFIG_CHANNEL_EDIT || CONFIG_APRS_AFSK || CONFIG_DMR_SMS || CONFIG_SATELLITE_TLE || CONFIG_M17
 // ======================= Text entry: keypad letters (ui.md 2.1) =======================
 // Phone keypad: in ABC / abc, 2-9 cycle their letters, the digit, then the letters in the other case (ABC: A B C 2 a b
 // c); 1 cycles punctuation and 0 a space, 0 and a few signs. The same key within 1 s takes the next one, another key
@@ -2134,13 +2134,13 @@ enum { TEXT_NAME, TEXT_MESSAGE, TEXT_CALLSIGN,
 #if CONFIG_SATELLITE_TLE
 	TEXT_SATELLITE,
 #endif
-#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
+#if CONFIG_M17
 	TEXT_M17,
 	TEXT_M17_DST,
 #endif
 	TEXT_PREFIXES };
 static uint8_t text_prefix;
-#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
+#if CONFIG_M17
 enum { TEXT_PROFILE_FREE, TEXT_PROFILE_M17_CALL, TEXT_PROFILE_M17_DST };
 static uint8_t text_profile;
 #endif
@@ -2171,7 +2171,7 @@ static void text_open(char *target, uint8_t max, uint8_t screen)
 	if (screen == SCR_SATELLITE_TEXT)
 		text_prefix = TEXT_SATELLITE;
 #endif
-#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
+#if CONFIG_M17
 	text_profile = TEXT_PROFILE_FREE;
 #if CONFIG_UI_SETTINGS
 	if (screen == SCR_M17_CALL) {
@@ -2180,13 +2180,11 @@ static void text_open(char *target, uint8_t max, uint8_t screen)
 		text_max = max;
 	}
 #endif
-#if CONFIG_CHANNEL_EDIT
-	if (screen == SCR_M17_CHAN_DST) {
+	if (screen == SCR_M17_CHAN_DST || screen == SCR_M17_TALK_TO_OTHER) {
 		text_prefix = TEXT_M17_DST;
 		text_profile = TEXT_PROFILE_M17_DST;
 		text_max = max;
 	}
-#endif
 #endif
 	ui_push(screen, 0);
 }
@@ -2293,8 +2291,8 @@ static void text_append(char c)
 	text_buf[text_len] = 0;
 }
 
-#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
-// Callsign: A-Z, 0-9, - / . Fold a-z. Destination (the channel editor) also allows a space inside.
+#if CONFIG_M17
+// Callsign: A-Z, 0-9, - / . Fold a-z. A destination also allows a space inside.
 static bool text_m17_ok(char c)
 {
 	if (c >= 'a' && c <= 'z')
@@ -2372,7 +2370,7 @@ static void text_draw(void)
 #if CONFIG_SATELLITE_TLE
 		TRN(SATELLITE_2, "Satellite"),
 #endif
-#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
+#if CONFIG_M17
 		TRN(M17_LABEL_CALLSIGN, TEXT_ALT_OPEN "M17 callsign" TEXT_ALT_NEXT "M17 call" TEXT_ALT_CLOSE),
 		TRN(M17_LABEL_TALK_TO, "Talk to"),
 #endif
@@ -2452,7 +2450,7 @@ static bool text_key_fn(const input_event_t *ev)
 	if (ev->action >= ACT_DIGIT_0 && ev->action <= ACT_DIGIT_9 && press) {
 		int8_t k = (int8_t)(ev->action - ACT_DIGIT_0);
 		const char *set = keys[k];
-#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
+#if CONFIG_M17
 		if (text_profile != TEXT_PROFILE_FREE) {
 			if (text_mode == TEXT_DIGITS || ev->gesture == GESTURE_LONG) {
 				text_m17_take((char)('0' + k), false);
@@ -2490,7 +2488,7 @@ static bool text_key_fn(const input_event_t *ev)
 	int dir = ev->action == ACT_NAV_UP ? 1 : ev->action == ACT_NAV_DOWN ? -1 :
 		ev->action == ACT_ENC_STEP ? (ev->value > 0 ? 1 : -1) : 0;
 	if (dir != 0 && ev->gesture != GESTURE_UP) {
-#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
+#if CONFIG_M17
 		if (text_profile != TEXT_PROFILE_FREE) {
 			text_m17_step(dir);	// the allowed alphabet only; down from its first character deletes
 			text_key = -1;
@@ -2537,20 +2535,19 @@ static bool text_key_fn(const input_event_t *ev)
 	}
 	if (ev->action == ACT_SELECT && press) {
 		if (!(board.caps & CAP_KEYPAD) && ev->gesture == GESTURE_PRESS) {
-#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
+#if CONFIG_M17
 			if (text_profile != TEXT_PROFILE_FREE)
 				text_m17_take(text_len > 0 ? text_buf[text_len - 1] : 'A', false);
 			else
 #endif
 				text_append(text_len > 0 ? text_buf[text_len - 1] : 'A');	// the next character, started as this one
 		} else {
-#if CONFIG_M17 && (CONFIG_UI_SETTINGS || CONFIG_CHANNEL_EDIT)
+#if CONFIG_M17
 			if (text_profile != TEXT_PROFILE_FREE && !text_m17_commit()) {
 				ui_toast(TR(M17_TOAST_CHAR, "Letters, digits and - / ."));
 				ui_dirty();
 				return true;
 			}
-#if CONFIG_CHANNEL_EDIT
 			if (text_profile == TEXT_PROFILE_M17_DST) {
 				uint64_t dst;
 				if (!m17_dst_parse(text_buf, &dst)) {
@@ -2559,7 +2556,6 @@ static bool text_key_fn(const input_event_t *ev)
 					return true;
 				}
 			}
-#endif
 #endif
 			if (text_target != text_buf)
 				strcpy(text_target, text_buf);
@@ -8444,8 +8440,10 @@ static const ui_scr_def_t picker_screen = {
 
 #if CONFIG_M17
 static const char *const m17_presets[] = { "ALL", "ECHO", "INFO", "UNLINK" };
+enum { M17_TALK_OTHER = 1 + sizeof m17_presets / sizeof m17_presets[0] };
 static uint32_t m17_talk_generation;
 static uint64_t m17_talk_base;
+static char m17_talk_text[M17_ADDR_CHARS_MAX + 1];
 
 static void m17_talk_enter(void)
 {
@@ -8454,7 +8452,7 @@ static void m17_talk_enter(void)
 	m17_talk_base = sel != NULL ? sel->base_dst : 0;
 }
 
-static uint16_t m17_talk_count(void) { return 1 + sizeof m17_presets / sizeof m17_presets[0]; }
+static uint16_t m17_talk_count(void) { return M17_TALK_OTHER + 1; }
 
 static void m17_talk_item(uint16_t i, ui_item_t *it)
 {
@@ -8462,27 +8460,62 @@ static void m17_talk_item(uint16_t i, ui_item_t *it)
 		char dst[RADIO_M17_CALL_LEN];
 		str_copy(it->label, sizeof it->label, TR(VALUE_DEFAULT, "Default"));
 		str_copy(it->value, sizeof it->value, ui_m17_destination(m17_talk_base, dst));
+	} else if (i == M17_TALK_OTHER) {
+		str_copy(it->label, sizeof it->label, TR(M17_ROW_TALK_OTHER, "Other" GLYPH_ELLIPSIS));
 	} else {
 		str_copy(it->label, sizeof it->label, m17_presets[i - 1]);
 	}
+}
+
+static const radio_m17_selected_t *m17_talk_current(void)
+{
+	const radio_m17_selected_t *sel = ui_m17_selected(ui_view());
+	if (sel == NULL || sel->generation != m17_talk_generation) {
+		ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed"));
+		return NULL;
+	}
+	return sel;
+}
+
+static void m17_talk_submit(const char *dest)
+{
+	if (m17_talk_current() == NULL)
+		return;
+	uint64_t dst = 0;
+	if ((dest != NULL && !m17_dst_parse(dest, &dst)) || !radio_req_m17_talk_to(m17_talk_generation, dst)) {
+		ui_toast(TR(M17_TOAST_TALK_TO_FAILED, "Couldn't queue Talk to"));
+		return;
+	}
+	ui_pop();
+}
+
+static void m17_talk_other_kept(void)
+{
+	m17_talk_submit(m17_talk_text);
 }
 
 static void m17_talk_select(uint16_t i, bool hold)
 {
 	if (hold)
 		return;
-	const radio_m17_selected_t *sel = ui_m17_selected(ui_view());
-	if (sel == NULL || sel->generation != m17_talk_generation) {
-		ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed"));
+	if (i != M17_TALK_OTHER) {
+		m17_talk_submit(i == 0 ? NULL : m17_presets[i - 1]);
 		return;
 	}
-	uint64_t dst = 0;
-	if ((i != 0 && !m17_dst_parse(m17_presets[i - 1], &dst)) || !radio_req_m17_talk_to(m17_talk_generation, dst)) {
-		ui_toast(TR(M17_TOAST_TALK_TO_FAILED, "Couldn't queue Talk to"));
+	const radio_m17_selected_t *sel = m17_talk_current();
+	if (sel == NULL)
 		return;
-	}
-	ui_pop();
+	if (sel->effective_dst == M17_ADDR_BROADCAST)
+		m17_talk_text[0] = '\0';
+	else
+		ui_m17_destination(sel->effective_dst, m17_talk_text);
+	text_open(m17_talk_text, M17_ADDR_CHARS_MAX, SCR_M17_TALK_TO_OTHER);
+	text_done = m17_talk_other_kept;
 }
+
+static const ui_scr_def_t m17_talk_other_screen = {
+	.name = "m17-talk-to-other", .flags = SF_FIELD, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
+};
 
 static const ui_scr_def_t m17_talk_screen = {
 	.name = "m17-talk-to", .flags = SF_LIST | SF_FIELD, .prefix = TRN(M17_LABEL_TALK_TO, "Talk to"),
@@ -8703,6 +8736,7 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 #endif
 #if CONFIG_M17
 	[SCR_M17_TALK_TO] = &m17_talk_screen,
+	[SCR_M17_TALK_TO_OTHER] = &m17_talk_other_screen,
 #endif
 #if CONFIG_CRASH_SCREEN
 	[SCR_CRASH] = &crash_screen,

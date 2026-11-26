@@ -4560,6 +4560,11 @@ msgid "{PTT once  OK use  Hold OK set|OK use  Hold OK set}"
 msgstr "{PTT 一次  OK 使用  长按 OK 设定|OK 使用  长按 OK 设定}"
 
 #: core/ui/ui_menus.c
+msgctxt "M17_ROW_TALK_OTHER"
+msgid "Other…"
+msgstr "其他……"
+
+#: core/ui/ui_menus.c
 msgctxt "M17_TOAST_TALK_TO_FAILED"
 msgid "Couldn't queue Talk to"
 msgstr "无法设置目标"
