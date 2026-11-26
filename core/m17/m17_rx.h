@@ -28,7 +28,12 @@ enum {
 
 typedef struct m17_rx {
 	uint8_t lsf[M17_LSF_BYTES];	// bytes filled where have[] says, or the whole frame after an LSF
+	uint8_t lich[M17_LSF_BYTES];	// candidate for the current superframe
 	bool have[6];			// LICH chunk n (LSF bytes 5n..5n+4) is in lsf; never from the frame number
+	uint8_t lich_next;		// next consecutive LICH counter; 0 starts a superframe
+	uint8_t meta_text[M17_META_TEXT_BYTES];
+	uint8_t meta_mask, meta_have;	// declared and received text blocks
+	bool link;			// LSF or stream accepted, as opposed to BERT or packet lock alone
 	bool late;			// chunk 2 has been seen: LSF bytes 10-14 are in
 	bool in_call;			// a frame this mode accepted is the call in hand
 	bool crc_ok;			// lsf[0..29], CRC included, sums to 0
@@ -59,11 +64,13 @@ typedef struct m17_rx {
 void m17_rx_init(m17_rx_t *rx, const m17_engine_hooks_t *hooks, void *ctx);
 void m17_rx_set_can(m17_rx_t *rx, uint8_t can, bool squelch);
 bool m17_rx_can_passes(const m17_rx_t *rx);
+uint16_t m17_rx_type(const m17_rx_t *rx);
 // A retune: keep the settings and drop the call and chunks. Does not call rx_end.
 void m17_rx_reset(m17_rx_t *rx);
 
 void m17_rx_on_lsf(m17_rx_t *rx, const uint8_t lsf[M17_LSF_BYTES]);
 void m17_rx_on_lich(m17_rx_t *rx, uint8_t counter, const uint8_t chunk[5]);
+void m17_rx_on_gap(m17_rx_t *rx);
 void m17_rx_on_lock(m17_rx_t *rx);
 void m17_rx_on_lost(m17_rx_t *rx);
 void m17_rx_on_eot(m17_rx_t *rx);

@@ -229,6 +229,12 @@ static const struct { const char *name, *script; } gallery[] = {
 	{ "m17_channel_destination", "m17 ok 5 ok down down ok down down down ok back back back 2 2" },
 	{ "m17_home", "m17 dlmode:m17 m17tx:3,M17-M17_A" },
 	{ "m17_talk_to", SIM_M17_STORED_ECHO " quick 8 down down down down down" },
+	{ "m17_rx", SIM_M17_STORED_ECHO " m17rx:AB1CD,ALL,3,voice" },
+	{ "m17_rx_late", SIM_M17_STORED_ECHO " m17rx:AB1CD,ALL,7,late m17type:7" },
+	{ "m17_rx_other_can", SIM_M17_STORED_ECHO " m17rx:AB1CD,REF001,7,other" },
+	{ "m17_rx_encrypted", SIM_M17_STORED_ECHO " m17rx:AB1CD,REF001,3,encrypted" },
+	{ "m17_rx_meta", SIM_M17_STORED_ECHO " m17rx:AB1CD,ALL,3,voice m17meta:Meet_at_the_north_lot." },
+	{ "m17_rx_via", SIM_M17_STORED_ECHO " m17rx:AB1CD,REF001,3,voice m17via:GW1ABC" },
 	{ "m17_talk_to_other", SIM_M17_STORED_ECHO " quick 8 up ok back back back back 6 long:1 long:7 1 1 6 long:1 long:7 0 2" },
 	{ "m17_tx_denied", "m17 dlmode:m17 m17deny:call" },
 #endif

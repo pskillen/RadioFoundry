@@ -77,6 +77,7 @@
 #undef board
 #include "hal_time.h"
 #include "ui/gfx.h"
+#include "ui/fmt.h"
 #include "ui/ui_screens.h"
 #include "ui/ui_app.h"
 #include "ui/ui_svc.h"
@@ -3319,10 +3320,10 @@ static bool check(const char *kv, char *err, size_t len)
 	else if (strcmp(key, "beep") == 0) snprintf(got, sizeof got, "%u", sim_rec.last_beep);	// ui_beep_t
 	else if (strcmp(key, "vibes") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.vibes);
 	else if (strcmp(key, "vibe") == 0) snprintf(got, sizeof got, "%u", sim_rec.last_vibe);	// ui_vibe_t
-	else if (strcmp(key, "shows") == 0 || strcmp(key, "showsraw") == 0) {	// drawn text contains the value
+	else if (strcmp(key, "shows") == 0 || strcmp(key, "showsraw") == 0 || strcmp(key, "draws") == 0) {
 		got[0] = 0;
 		for (int i = 0; i < live_n; i++) {
-			if (strstr(live[i].s, want) != NULL) {
+			if (strcmp(key, "draws") == 0 ? strcmp(live[i].s, want) == 0 : strstr(live[i].s, want) != NULL) {
 				snprintf(got, sizeof got, "%s", want);
 				break;
 			}
@@ -3756,6 +3757,82 @@ static bool run_token(char *t, char *err, size_t len)
 		return true;
 	}
 #if CONFIG_M17
+	if (strcmp(t, "m17rx") == 0 && arg != NULL) {
+		char src[10], dst[10], flags[16];
+		unsigned can;
+		static const struct { const char *name; uint8_t state; } cases[] = {
+			{ "voice", RADIO_M17_RX_VOICE }, { "other", RADIO_M17_RX_OTHER_CAN },
+			{ "encrypted", RADIO_M17_RX_ENCRYPTED }, { "voice-data", RADIO_M17_RX_VOICE_DATA },
+			{ "data", RADIO_M17_RX_DATA }, { "late", RADIO_M17_RX_UNKNOWN }, { "bert", RADIO_M17_RX_NONE },
+		};
+		if (sscanf(arg, "%9[^,],%9[^,],%u,%15s", src, dst, &can, flags) != 4 || can > RADIO_M17_CAN_MAX) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		size_t i = 0;
+		while (i < sizeof cases / sizeof cases[0] && strcmp(flags, cases[i].name) != 0)
+			i++;
+		if (i == sizeof cases / sizeof cases[0] || view.ch.mode != RADIO_MODE_M17) {
+			snprintf(err, len, "bad %s mode or flags", t);
+			return false;
+		}
+		view.state = RS_RX;
+		view.m17.flags = RADIO_M17_ON | RADIO_M17_RX;
+		view.m17.rx_state = cases[i].state;
+		view.m17.rx_can = (uint8_t)can;
+		str_copy(view.m17.caller, sizeof view.m17.caller, src);
+		str_copy(view.m17.dest, sizeof view.m17.dest, dst);
+		view.m17.via[0] = view.m17.meta[0] = '\0';
+		if (view.m17.rx_state == RADIO_M17_RX_UNKNOWN) {
+			view.m17.flags |= RADIO_M17_LATE;
+			view.m17.rx_can = UINT8_MAX;
+		}
+		if (view.m17.rx_state == RADIO_M17_RX_UNKNOWN || view.m17.rx_state == RADIO_M17_RX_NONE)
+			view.m17.caller[0] = view.m17.dest[0] = '\0';
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17type") == 0 && arg != NULL) {	// late LICH chunk 2, voice
+		view.m17.rx_state = RADIO_M17_RX_VOICE;
+		view.m17.rx_can = (uint8_t)atoi(arg);
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17link") == 0 && arg != NULL) {	// CRC-valid addresses from the full LICH
+		if (sscanf(arg, "%9[^,],%9s", view.m17.caller, view.m17.dest) != 2) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17meta") == 0 && arg != NULL) {
+		str_copy(view.m17.meta, sizeof view.m17.meta, arg);
+		for (char *p = view.m17.meta; *p; p++)
+			if (*p == '_')
+				*p = ' ';
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17via") == 0 && arg != NULL) {
+		str_copy(view.m17.via, sizeof view.m17.via, arg);
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17end") == 0) {
+		view.state = RS_IDLE;
+		view.m17.flags = RADIO_M17_ON;
+		view.m17.rx_state = RADIO_M17_RX_NONE;
+		view.m17.caller[0] = view.m17.dest[0] = view.m17.via[0] = view.m17.meta[0] = '\0';
+		changed();
+		advance(100);
+		return true;
+	}
 	if (strcmp(t, "m17stored") == 0 && arg != NULL) {	// channel number and programmed destination
 		unsigned number;
 		char dst[RADIO_M17_CALL_LEN];

@@ -31,6 +31,18 @@ typedef struct {
 #define RADIO_M17_RX		0x02u	// a call is being received
 #define RADIO_M17_LATE		0x04u	// ... and was entered without its link setup frame
 
+typedef enum {
+	RADIO_M17_RX_NONE,
+	RADIO_M17_RX_UNKNOWN,
+	RADIO_M17_RX_OTHER_CAN,
+	RADIO_M17_RX_ENCRYPTED,
+	RADIO_M17_RX_VOICE_DATA,
+	RADIO_M17_RX_DATA,
+	RADIO_M17_RX_VOICE,
+} radio_m17_rx_state_t;
+
+#define RADIO_M17_META_LEN	53	// four 13-byte META blocks and a NUL
+
 // The radio view's part (radio_view_t.m17): the call heard now, or the last one
 typedef struct {
 	uint8_t flags;		// RADIO_M17_*
@@ -40,6 +52,12 @@ typedef struct {
 	char caller[RADIO_M17_CALL_LEN];	// empty until the link setup frame's CRC is 0
 	char dest[RADIO_M17_CALL_LEN];	// the address heard, not the one PTT calls
 	char tx_dst[RADIO_M17_CALL_LEN];	// the destination PTT calls; ALL is broadcast
+#if CONFIG_M17
+	uint8_t rx_state;	// radio_m17_rx_state_t
+	uint8_t rx_can;		// UINT8_MAX until TYPE is known
+	char via[RADIO_M17_CALL_LEN];
+	char meta[RADIO_M17_META_LEN];
+#endif
 } radio_m17_view_t;
 
 // Counters for the debug link (any task reads them; the radio task writes them while M17 runs)

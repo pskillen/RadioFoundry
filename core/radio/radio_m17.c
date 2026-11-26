@@ -17,6 +17,7 @@
 #include "air/air_session.h"
 
 _Static_assert(RADIO_M17_CALL_LEN == M17_CP_CALL_LEN, "M17 callsign buffers must match");
+_Static_assert(RADIO_M17_META_LEN == M17_META_TEXT_BYTES + 1, "M17 META buffers must match");
 
 // What one session borrows: the transmit engine, the receiver, the air session (its framer), and the framer's
 // hard and soft frame buffers. It has to fit the smaller lend block. Do not shrink the M17 types to make it.
@@ -347,6 +348,94 @@ static void settings_view(radio_m17_view_t *v)
 	put_dst(s->dst, v->tx_dst);
 }
 
+static radio_m17_rx_state_t rx_state(const m17_rx_t *rx, uint16_t type)
+{
+	if (!rx->type_known)
+		return RADIO_M17_RX_UNKNOWN;
+	if (!m17_rx_can_passes(rx))
+		return RADIO_M17_RX_OTHER_CAN;
+	if (type & M17_TYPE_ENC_MASK)
+		return RADIO_M17_RX_ENCRYPTED;
+	if (!(type & M17_TYPE_STREAM))
+		return RADIO_M17_RX_DATA;
+	switch (type & M17_TYPE_DATA_MASK) {
+	case M17_TYPE_VOICE_DATA: return RADIO_M17_RX_VOICE_DATA;
+	case M17_TYPE_DATA: return RADIO_M17_RX_DATA;
+	case M17_TYPE_VOICE: return RADIO_M17_RX_VOICE;
+	default: return RADIO_M17_RX_UNKNOWN;
+	}
+}
+
+// The display takes Latin-1 and complete three-byte UTF-8 glyphs. Convert network UTF-8 within
+// each contiguous run, so a missing block can't join bytes from two unrelated glyphs.
+static char *meta_run(char *out, const uint8_t *in, unsigned len)
+{
+	for (unsigned at = 0; at < len;) {
+		unsigned start = at;
+		uint32_t cp = in[at++];
+		unsigned tail = cp < 0xC2u ? 0 : cp < 0xE0u ? 1 : cp < 0xF0u ? 2 : cp <= 0xF4u ? 3 : 0;
+		if (tail) {
+			cp &= 0x7Fu >> (tail + 1);
+			unsigned left = tail;
+			while (left && at < len && (in[at] & 0xC0u) == 0x80u) {
+				cp = (cp << 6) | (in[at++] & 0x3Fu);
+				left--;
+			}
+			if (left || cp < (tail == 1 ? 0x80u : tail == 2 ? 0x800u : 0x10000u) ||
+			    (cp >= 0xD800u && cp <= 0xDFFFu))
+				cp = '?';
+		} else if (cp >= 0x80u) {
+			cp = '?';
+		}
+		if ((cp >= 0x20u && cp <= 0x7Eu) || (cp >= 0xA0u && cp <= 0xFFu))
+			*out++ = (char)cp;
+		else if (CONFIG_LANG_ZH && cp >= 0x800u && cp <= 0xFFFFu) {
+			memcpy(out, in + start, 3);
+			out += 3;
+		} else {
+			*out++ = '?';
+		}
+	}
+	return out;
+}
+
+static void received_meta(const m17_rx_t *rx, uint16_t type, radio_m17_view_t *v)
+{
+	if (type & M17_TYPE_ENC_MASK)
+		return;
+	if ((type & M17_TYPE_SUB_MASK) == M17_TYPE_META_CALL) {
+		char origin[RADIO_M17_CALL_LEN];
+		uint8_t encoded[M17_ADDR_BYTES];
+		const uint8_t *raw = rx->lsf + M17_LSF_META_OFFSET;
+
+		show_addr(raw, origin);
+		if (origin[0] && strcmp(origin, "ALL") != 0 && m17_addr_encode(origin, encoded) &&
+		    memcmp(raw, encoded, sizeof encoded) == 0 &&
+		    strcmp(origin, v->caller) != 0) {
+			strcpy(v->via, v->caller);
+			strcpy(v->caller, origin);
+		}
+		return;
+	}
+	char *out = v->meta;
+	for (unsigned i = 0; i < 4;) {
+		if (!(rx->meta_have & (1u << i))) {
+			i++;
+			continue;
+		}
+		unsigned start = i++;
+		while (i < 4 && (rx->meta_have & (1u << i)))
+			i++;
+		if (out != v->meta)
+			*out++ = ' ';
+		out = meta_run(out, rx->meta_text + start * M17_META_TEXT_BLOCK_BYTES,
+			       (i - start) * M17_META_TEXT_BLOCK_BYTES);
+	}
+	while (out > v->meta && out[-1] == ' ')
+		out--;
+	*out = '\0';
+}
+
 bool radio_m17_poll(radio_m17_view_t *v)
 {
 	radio_m17_view_t n;
@@ -355,6 +444,10 @@ bool radio_m17_poll(radio_m17_view_t *v)
 		n = *v;		// the last call heard stays
 		n.flags = 0;
 		n.tx = AIR_TX_IDLE;
+		n.rx_state = RADIO_M17_RX_NONE;
+		n.rx_can = 0;
+		memset(n.via, 0, sizeof n.via);
+		memset(n.meta, 0, sizeof n.meta);
 	} else {
 		const m17_rx_t *rx = &blk->rx;
 
@@ -367,9 +460,15 @@ bool radio_m17_poll(radio_m17_view_t *v)
 			n.flags |= RADIO_M17_RX;
 			if (rx->late)
 				n.flags |= RADIO_M17_LATE;
-			if (rx->crc_ok) {
-				show_addr(rx->lsf + M17_ADDR_BYTES, n.caller);
-				show_addr(rx->lsf, n.dest);
+			if (rx->link) {
+				uint16_t type = m17_rx_type(rx);
+				n.rx_state = (uint8_t)rx_state(rx, type);
+				n.rx_can = rx->type_known ? (type & M17_TYPE_CAN_MASK) >> M17_TYPE_CAN_SHIFT : UINT8_MAX;
+				if (rx->crc_ok) {
+					show_addr(rx->lsf + M17_ADDR_BYTES, n.caller);
+					show_addr(rx->lsf, n.dest);
+					received_meta(rx, type, &n);
+				}
 			}
 		}
 	}

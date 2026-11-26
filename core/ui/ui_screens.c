@@ -631,6 +631,7 @@ void ui_draw_title(const font_t *f, int x, int y, int max_w, const char *prefix,
 
 static const char *wrap_line(const font_t *f, const char *t, int max_w, char *line, size_t cap);
 static int wrap_lines(const font_t *f, const char *t, int max_w, int max, char lines[][64], bool preview);
+static void fit_end(const font_t *f, const char *s, int max_w, char *out, size_t len);
 
 // An overlay's top edge (banner, two-line toast) moved up to a gap between lines of what is under it, so it never
 // cuts a line of text in half: the first row at or above y whose row above is all one color (background, or the
@@ -2235,6 +2236,87 @@ static void air_call_line(const air_call_t *c, const font_t *f, int y)
 }
 #endif
 
+#if CONFIG_M17
+static bool m17_receiving(const radio_view_t *v)
+{
+	return v->state == RS_RX && v->ch.mode == RADIO_MODE_M17 &&
+		(v->m17.flags & RADIO_M17_RX) && v->m17.rx_state != RADIO_M17_RX_NONE;
+}
+
+static const char *m17_rx_status(uint8_t state)
+{
+	switch (state) {
+	case RADIO_M17_RX_OTHER_CAN: return TR(M17_STATE_OTHER_CAN, "Other CAN");
+	case RADIO_M17_RX_ENCRYPTED: return TR(M17_STATE_ENCRYPTED, "Encrypted");
+	case RADIO_M17_RX_VOICE_DATA: return TR(M17_STATE_VOICE_DATA, "Voice + data");
+	case RADIO_M17_RX_DATA: return TR(M17_STATE_DATA, "Data");
+	case RADIO_M17_RX_VOICE: return TR(M17_STATE_VOICE, "Voice");
+	default: return GLYPH_ELLIPSIS;
+	}
+}
+
+// A receive block grows upward from the hint. Measure its actual lines before drawing adjacent Home content.
+static int __attribute__((noinline)) m17_rx_lines(const radio_m17_view_t *m, bool draw)
+{
+	const font_t *f = ui_layout.small;
+	int w = gfx_width();
+	const char *src = m->caller[0] ? m->caller : GLYPH_ELLIPSIS;
+	const char *dst = strcmp(m->dest, "ALL") == 0 ? TR(QUICK_VALUE_ALL, "All") : m->dest;
+	const char *status = m17_rx_status(m->rx_state);
+	char target[40], can[16], via[48], fit[RADIO_M17_META_LEN + 2];
+	sbuf_t b;
+
+	sb_init(&b, target, sizeof target);
+	sb_str(&b, src);
+	if (*dst) {
+		sb_str(&b, " " GLYPH_ARROW " ");
+		sb_str(&b, dst);
+	}
+	sb_init(&b, can, sizeof can);
+	sb_str(&b, "CAN ");
+	if (m->rx_can == UINT8_MAX)
+		sb_str(&b, GLYPH_ELLIPSIS);
+	else
+		sb_u32(&b, m->rx_can, 1);
+	bool split_addr = gfx_text_width(f, target) > w;
+	bool split_status = gfx_text_width(f, can) + f->w + gfx_text_width(f, status) > w;
+	int lines = 2 + split_addr + split_status + (m->via[0] != '\0') + (m->meta[0] != '\0');
+	int top = ui_layout.hint_y - lines * f->h;
+	if (!draw)
+		return top;
+	int y = top;
+	if (split_addr) {
+		gfx_text(f, 0, y, src, ui_col.rx);
+		gfx_text(f, 0, y += f->h, GLYPH_ARROW, ui_col.rx);
+		gfx_text(f, 2 * f->w, y, dst, ui_col.rx);
+	} else {
+		gfx_text(f, 0, y, target, ui_col.rx);
+	}
+	y += f->h;
+	if (m->via[0]) {
+		sb_init(&b, via, sizeof via);
+		sb_str(&b, TR(M17_BODY_VIA, "via "));
+		sb_str(&b, m->via);
+		gfx_text_fit(f, via, w, fit, sizeof fit);
+		gfx_text(f, 0, y, fit, ui_col.dim);
+		y += f->h;
+	}
+	int x = gfx_text(f, 0, y, can, ui_col.fg) + f->w;
+	if (split_status) {
+		y += f->h;
+		x = 0;
+	}
+	gfx_text_fit(f, status, w - x, fit, sizeof fit);
+	gfx_text(f, x, y, fit, m->rx_state == RADIO_M17_RX_OTHER_CAN || m->rx_state == RADIO_M17_RX_ENCRYPTED ?
+		ui_col.warn : ui_col.fg);
+	if (m->meta[0]) {
+		fit_end(f, m->meta, w, fit, sizeof fit);
+		gfx_text(f, 0, y + f->h, fit, ui_col.fg);
+	}
+	return top;
+}
+#endif
+
 static void draw_activity(const radio_view_t *v, const ui_state_t *s)
 {
 	const ui_layout_t *L = &ui_layout;
@@ -2501,6 +2583,22 @@ void ui_draw_home(const radio_view_t *v, const ui_state_t *s)
 #endif
 	gfx_clear(ui_col.bg);
 	ui_draw_top(v, s, NULL, NULL);
+#if CONFIG_M17
+	if (m17_receiving(v)) {
+		int top = m17_rx_lines(&v->m17, false);
+
+		if (top >= ui_layout.talk_y)
+			draw_place(v, s);
+		if (top >= ui_layout.chips_y)
+			draw_talk(v, s->label_first);
+		if (top >= ui_layout.activity_y) {
+			draw_chips(v, s);
+			if (ui_layout.sep_y >= 0)
+				gfx_hline(0, ui_layout.sep_y, gfx_width(), ui_col.line);
+		}
+		m17_rx_lines(&v->m17, true);
+	} else
+#endif
 	if (s->large_text) {
 		draw_home_large(v, s);
 	} else {
@@ -2853,13 +2951,13 @@ static void dual_pane(const radio_view_t *v, const ui_state_t *s, int i, int y, 
 
 // Large text (Settings > Display): the two channels only, each as large as fits. The selected one has the arrow;
 // the one a call comes in on is green and says RX (a word, for mono displays)
-static void dual_large(const radio_view_t *v, const ui_state_t *s)
+static void dual_large(const radio_view_t *v, const ui_state_t *s, int bottom)
 {
 	const ui_layout_t *L = &ui_layout;
 	const ui_dual_t *d = &s->dual;
 	int w = gfx_width();
 	int y = L->strip_h + 2;
-	int room = (L->hint_y - y) / 2;
+	int room = (bottom - y) / 2;
 	for (int i = 0; i < 2; i++) {
 		const ui_dual_pane_t *p = &d->pane[i];
 		char buf[48], form[48], fit[48];
@@ -3040,8 +3138,17 @@ void ui_draw_home_dual(const radio_view_t *v, const ui_state_t *s)
 	int w = gfx_width();
 	gfx_clear(ui_col.bg);
 	ui_draw_top(v, s, NULL, NULL);
+#if CONFIG_M17
+	if (m17_receiving(v)) {
+		int top = m17_rx_lines(&v->m17, false);
+
+		if (top - L->strip_h - 2 >= 2 * L->small->h)
+			dual_large(v, s, top);
+		m17_rx_lines(&v->m17, true);
+	} else
+#endif
 	if (s->large_text) {
-		dual_large(v, s);
+		dual_large(v, s, L->hint_y);
 	} else {
 		int top = L->strip_h, gap = gfx_height() >= UI_TALL_PX ? 6 : 2, pad;
 		dual_fit_t fit;
@@ -3071,8 +3178,6 @@ void ui_draw_bottom(const ui_state_t *s, const char *hint)
 	else if (s->hints && hint != NULL)
 		ui_draw_hint(hint, false);
 }
-
-static void fit_end(const font_t *f, const char *s, int max_w, char *out, size_t len);
 
 // Up to max lines of t wrapped to max_w: lines[] filled, the count returned. Text left after the last line shortens
 // it (at the end for a preview, else from the middle), so nothing is silently dropped

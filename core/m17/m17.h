@@ -55,6 +55,7 @@
 #define M17_LSF_CRC_BYTES	2
 #define M17_LSF_DATA_BYTES	28		// bytes 0-27 covered by the CRC
 #define M17_LSF_TYPE_OFFSET	12
+#define M17_LSF_META_OFFSET	14
 
 // TYPE is a big-endian word. Masks are in their on-air positions (spec 3.5).
 #define M17_TYPE_MODE_SHIFT	0
@@ -72,7 +73,13 @@
 #define M17_TYPE_RESERVED_MASK	0xF000u
 
 #define M17_TYPE_STREAM		(1u << M17_TYPE_MODE_SHIFT)
+#define M17_TYPE_DATA		(1u << M17_TYPE_DATA_SHIFT)
 #define M17_TYPE_VOICE		(2u << M17_TYPE_DATA_SHIFT)
+#define M17_TYPE_VOICE_DATA	(3u << M17_TYPE_DATA_SHIFT)
+#define M17_TYPE_META_TEXT	(0u << M17_TYPE_SUB_SHIFT)
+#define M17_TYPE_META_CALL	(2u << M17_TYPE_SUB_SHIFT)
+#define M17_META_TEXT_BLOCK_BYTES	13
+#define M17_META_TEXT_BYTES	(4 * M17_META_TEXT_BLOCK_BYTES)
 
 // ── Stream (spec 3.2) ──
 #define M17_LICH_BITS		48

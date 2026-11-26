@@ -5378,6 +5378,36 @@ msgid "MON: digital monitor"
 msgstr "MON: monitor digital"
 
 #: core/ui/ui_screens.c
+msgctxt "M17_STATE_OTHER_CAN"
+msgid "Other CAN"
+msgstr "Otro CAN"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_ENCRYPTED"
+msgid "Encrypted"
+msgstr "Cifrado"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_VOICE_DATA"
+msgid "Voice + data"
+msgstr "Voz + datos"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_DATA"
+msgid "Data"
+msgstr "Datos"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_VOICE"
+msgid "Voice"
+msgstr "Voz"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_BODY_VIA"
+msgid "via "
+msgstr "vía "
+
+#: core/ui/ui_screens.c
 msgctxt "ACTIVITY_STATE_SQUELCH_OPEN"
 msgid "Squelch open"
 msgstr "Squelch abierto"

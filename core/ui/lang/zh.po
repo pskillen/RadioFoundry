@@ -5380,6 +5380,36 @@ msgid "MON: digital monitor"
 msgstr "MON：数字监听"
 
 #: core/ui/ui_screens.c
+msgctxt "M17_STATE_OTHER_CAN"
+msgid "Other CAN"
+msgstr "其他 CAN"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_ENCRYPTED"
+msgid "Encrypted"
+msgstr "已加密"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_VOICE_DATA"
+msgid "Voice + data"
+msgstr "语音和数据"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_DATA"
+msgid "Data"
+msgstr "数据"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_VOICE"
+msgid "Voice"
+msgstr "语音"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_BODY_VIA"
+msgid "via "
+msgstr "经 "
+
+#: core/ui/ui_screens.c
 msgctxt "ACTIVITY_STATE_SQUELCH_OPEN"
 msgid "Squelch open"
 msgstr "静噪打开"

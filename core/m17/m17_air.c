@@ -275,6 +275,7 @@ static void rx_frame(const air_frame_t *f, void *ctx)
 	m17_rx_t *rx = ctx;
 
 	if (f->flags & AIR_FRAME_NO_SYNC) {
+		m17_rx_on_gap(rx);
 		if (rx->bert_run > 0)
 			rx->bert.lost++;
 		else if (rx->hooks && rx->hooks->rx_lost && m17_rx_can_passes(rx))
