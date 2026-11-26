@@ -15,6 +15,9 @@
 #include "../air/air_framer.h"
 #include "m17.h"
 #include "m17_engine.h"
+#if CONFIG_M17_PACKET
+#include "m17_packet.h"
+#endif
 
 // air_profile_t.sync[].id, most useful first (spec 1.1)
 enum {
@@ -25,6 +28,24 @@ enum {
 	M17_SYNC_ID_BERT = 4,
 	M17_SYNC_ID_EOT = 5,
 };
+
+#if CONFIG_M17_PACKET
+enum {
+	M17_PKT_NONE,
+	M17_PKT_LSF,		// fresh, explicit packet LSF
+	M17_PKT_MORE,		// expecting the next packet frame
+	M17_PKT_ONE,		// expecting the EOT of a one-frame packet
+};
+
+typedef struct {
+	uint32_t crc_ok;		// confirmed packets with a valid CRC, including CAN rejects
+	uint32_t crc_fail;	// confirmed final frames with a bad packet CRC
+	uint32_t fec_reject;	// timed packet candidates rejected by the decoder or disagreement limit
+	uint32_t can_reject;	// CRC-valid packets rejected by CAN squelch
+	uint32_t fec_samples;	// nonnegative decoder results, including above-limit frames
+	uint16_t fec_peak;
+} m17_packet_rx_stats_t;
+#endif
 
 typedef struct m17_rx {
 	uint8_t lsf[M17_LSF_BYTES];	// bytes filled where have[] says, or the whole frame after an LSF
@@ -46,14 +67,12 @@ typedef struct m17_rx {
 	bool bert_have;
 	m17_bert_count_t bert;
 #if CONFIG_M17_PACKET
-	// A packet sync is not a frame by itself. The bytes wait for the next packet sync one frame later, or,
-	// when this frame is the whole packet (pkt_last), for the end marker. The CRC covers all of them (spec 5.2).
-	bool pkt_pend;
-	bool pkt_last;
-	uint32_t pkt_t;
+	uint8_t pkt_phase;
+	uint32_t pkt_t;		// start of the LSF or the most recent provisional packet frame
 	uint16_t pkt_len;
 	uint8_t pkt_next;
-	uint8_t pkt[825];
+	uint8_t pkt[M17_PACKET_MAX_BYTES];
+	m17_packet_rx_stats_t pkt_stats;
 #endif
 	m17_fec_work_t work;
 	const m17_engine_hooks_t *hooks;	// NULL: nothing is called
@@ -74,6 +93,10 @@ void m17_rx_on_gap(m17_rx_t *rx);
 void m17_rx_on_lock(m17_rx_t *rx);
 void m17_rx_on_lost(m17_rx_t *rx);
 void m17_rx_on_eot(m17_rx_t *rx);
+
+#if CONFIG_M17_PACKET
+void m17_rx_packet_end(m17_rx_t *rx);
+#endif
 
 extern const air_mode_t m17_air_mode;
 

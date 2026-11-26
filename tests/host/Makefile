@@ -152,6 +152,11 @@ m17EngineTest: m17EngineTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(CORE)/air
                $(CORE)/air/air_softmodem.c $(CORE)/air/air_softmodem.h
 	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17EngineTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
 
+TESTS   += m17PacketRxTest
+m17PacketRxTest: m17PacketRxTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h) \
+                 $(CORE)/air/air_softmodem.c
+	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17PacketRxTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
+
 # The radio module's lend, without the state machine: a fake vocoder block and a fake P25 block
 TESTS   += m17RadioTest
 m17RadioTest: m17RadioTest.c $(M17ENG) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(CORE)/air/air_session.c \
@@ -284,6 +289,7 @@ run: $(TESTS)
 	./nxdnTest | tail -1
 	./m17FrameTest
 	./m17EngineTest
+	./m17PacketRxTest
 	./m17RadioTest
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest

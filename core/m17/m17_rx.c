@@ -43,8 +43,7 @@ static void finish(m17_rx_t *rx)
 	rx->meta_have = 0;
 	rx->lich_next = 0;
 #if CONFIG_M17_PACKET
-	rx->pkt_pend = false;
-	rx->pkt_last = false;
+	rx->pkt_phase = M17_PKT_NONE;
 #endif
 	memset(rx->have, 0, sizeof rx->have);
 	memset(rx->lsf, 0, sizeof rx->lsf);
@@ -191,6 +190,9 @@ void m17_rx_on_lich(m17_rx_t *rx, uint8_t counter, const uint8_t chunk[5])
 void m17_rx_on_gap(m17_rx_t *rx)
 {
 	rx->lich_next = 0;
+#if CONFIG_M17_PACKET
+	m17_rx_packet_end(rx);
+#endif
 }
 
 void m17_rx_on_lock(m17_rx_t *rx)
@@ -206,9 +208,9 @@ void m17_rx_on_lost(m17_rx_t *rx)
 {
 	rx->bert_run = 0;
 #if CONFIG_M17_PACKET
-	// Each packet frame but the last is not yet a frame, so the framer drops its lock. The bytes stay: the next
-	// packet sync, or the end marker of a one-frame packet, is what proves them. A real gap clears them in finish.
-	if (rx->pkt_pend)
+	// Refusing the first provisional frame drops the LSF lock. A provider gap is reported separately,
+	// even after the framer has gone back to searching.
+	if (rx->pkt_phase == M17_PKT_MORE || rx->pkt_phase == M17_PKT_ONE)
 		return;
 #endif
 	if (rx->in_call)
@@ -219,5 +221,13 @@ void m17_rx_on_eot(m17_rx_t *rx)
 {
 	finish(rx);
 }
+
+#if CONFIG_M17_PACKET
+void m17_rx_packet_end(m17_rx_t *rx)
+{
+	if (rx->pkt_phase != M17_PKT_NONE)
+		finish(rx);
+}
+#endif
 
 #endif

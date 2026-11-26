@@ -80,10 +80,21 @@ static bool bert_prbs(m17_rx_t *rx, const uint8_t pay[M17_PAYLOAD_BYTES])
 	return true;
 }
 
+static uint16_t bert_lock(m17_rx_t *rx, uint8_t run)
+{
+#if CONFIG_M17_PACKET
+	m17_rx_packet_end(rx);
+#endif
+	rx->bert_run = run;
+	rx->bert_have = true;
+	m17_rx_on_lock(rx);
+	return M17_FRAME_SYMS;
+}
+
 static bool coast_ok(const m17_rx_t *rx)
 {
 #if CONFIG_M17_PACKET
-	if (rx->pkt_pend)
+	if (rx->pkt_phase != M17_PKT_NONE)
 		return false;
 #endif
 	return rx->bert_run > 0 || rx->in_call;
@@ -105,11 +116,15 @@ static bool preamble_run(const air_frame_t *f)
 }
 
 #if CONFIG_M17_PACKET
-// A following frame one slot later: 192 symbols is 40 ms, and the chunk clock is not exact.
-static bool frame_later(const air_frame_t *f, uint32_t t)
-{
-	uint32_t d = f->t_us - t;
+#define M17_PACKET_FEC_LIMIT	20
 
+// 192 symbols is 40 ms. Allow for timing recovery and ignore replayed syncs before the next slot.
+static bool packet_slot(m17_rx_t *rx, const air_frame_t *f)
+{
+	int32_t d = (int32_t)(f->t_us - rx->pkt_t);
+
+	if (d > 41000)
+		m17_rx_packet_end(rx);
 	return d >= 39000 && d <= 41000;
 }
 
@@ -124,14 +139,64 @@ static bool packet_crc_ok(const m17_rx_t *rx)
 }
 
 // Type byte first, the two CRC bytes removed. The buffer stays until the caller has read it.
-static void give_packet(m17_rx_t *rx)
+static bool give_packet(m17_rx_t *rx)
 {
-	if (!packet_crc_ok(rx))
-		return;
-	if (rx->hooks && rx->hooks->rx_packet && m17_rx_can_passes(rx))
+	if (!packet_crc_ok(rx)) {
+		rx->pkt_stats.crc_fail++;
+		m17_rx_packet_end(rx);
+		return false;
+	}
+	rx->pkt_phase = M17_PKT_NONE;
+	rx->pkt_stats.crc_ok++;
+	if (!m17_rx_can_passes(rx))
+		rx->pkt_stats.can_reject++;
+	else if (rx->hooks && rx->hooks->rx_packet)
 		rx->hooks->rx_packet(rx->pkt, (uint16_t)(rx->pkt_len - 2), rx->ctx);
-	rx->pkt_pend = false;
-	rx->pkt_last = false;
+	return true;
+}
+
+static uint16_t packet_head(m17_rx_t *rx, const air_frame_t *f, const uint8_t pay[M17_PAYLOAD_BYTES])
+{
+	uint8_t data[M17_PACKET_FRAME_BYTES], fn, vb;
+	bool last;
+
+	if (rx->pkt_phase == M17_PKT_NONE || !packet_slot(rx, f))
+		return 0;
+
+	int errs = m17_packet_decode(pay, &rx->work, data, &fn, &last, &vb);
+
+	if (errs >= 0) {
+		rx->pkt_stats.fec_samples++;
+		if (errs > rx->pkt_stats.fec_peak)
+			rx->pkt_stats.fec_peak = (uint16_t)errs;
+	}
+	if (errs < 0 || errs > M17_PACKET_FEC_LIMIT) {
+		rx->pkt_stats.fec_reject++;
+		m17_rx_packet_end(rx);
+		return 0;
+	}
+
+	uint16_t n = last ? vb : M17_PACKET_FRAME_BYTES;
+	bool first = rx->pkt_phase == M17_PKT_LSF;
+
+	if (rx->pkt_phase == M17_PKT_ONE || (!last && fn != rx->pkt_next) ||
+	    n == 0 || n > M17_PACKET_FRAME_BYTES || (uint32_t)rx->pkt_len + n > sizeof rx->pkt) {
+		m17_rx_packet_end(rx);
+		return 0;
+	}
+	memcpy(rx->pkt + rx->pkt_len, data, n);
+	rx->pkt_len = (uint16_t)(rx->pkt_len + n);
+	rx->pkt_t = f->t_us;
+	rx->pkt_next++;
+	if (!last) {
+		rx->pkt_phase = M17_PKT_MORE;
+		return 0;
+	}
+	if (first) {
+		rx->pkt_phase = M17_PKT_ONE;
+		return 0;
+	}
+	return give_packet(rx) ? M17_FRAME_SYMS : 0;
 }
 #endif
 
@@ -174,8 +239,7 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 				rx->bert_run = 0;
 			return 0;
 		}
-		m17_rx_on_lock(rx);
-		return M17_FRAME_SYMS;
+		return bert_lock(rx, rx->bert_run);
 	}
 	rx->bert_run = 0;
 	switch (f->sync_id) {
@@ -185,6 +249,14 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 		if (m17_lsf_decode(pay, &rx->work, lsf) < 0)
 			return 0;
 		m17_rx_on_lsf(rx, lsf);
+#if CONFIG_M17_PACKET
+		if (!(m17_rx_type(rx) & M17_TYPE_STREAM)) {
+			rx->pkt_phase = M17_PKT_LSF;
+			rx->pkt_t = f->t_us;
+			rx->pkt_len = 0;
+			rx->pkt_next = 0;
+		}
+#endif
 		return M17_FRAME_SYMS;
 	}
 	case M17_SYNC_ID_STREAM: {
@@ -192,73 +264,35 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 
 		if (lich_ok(pay, &counter, chunk) < 0)
 			return 0;
+#if CONFIG_M17_PACKET
+		// Stream takeover invalidates packet provenance without ending the current call.
+		rx->pkt_phase = M17_PKT_NONE;
+#endif
 		m17_rx_on_lich(rx, counter, chunk);
 		return M17_FRAME_SYMS;
 	}
-	case M17_SYNC_ID_PACKET: {
+	case M17_SYNC_ID_PACKET:
 #if CONFIG_M17_PACKET
-		uint8_t data[25], fn, vb;
-		bool last;
-		uint16_t n;
-		bool follow;
-
-		// The decoder always returns a byte string, so one sync is not proof. The next packet sync has to
-		// land a frame later, and the CRC over the gathered bytes has to match (spec 5.2).
-		if (m17_packet_decode(pay, &rx->work, data, &fn, &last, &vb) < 0)
-			return 0;
-		n = last ? vb : 25;
-		if (n == 0 || n > 25) {
-			rx->pkt_pend = false;
-			rx->pkt_last = false;
-			return 0;
-		}
-		follow = rx->pkt_pend && frame_later(f, rx->pkt_t);
-		if (!follow || (!last && fn != rx->pkt_next) || (uint32_t)rx->pkt_len + n > sizeof rx->pkt) {
-			if (!last && fn != 0) {
-				rx->pkt_pend = false;
-				rx->pkt_last = false;
-				return 0;
-			}
-			memcpy(rx->pkt, data, n);
-			rx->pkt_len = n;
-			rx->pkt_next = 1;
-			rx->pkt_t = f->t_us;
-			rx->pkt_pend = true;
-			// A one-frame packet never sees a second packet sync. The end marker is what confirms it.
-			rx->pkt_last = last;
-			return 0;
-		}
-		memcpy(rx->pkt + rx->pkt_len, data, n);
-		rx->pkt_len = (uint16_t)(rx->pkt_len + n);
-		rx->pkt_t = f->t_us;
-		rx->pkt_next++;
-		if (!last) {
-			rx->pkt_last = false;
-			return 0;
-		}
-		if (!packet_crc_ok(rx)) {
-			rx->pkt_pend = false;
-			rx->pkt_last = false;
-			return 0;
-		}
-		give_packet(rx);
-		m17_rx_on_lock(rx);
-		return M17_FRAME_SYMS;
+		return packet_head(rx, f, pay);
 #else
 		return 0;
 #endif
-	}
 	case M17_SYNC_ID_BERT_PRE:
 		if (!bert_prbs(rx, pay))
 			return 0;
-		rx->bert_run = 1;
-		m17_rx_on_lock(rx);
-		return M17_FRAME_SYMS;
+		return bert_lock(rx, 1);
 	case M17_SYNC_ID_EOT:
-		// A one-frame packet is still pending: the end marker one frame later, its second word, and the CRC.
 #if CONFIG_M17_PACKET
-		if (rx->pkt_pend && rx->pkt_last && frame_later(f, rx->pkt_t) && end_word_at(f, M17_SYNC_SYMS))
-			give_packet(rx);
+		if (rx->pkt_phase != M17_PKT_NONE) {
+			if (!packet_slot(rx, f))
+				return 0;
+			if (!end_word_at(f, M17_SYNC_SYMS)) {
+				m17_rx_packet_end(rx);
+				return 0;
+			}
+			if (rx->pkt_phase == M17_PKT_ONE && !give_packet(rx))
+				return 0;
+		}
 #endif
 		// Only while a call is locked, and only when the next word is an end word too.
 		if (!rx->in_call || !end_word_at(f, M17_SYNC_SYMS))
@@ -306,6 +340,13 @@ static void rx_lost(void *ctx)
 	m17_rx_on_lost(ctx);
 }
 
+#if CONFIG_M17_PACKET
+static void rx_discontinuity(void *ctx)
+{
+	m17_rx_packet_end(ctx);
+}
+#endif
+
 const air_mode_t m17_air_mode = {
 	.name = "M17",
 	.profile = {
@@ -343,6 +384,9 @@ const air_mode_t m17_air_mode = {
 	.head = rx_head,
 	.rx_frame = rx_frame,
 	.rx_lost = rx_lost,
+#if CONFIG_M17_PACKET
+	.rx_discontinuity = rx_discontinuity,
+#endif
 };
 
 #endif

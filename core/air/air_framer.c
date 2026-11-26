@@ -456,7 +456,7 @@ void air_framer_init(air_framer_t *fr, const air_mode_t *mode, void *ctx, uint8_
 		if (need > AIR_SYNC_SYMS_MAX && (uint16_t)need > fr->ring && (uint16_t)need <= buf_syms)
 			fr->ring = (uint16_t)need;
 	}
-	air_framer_rx_reset(fr);
+	search_start(fr);
 }
 
 void air_framer_rx_reset(air_framer_t *fr)
@@ -465,6 +465,8 @@ void air_framer_rx_reset(air_framer_t *fr)
 	fr->run = 0;
 	fr->reg = 0;
 	fr->relock = false;
+	if (fr->mode->rx_discontinuity)
+		fr->mode->rx_discontinuity(fr->ctx);
 }
 
 void air_framer_rx(air_framer_t *fr, const air_chunk_t *c)
@@ -473,6 +475,8 @@ void air_framer_rx(air_framer_t *fr, const air_chunk_t *c)
 		// The count from the last sync means nothing across a hole
 		drop(fr);
 		fr->run = 0;
+		if (fr->mode->rx_discontinuity)
+			fr->mode->rx_discontinuity(fr->ctx);
 		if (c->flags & AIR_CHUNK_NO_SIGNAL)
 			return;
 	}

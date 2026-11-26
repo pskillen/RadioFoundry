@@ -51,6 +51,8 @@ typedef struct {
 	// The signal is gone (no syncs, a gap in the symbols, the head hook's 0 on a unit behind one it took): searching
 	// again. Not called for a sync the head hook never agreed to
 	void (*rx_lost)(void *ctx);
+	// A provider gap or explicit RX reset, including while searching.
+	void (*rx_discontinuity)(void *ctx);
 } air_mode_t;
 
 typedef struct {
