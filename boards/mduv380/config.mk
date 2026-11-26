@@ -19,6 +19,8 @@ MAXIMAL_VARS := LTO=1
 # default, so that the maximal build keeps M17 and still fits the app region; Chinese stays out too
 # (its glyph table does not fit beside the rest)
 MAXIMAL_SKIP := NET_PPP APRS_IGATE LANG_IT LANG_DEFAULT_IT LANG_FR LANG_ZH LANG_DEFAULT_ZH
+# The web pages fit only compressed beside M17, so ci builds no configuration without the compression
+BOARD_REQUIRED := NET_HTTP_GZIP
 
 # What the radio's hardware can't do, one switch per line with the reason (tools/boards.py checks there is one;
 # docs/build-config.md, "Unsupported, not written, unconfirmed"): ci's maximal configuration leaves these off
