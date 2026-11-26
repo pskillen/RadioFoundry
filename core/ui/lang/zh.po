@@ -4855,6 +4855,11 @@ msgid "No TX frequency"
 msgstr "无发射频率"
 
 #: core/ui/ui_screens.c
+msgctxt "QUICK_VALUE_ALL"
+msgid "All"
+msgstr "全部"
+
+#: core/ui/ui_screens.c
 msgctxt "HOME_CHIP_BROADCAST_FM"
 msgid "Broadcast FM"
 msgstr "调频广播"
@@ -4970,9 +4975,19 @@ msgid "Air bench: PTT off"
 msgstr "空口测试台：PTT 关闭"
 
 #: core/ui/ui_screens.c
+msgctxt "M17_DENY_RX_ONLY"
+msgid "M17: receive only"
+msgstr "M17: 仅接收"
+
+#: core/ui/ui_screens.c
 msgctxt "DENY_WHY_AIR_NO_TX"
 msgid "This mode: receive only"
 msgstr "此模式：仅接收"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_DENY_CALLSIGN"
+msgid "M17: set your callsign"
+msgstr "M17: 请先设置呼号"
 
 #: core/ui/ui_screens.c
 msgctxt "DENY_WHY_P25T_NO_CC"
@@ -5663,11 +5678,6 @@ msgstr "接收亚音"
 msgctxt "QUICK_VALUE_COPY"
 msgid "Copy"
 msgstr "复制"
-
-#: core/ui/ui_screens.c
-msgctxt "QUICK_VALUE_ALL"
-msgid "All"
-msgstr "全部"
 
 #: core/ui/ui_screens.c
 msgctxt "QUICK_HINT_SPLIT"

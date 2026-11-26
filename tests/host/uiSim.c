@@ -227,6 +227,8 @@ static const struct { const char *name, *script; } gallery[] = {
 	{ "m17_callsign_fallback", "m17 ok 7 0" },
 	{ "m17_channel", "m17 ok 5 ok down down ok down" },
 	{ "m17_channel_destination", "m17 ok 5 ok down down ok down down down ok back back back 2 2" },
+	{ "m17_home", "m17 dlmode:m17 m17tx:3,M17-M17_A" },
+	{ "m17_tx_denied", "m17 dlmode:m17 m17deny:call" },
 #endif
 	{ "volume_muted", "softvol volkey down down down down down down down down" },
 	{ "hotspot", "hotspot:on" },

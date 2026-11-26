@@ -1187,6 +1187,11 @@ static void draw_talk(const radio_view_t *v, bool label_first)
 			sb_str(&b, "TG ");
 		sb_u32(&b, v->nxdn.talk, 1);
 #endif
+#if CONFIG_M17
+	} else if (v->ch.mode == RADIO_MODE_M17) {
+		sb_str(&b, "CAN ");
+		sb_u32(&b, v->m17.can, 1);
+#endif
 	} else {
 		// " MHz" goes before the frequency is cut (font.h alternates)
 		sb_str(&b, TEXT_ALT_OPEN);
@@ -1195,6 +1200,19 @@ static void draw_talk(const radio_view_t *v, bool label_first)
 		sb_freq(&b, v->ch.tx_hz);
 		sb_str(&b, TEXT_ALT_CLOSE);
 	}
+#if CONFIG_M17
+	// "CAN 3" then the arrow then who PTT calls. A heard address stays on the call line, not here.
+	if (v->ch.mode == RADIO_MODE_M17 && !v->ch.rx_only && v->ch.tx_hz != 0) {
+		const char *who = v->m17.tx_dst[0] == '\0' || strcmp(v->m17.tx_dst, "ALL") == 0 ?
+			TR(QUICK_VALUE_ALL, "All") : v->m17.tx_dst;
+		int x = gfx_text(f, 0, L->talk_y, buf, c);
+		char fit[40];
+		x = gfx_text(f, x, L->talk_y, GLYPH_ARROW, ui_col.dim);
+		gfx_text_fit(f, who, gfx_width() - x, fit, sizeof fit);
+		gfx_text(f, x, L->talk_y, fit, c);
+		return;
+	}
+#endif
 	// Too wide: shorter text, never a smaller font
 	int x = gfx_text(f, 0, L->talk_y, GLYPH_ARROW, ui_col.dim);	// no space, on purpose: as on DMR's talk line
 	char fit[40];
@@ -1256,6 +1274,19 @@ static void draw_chips(const radio_view_t *v, const ui_state_t *s)
 #endif
 		return;
 	}
+#if CONFIG_M17
+	if (v->ch.mode == RADIO_MODE_M17) {
+		if (pw_temp)
+			x = gfx_text(f, x, y, GLYPH_DOT, ui_col.warn);
+		x = gfx_text(f, x, y, ui_power_name(v->power, v->ch.tx_hz), pw_temp ? ui_col.warn : ui_col.fg) + f->w;
+		sb_init(&b, buf, sizeof buf);
+		sb_str(&b, "CAN ");
+		sb_u32(&b, v->m17.can, 1);
+		if (x + gfx_text_width(f, buf) <= w)
+			gfx_text(f, x, y, buf, ui_col.fg);
+		return;
+	}
+#endif
 	if (v->ch.mode == RADIO_MODE_NXDN) {
 		// The same for NXDN: the power, the RAN sent and the rate
 		if (pw_temp)
@@ -1399,7 +1430,12 @@ static const char *deny_reason(const radio_view_t *v, char *buf, size_t len)
 	case TXDENY_HWOPT: hwopt_needed(&b); break;
 	case TXDENY_REFUSED: sb_str(&b, TR(DENY_WHY_RADIO_REFUSED, "Radio refused to send")); break;
 	case TXDENY_BENCH: sb_str(&b, TR(DENY_WHY_AIR_BENCH, "Air bench: PTT off")); break;
-	case TXDENY_AIR_NO_TX: sb_str(&b, TR(DENY_WHY_AIR_NO_TX, "This mode: receive only")); break;
+	case TXDENY_AIR_NO_TX:
+		sb_str(&b, CONFIG_M17 && v->ch.mode == RADIO_MODE_M17 ?
+			TR(M17_DENY_RX_ONLY, "M17: receive only") :
+			TR(DENY_WHY_AIR_NO_TX, "This mode: receive only"));
+		break;
+	case TXDENY_M17_CALL: sb_str(&b, TR(M17_DENY_CALLSIGN, "M17: set your callsign")); break;
 #if CONFIG_P25_TRUNK || CONFIG_DMR_TRUNK
 	case TXDENY_TRUNK:
 		switch (trunk_why(v)) {

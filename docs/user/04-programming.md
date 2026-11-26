@@ -234,6 +234,10 @@ Pick **M17** in the channel form's **Mode**. **Talk to** sets the destination in
 On a stored M17 channel the radio edits **CAN**, **CAN squelch** and **Talk to** in the channel's own settings.
 A new M17 channel starts at CAN 0, with squelch on, talking to everyone.
 
+On the home screen an M17 channel shows **M17**, a line **CAN n** then the destination (everyone is **All**), and
+**CAN n** beside the power. The VFO's mode cycle includes M17 on a radio that carries it. Pressing PTT with no
+callsign shows **M17: set your callsign**. A radio that can hear M17 but not send it shows **M17: receive only**.
+
 Set your **M17 callsign** on the **Radio** tab, or on the radio under **Settings > My radio > M17 callsign**. If it
 is blank, the radio uses the first word of the radio name, up to a space or `-`. M17 voice transmission requires a
 valid callsign from one of these sources.

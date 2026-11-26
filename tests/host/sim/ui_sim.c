@@ -195,6 +195,14 @@ bool sim_text_bounds(const char *text, int *x, int *y, int *w, int *h)
 	return false;
 }
 
+bool sim_text_on_line(const char *text, int y)
+{
+	for (int i = 0; i < live_n; i++)
+		if (strcmp(live[i].s, text) == 0 && live[i].y0 == y)
+			return true;
+	return false;
+}
+
 void gfx_draw_trace(gfx_trace_kind_t kind, int x, int y, int w, int h, const int clip[4], const char *s)
 {
 	int vw = gfx_width(), vh = gfx_height();
@@ -3601,6 +3609,37 @@ static bool run_token(char *t, char *err, size_t len)
 		advance(100);
 		return true;
 	}
+#if CONFIG_M17
+	if (strcmp(t, "m17rxaddr") == 0 && arg != NULL) {
+		snprintf(view.m17.dest, sizeof view.m17.dest, "%s", arg);
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17tx") == 0 && arg != NULL) {	// the destination PTT calls: can,text (a _ is a space)
+		unsigned can = 0;
+		char dst[10];
+		if (sscanf(arg, "%u,%9s", &can, dst) != 2) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		for (char *p = dst; *p != '\0'; p++)
+			if (*p == '_')
+				*p = ' ';
+		view.m17.can = (uint8_t)can;
+		snprintf(view.m17.tx_dst, sizeof view.m17.tx_dst, "%s", dst);
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17deny") == 0 && arg != NULL) {	// call: no callsign. rx: the provider is receive-only
+		view.state = RS_TX_DENIED;
+		view.tx_deny = strcmp(arg, "rx") == 0 ? TXDENY_AIR_NO_TX : TXDENY_M17_CALL;
+		changed();
+		advance(100);
+		return true;
+	}
+#endif
 	if (strcmp(t, "dlvfo") == 0) {	// the debug link tunes the VFO
 		char *end = NULL;
 		unsigned long hz = arg != NULL ? strtoul(arg, &end, 10) : 0;

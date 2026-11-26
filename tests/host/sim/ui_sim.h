@@ -73,6 +73,7 @@ void sim_worst(bool on);
 int sim_layout_issues(char out[][160], int max);
 bool sim_text_has_color(const char *text, uint16_t color);
 bool sim_text_bounds(const char *text, int *x, int *y, int *w, int *h);
+bool sim_text_on_line(const char *text, int y);
 
 // State for checks
 typedef struct {

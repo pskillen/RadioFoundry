@@ -289,6 +289,25 @@ static const flow_t flows[] = {
 	  "screen=channel focus=Mode shows=M17 shows=CAN", 1, false },
 	{ "M17 mode: saved as M17", "m17 ok 5 ok down down ok", "long:ok",
 	  "screen=channel writes=1 toast=Saved_channel_3 shows=M17", 1, true },
+	{ "M17 home: CAN and destination", "m17 dlmode:m17 m17tx:3,M17-M17_A", "",
+	  "screen=home shows=CAN_3 shows=M17-M17_A", 0, false },
+	{ "M17 home: received address does not change TX", "m17 dlmode:m17 m17tx:3,M17-M17_A m17rxaddr:OTHER expect:screen=home expect:shows=M17-M17_A",
+	  "m17rxaddr:ANOTHER", "screen=home shows=M17-M17_A hides=ANOTHER", 0, false },
+	{ "M17 home: VFO cycle in and out", "m17 ok 4 up ok quick 4 back",
+	  "quick 4 back expect:screen=home expect:mode=m17 expect:shows=M17 quick 4 back",
+	  "screen=home mode=fm vfo=1", 6, false },
+	{ "M17 home: stored channel", "m17 chkind:3,m17 dlpos:3 dlmode:m17 m17tx:3,M17-M17_A", "",
+	  "screen=home shows=M17 shows=CAN_3", 0, false },
+	{ "M17 home: broadcast is All", "m17 dlmode:m17", "",
+	  "screen=home shows=CAN_0 shows=All", 0, false },
+	{ "M17 home: VFO leaves M17", "m17 dlmode:m17 m17tx:3,M17-M17_A", "dlmode:fm",
+	  "screen=home hides=CAN_3", 1, false },
+	{ "M17 PTT: set your callsign", "m17 dlmode:m17 m17deny:call", "",
+	  "screen=home shows=M17:_set_your_callsign", 0, false },
+	{ "M17 PTT: receive only", "m17 dlmode:m17 m17deny:rx", "",
+	  "screen=home shows=M17:_receive_only", 0, false },
+	{ "M17 dual watch: one side", "m17 dlmode:m17 m17tx:3,M17-M17_A", "quick 7",
+	  "screen=home dual=1 shows=M17", 2, false },
 #endif
 	// An own ID typed in P25 past NXDN's range is kept when the Mode row makes the channel NXDN: Save refuses it
 	{ "E Mode: NXDN with an ID past 65519 not saved",
@@ -2399,6 +2418,32 @@ static int check_satellite_path_endpoint_colors(void)
 #endif
 
 #if CONFIG_M17 && CONFIG_UI_COLOR
+static bool m17_destination_fitted;
+
+static void m17_fit(const char *src, const char *out)
+{
+	if (strcmp(src, "M17-M17 A") == 0 && strcmp(src, out) != 0)
+		m17_destination_fitted = true;
+}
+
+static int check_m17_narrow_home(void)
+{
+	char err[160] = "", issues[SIM_LAYOUT_MAX][160];
+	int x, y, w, h;
+
+	sim_reset(sim_geom_find("80x64"), SIM_MAP_M);
+	m17_destination_fitted = false;
+	sim_set_fit_hook(m17_fit);
+	bool ok = sim_run("m17 dlmode:m17 m17tx:15,M17-M17_A expect:screen=home", err, sizeof err);
+	sim_set_fit_hook(NULL);
+	if (!ok || !m17_destination_fitted || !sim_text_bounds("1W", &x, &y, &w, &h) ||
+	    !sim_text_on_line("CAN 15", y) || sim_layout_issues(issues, SIM_LAYOUT_MAX) != 0) {
+		printf("FAIL M17 narrow home: %s fitted=%d\n", err, m17_destination_fitted);
+		return 1;
+	}
+	return 0;
+}
+
 // The fallback value is dim only while the row is not focused (a focused row redraws it in the focus color)
 static int check_m17_callsign_dim(void)
 {
@@ -2418,6 +2463,8 @@ int main(void)
 	if (check_name_is_id() != 0)
 		return 1;
 #if CONFIG_M17 && CONFIG_UI_COLOR
+	if (check_m17_narrow_home() != 0)
+		return 1;
 	if (check_m17_callsign_dim() != 0)
 		return 1;
 #endif

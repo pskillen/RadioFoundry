@@ -4853,6 +4853,11 @@ msgid "No TX frequency"
 msgstr "Nessuna frequenza TX"
 
 #: core/ui/ui_screens.c
+msgctxt "QUICK_VALUE_ALL"
+msgid "All"
+msgstr "Tutti"
+
+#: core/ui/ui_screens.c
 msgctxt "HOME_CHIP_BROADCAST_FM"
 msgid "Broadcast FM"
 msgstr "FM broadcast"
@@ -4968,9 +4973,19 @@ msgid "Air bench: PTT off"
 msgstr "Banco aria: PTT off"
 
 #: core/ui/ui_screens.c
+msgctxt "M17_DENY_RX_ONLY"
+msgid "M17: receive only"
+msgstr "M17: solo ricezione"
+
+#: core/ui/ui_screens.c
 msgctxt "DENY_WHY_AIR_NO_TX"
 msgid "This mode: receive only"
 msgstr "Questo modo: solo RX"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_DENY_CALLSIGN"
+msgid "M17: set your callsign"
+msgstr "M17: imposta il nominativo"
 
 #: core/ui/ui_screens.c
 msgctxt "DENY_WHY_P25T_NO_CC"
@@ -5661,11 +5676,6 @@ msgstr "Tono RX"
 msgctxt "QUICK_VALUE_COPY"
 msgid "Copy"
 msgstr "Copia"
-
-#: core/ui/ui_screens.c
-msgctxt "QUICK_VALUE_ALL"
-msgid "All"
-msgstr "Tutti"
 
 #: core/ui/ui_screens.c
 msgctxt "QUICK_HINT_SPLIT"

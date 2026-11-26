@@ -38,7 +38,8 @@ typedef struct {
 	uint8_t can;		// the CAN in force (the channel's, not the one heard)
 	uint16_t fit;		// what the board's provider gives the profile (AIR_FIT_*), 0: nothing
 	char caller[RADIO_M17_CALL_LEN];	// empty until the link setup frame's CRC is 0
-	char dest[RADIO_M17_CALL_LEN];
+	char dest[RADIO_M17_CALL_LEN];	// the address heard, not the one PTT calls
+	char tx_dst[RADIO_M17_CALL_LEN];	// the destination PTT calls; ALL is broadcast
 } radio_m17_view_t;
 
 // Counters for the debug link (any task reads them; the radio task writes them while M17 runs)
@@ -81,6 +82,9 @@ void radio_m17_retuned(void);
 void radio_m17_apply(const channel_t *ch, uint16_t number);
 // Every tick: the view and the counters. True when the view changed
 bool radio_m17_poll(radio_m17_view_t *v);
+// Why the last prepare refused: 0, or 1 when a voice or packet transmission has no callsign. Anything else stays 0
+// so the caller keeps the generic refusal. BERT does not set this.
+uint8_t radio_m17_prepare_deny(void);
 
 void radio_m17_stats(radio_m17_stats_t *out);
 void radio_m17_reset_stats(void);

@@ -317,12 +317,25 @@ static void show_addr(const uint8_t raw[M17_ADDR_BYTES], char *out)
 		out[0] = '\0';
 }
 
+static void put_dst(uint64_t dst, char *out)
+{
+	uint8_t b[M17_ADDR_BYTES];
+	uint64_t v = dst == 0 ? M17_ADDR_BROADCAST : dst;
+
+	for (int i = (int)M17_ADDR_BYTES - 1; i >= 0; i--) {
+		b[i] = (uint8_t)v;
+		v >>= 8;
+	}
+	show_addr(b, out);
+}
+
 static void settings_view(radio_m17_view_t *v)
 {
 	const radio_m17_settings_t *s = blk != NULL ? &applied : &set;
 
 	v->can = s->can;
 	v->fit = (uint16_t)radio_m17_fit();
+	put_dst(s->dst, v->tx_dst);
 }
 
 bool radio_m17_poll(radio_m17_view_t *v)
@@ -362,15 +375,26 @@ static bool m17_no_tx(void)
 	return blk != NULL && (blk->session.fit & AIR_FIT_TX) == 0;
 }
 
+static uint8_t prepare_deny;
+
+uint8_t radio_m17_prepare_deny(void)
+{
+	return prepare_deny;
+}
+
 // A voice or packet transmission needs a callsign. BERT does not, and a session with none still runs.
+// A missing callsign is named. A failed engine start stays unnamed: there is no separate voice-memory failure yet.
 static bool m17_tx_prepare(void)
 {
 	m17_block_t *b = blk;
 
+	prepare_deny = 0;
 	if (b == NULL || !air_session_is_open(&b->session))
 		return false;
-	if (b->tx.cfg.tx_kind != M17_TX_BERT && !callsign_ok())
+	if (b->tx.cfg.tx_kind != M17_TX_BERT && !callsign_ok()) {
+		prepare_deny = 1;
 		return false;
+	}
 	if (!m17_engine_tx_start(&b->tx, 0, NULL, 0))
 		return false;
 	return air_session_tx_prime(&b->session);

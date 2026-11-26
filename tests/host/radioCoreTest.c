@@ -433,13 +433,14 @@ static void air_step1(uint8_t i)
 
 // 4800 symbols/s (P25, NXDN at 9600 bit/s): everything. 2400 symbols/s (NXDN at 4800 bit/s): what air_fit2400 says
 // for each provider (a provider that transmits a profile only, or receives it only)
+static uint32_t air_fit4800 = AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT;
 static uint32_t air_fit2400[2] = { AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT, AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT };
 static uint32_t air_fit(uint8_t i, const air_profile_t *pr)
 {
 	if (air_nofit) {
 		return 0;
 	}
-	return pr->sym_rate == 4800 ? AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT : pr->sym_rate == 2400 ? air_fit2400[i] : 0;
+	return pr->sym_rate == 4800 ? air_fit4800 : pr->sym_rate == 2400 ? air_fit2400[i] : 0;
 }
 static bool air_open(uint8_t i, air_event_cb_t cb, void *ctx)
 {
@@ -11845,8 +11846,14 @@ static void test_air_ops_m17(void)
 	CHECK((sm.view.m17.flags & RADIO_M17_ON) != 0);
 	req(RREQ_PTT, 1);
 	CHECK(sm.view.tx_deny != TXDENY_NO_CODEC);
-	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_REFUSED && radio_m17_running());
+	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_M17_CALL && radio_m17_running());
 	req(RREQ_PTT, 0);
+	CHECK(!hw.keyed);
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 2 }, 1) == DL_ST_OK);
+	CHECK(sm.view.state == RS_TX && hw.keyed);
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 3 }, 1) == DL_ST_OK);
+	run(800);
+	CHECK(sm.view.state == RS_IDLE && !hw.keyed);
 	// Op 44: settings, then BERT. A blank callsign still refuses voice and still sends BERT
 	CHECK(debuglink_is_feature_op(DL_OP_M17));
 	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 0, 16 }, 2) == DL_ST_BAD_ARG);
@@ -11865,6 +11872,15 @@ static void test_air_ops_m17(void)
 	CHECK(!radio_m17_bert_on());
 	run(800);		// the end frame finishes; the state stays TX until it does
 	CHECK(sm.view.state == RS_IDLE);
+	air_fit4800 = AIR_FIT_RX | AIR_FIT_SOFT;
+	start();
+	req(RREQ_VFO, 1);
+	req(RREQ_VFO_SET, 446100000);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	req(RREQ_PTT, 1);
+	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_AIR_NO_TX && !hw.keyed);
+	req(RREQ_PTT, 0);
+	air_fit4800 = AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT;
 	codec_present = was;
 }
 
@@ -11884,6 +11900,7 @@ static void test_m17_stored(void)
 	CHECK(sm.view.channel_number == 3 && sm.view.ch.mode == RADIO_MODE_M17 && radio_m17_running());
 	CHECK(radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch && s.dst == 0xED87Dull &&
 	      strcmp(s.callsign, "AB1CD") == 0);
+	CHECK(sm.view.m17.can == 3 && strcmp(sm.view.m17.tx_dst, "ECHO") == 0);
 	CHECK(strcmp(m17_name_seen, "Q0TEST") == 0);
 	m17_view_text(buf, sizeof buf);
 	CHECK(strstr(buf, "m17.run.can=3\nm17.run.squelch=0\nm17.run.dst=ECHO\nm17.run.call=AB1CD\n") != NULL);
@@ -11898,6 +11915,7 @@ static void test_m17_stored(void)
 	radio_m17_settings(&s);
 	CHECK(s.can == 7 && s.can_squelch);
 	CHECK(radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch && s.dst == 0xED87Dull);
+	CHECK(sm.view.m17.can == 3 && strcmp(sm.view.m17.tx_dst, "ECHO") == 0);
 	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){
 		0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 'T', 'E', 'S', 'T', 0, 0, 0, 0, 0 }, 18) == DL_ST_OK);
 	CHECK(radio_m17_in_force(&s) && strcmp(s.callsign, "TEST") == 0);
@@ -11907,12 +11925,13 @@ static void test_m17_stored(void)
 	req(RREQ_ZONE_POS, 2);
 	CHECK(radio_m17_in_force(&s) && s.callsign[0] == '\0');
 	req(RREQ_PTT, 1);
-	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_REFUSED);
+	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_M17_CALL);
 	req(RREQ_PTT, 0);
 
 	stored_m17[3] = (m17_chan_t){ 0, true, M17_ADDR_BROADCAST };
 	req(RREQ_ZONE_POS, 0);
 	req(RREQ_ZONE_POS, 2);
+	CHECK(sm.view.m17.can == 0 && strcmp(sm.view.m17.tx_dst, "ALL") == 0);
 	m17_view_text(buf, sizeof buf);
 	CHECK(strstr(buf, "m17.run.can=0\nm17.run.squelch=1\nm17.run.dst=ALL\nm17.run.call=\n") != NULL);
 
