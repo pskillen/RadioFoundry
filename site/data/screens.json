@@ -502,6 +502,24 @@
     "M17"
    ]
   },
+  "m17_message_reply": {
+   "group": "messages",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_message_to": {
+   "group": "messages",
+   "needs": [
+    "M17"
+   ]
+  },
+  "m17_message_view": {
+   "group": "messages",
+   "needs": [
+    "M17"
+   ]
+  },
   "channel_discard": {
    "group": "channels",
    "needs": [

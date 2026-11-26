@@ -11,6 +11,7 @@
 #include "radio/radio.h"
 
 #define SIM_M17_STORED_ECHO "m17 m17stored:3,ECHO"
+#define SIM_M17_MSG_SETUP "aprs:off m17 m17stored:3,ECHO m17txfit"
 
 // Display classes (information-architecture.md, wireframes) and key maps (7.1 - 7.5)
 typedef struct {

@@ -237,6 +237,9 @@ static const struct { const char *name, *script; } gallery[] = {
 	{ "m17_rx_via", SIM_M17_STORED_ECHO " m17rx:AB1CD,REF001,3,voice m17via:GW1ABC" },
 	{ "m17_talk_to_other", SIM_M17_STORED_ECHO " quick 8 up ok back back back back 6 long:1 long:7 1 1 6 long:1 long:7 0 2" },
 	{ "m17_tx_denied", "m17 dlmode:m17 m17deny:call" },
+	{ "m17_message_view", SIM_M17_MSG_SETUP " m17msg:AB1CD,Meet_at_north,1 wait:9000 ok 2 ok" },
+	{ "m17_message_to", SIM_M17_MSG_SETUP " ok 2 ok" },
+	{ "m17_message_reply", SIM_M17_MSG_SETUP " m17msg:AB1CD,Hello,0 wait:9000 ok 2 ctx" },
 #endif
 	{ "volume_muted", "softvol volkey down down down down down down down down" },
 	{ "hotspot", "hotspot:on" },
