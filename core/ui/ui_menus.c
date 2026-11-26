@@ -2972,6 +2972,13 @@ static const ui_scr_def_t m17_call_screen = {
 
 #endif
 
+#if CONFIG_CHANNEL_LIST || CONFIG_M17
+static void sb_onoff(sbuf_t *b, bool on)
+{
+	sb_str(b, on ? TR(VALUE_ON, "On") : TR(VALUE_OFF, "Off"));
+}
+#endif
+
 #if CONFIG_CHANNEL_LIST
 // ======================= Channels: every codeplug channel by number (hub 5) =======================
 // The raw row is the channel number - 1 (with CONFIG_CHANNEL_EDIT, raw 0 is "New from current" and the raw
@@ -3679,11 +3686,6 @@ static void sb_chinfo_zones(sbuf_t *b, uint16_t num)
 	sb_u32(b, found, 1);
 	sb_str(b, found == 1 ? TR(CHAN_UNIT_ZONE, " zone") : TR(CHAN_UNIT_ZONES, " zones"));
 	sb_str(b, TEXT_ALT_CLOSE);
-}
-
-static void sb_onoff(sbuf_t *b, bool on)
-{
-	sb_str(b, on ? TR(VALUE_ON, "On") : TR(VALUE_OFF, "Off"));
 }
 
 static void sb_ced_power(sbuf_t *b, int32_t level, uint32_t tx_hz)
@@ -8850,6 +8852,57 @@ static const radio_m17_selected_t *m17_talk_current(void)
 	return sel;
 }
 
+// CAN and its squelch use the same selection generation as Talk to. These screens cannot nest.
+static bool m17_can_is_squelch(void)
+{
+	return ui_frame()->scr == SCR_M17_CAN_SQUELCH;
+}
+
+static void m17_can_enter(void)
+{
+	const radio_m17_selected_t *sel = ui_m17_selected(ui_view());
+	m17_talk_generation = sel != NULL ? sel->generation : 0;
+	if (sel != NULL)
+		ui_frame()->focus = m17_can_is_squelch() ? sel->can_squelch : sel->can;
+}
+
+static uint16_t m17_can_count(void)
+{
+	return m17_can_is_squelch() ? 2 : RADIO_M17_CAN_MAX + 1;
+}
+
+static void m17_can_item(uint16_t i, ui_item_t *it)
+{
+	sbuf_t b;
+	sb_init(&b, it->label, sizeof it->label);
+	if (m17_can_is_squelch())
+		sb_onoff(&b, i != 0);
+	else
+		sb_u32(&b, i, 1);
+}
+
+static void m17_can_select(uint16_t i, bool hold)
+{
+	if (hold || m17_talk_current() == NULL)
+		return;
+	if (radio_req_m17_vfo_can(m17_talk_generation, m17_can_is_squelch(), (uint8_t)i))
+		ui_pop();
+	else
+		ui_toast(TR(MSG_M17_RESULT_BUSY, "Channel busy: try again"));
+}
+
+static const ui_scr_def_t m17_can_screen = {
+	.name = "m17-can", .flags = SF_LIST | SF_FIELD, .prefix = TRN(M17_LABEL_CAN, "CAN"),
+	.hint = TRN(HINT_OK_CHOOSE_BACK_CANCELS, "OK choose  Back cancel"),
+	.count = m17_can_count, .item = m17_can_item, .select = m17_can_select, .enter = m17_can_enter,
+};
+
+static const ui_scr_def_t m17_can_squelch_screen = {
+	.name = "m17-can-squelch", .flags = SF_LIST | SF_FIELD, .prefix = TRN(M17_LABEL_CAN_SQUELCH, "CAN squelch"),
+	.hint = TRN(HINT_OK_CHOOSE_BACK_CANCELS, "OK choose  Back cancel"),
+	.count = m17_can_count, .item = m17_can_item, .select = m17_can_select, .enter = m17_can_enter,
+};
+
 static void m17_talk_submit(const char *dest)
 {
 	if (m17_talk_current() == NULL)
@@ -9116,6 +9169,8 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 #if CONFIG_M17
 	[SCR_M17_TALK_TO] = &m17_talk_screen,
 	[SCR_M17_TALK_TO_OTHER] = &m17_talk_other_screen,
+	[SCR_M17_CAN] = &m17_can_screen,
+	[SCR_M17_CAN_SQUELCH] = &m17_can_squelch_screen,
 #if CONFIG_M17_PACKET
 	[SCR_M17_MESSAGE_TO] = &m17_message_to_screen,
 #endif

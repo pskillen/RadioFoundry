@@ -12047,6 +12047,46 @@ static void m17_wait_for_pane(uint8_t pane)
 }
 #endif
 
+static void test_m17_vfo_can(void)
+{
+	setup_m17_talk_to();
+	req(RREQ_VFO_SET, 446100000);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	const radio_m17_selected_t *v = &sm.view.m17_selected;
+	CHECK(v->context.is_vfo && v->generation != 0 && v->can == 0 && !v->can_squelch);
+
+	m17_talk_to(v->generation, m17_destination("INFO"));
+	radio_req_t edit = { .type = RREQ_M17_VFO_CAN, .arg = 15, .generation = v->generation };
+	radio_sm_request(&sm, &edit, now);
+	edit.arg = 1;
+	edit.arg2 = 1;
+	radio_sm_request(&sm, &edit, now);
+	radio_m17_settings_t s;
+	CHECK(radio_m17_in_force(&s) && s.can == 15 && s.can_squelch && s.dst == m17_destination("INFO"));
+	CHECK(v->can == 15 && v->can_squelch && v->effective_dst == m17_destination("INFO"));
+
+	req(RREQ_VFO_SET, 446200000);
+	edit.arg = 0;
+	radio_sm_request(&sm, &edit, now);	// stale after the retune
+	CHECK(radio_m17_in_force(&s) && s.can == 15 && s.can_squelch && s.dst == M17_ADDR_BROADCAST);
+
+	edit.generation = v->generation;
+	radio_sm_request(&sm, &edit, now);
+	CHECK(radio_m17_in_force(&s) && s.can == 15 && !s.can_squelch);
+	edit.arg = 16;
+	edit.arg2 = 0;
+	radio_sm_request(&sm, &edit, now);
+	CHECK(v->can == 15);
+
+	req(RREQ_ZONE_POS, 2);
+	CHECK(!v->context.is_vfo && radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch);
+	edit.generation = v->generation;
+	edit.arg = 7;
+	radio_sm_request(&sm, &edit, now);
+	radio_m17_settings(&s);
+	CHECK(s.can == 15 && !s.can_squelch);	// stored channels cannot edit the VFO
+}
+
 static void test_m17_talk_to_stored(void)
 {
 	setup_m17_talk_to();
@@ -12448,6 +12488,7 @@ int main(void)
 #if CONFIG_M17
 	test_air_ops_m17();
 	test_m17_stored();
+	test_m17_vfo_can();
 	test_m17_talk_to_stored();
 	test_m17_talk_to_deferred();
 #if CONFIG_SCAN && CONFIG_DUAL_WATCH

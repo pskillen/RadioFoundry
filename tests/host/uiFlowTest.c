@@ -323,6 +323,17 @@ static const flow_t flows[] = {
 	  "back expect:screen=home expect:m17tx=INFO expect:shows=INFO quick 8 ok "
 	  "expect:screen=quick expect:quick8=ECHO expect:shows=ECHO back",
 	  "screen=home vfo=1 m17base=ECHO m17tx=ECHO shows=ECHO m17requests=2", 9, false },
+	{ "M17 Quick: VFO CAN and squelch",
+	  "m17 dlvfo:438800000 dlmode:m17 m17vfo:ECHO quick",
+	  "2 expect:screen=m17-can expect:count=16 expect:focus=0 up expect:focus=15 ok expect:screen=quick "
+	  "expect:m17can=15 3 expect:screen=m17-can-squelch expect:focus=Off down ok expect:screen=quick "
+	  "expect:m17squelch=1 3 expect:focus=On up ok expect:m17squelch=0 back",
+	  "screen=home vfo=1 shows=CAN_15 m17can=15 m17tx=ECHO", 10, false },
+	{ "M17 Quick: CAN picker Back cancels",
+	  "m17 dlvfo:438800000 dlmode:m17 m17vfo:ECHO quick 2",
+	  "down back", "screen=quick m17can=0", 2, false },
+	{ "M17 Quick: CAN rows require the VFO", SIM_M17_STORED_ECHO, "quick 3",
+	  "screen=quick hides=CAN_squelch quick8=ECHO", 2, false },
 	{ "M17 receive: late TYPE then caller", SIM_M17_STORED_ECHO " m17rx:AB1CD,ALL,7,late",
 	  "expect:screen=home expect:draws=" GLYPH_ELLIPSIS " expect:draws=CAN_" GLYPH_ELLIPSIS
 	  " m17type:7 expect:draws=CAN_7 expect:draws=Voice expect:hides=AB1CD m17link:AB1CD,ALL",

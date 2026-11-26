@@ -203,7 +203,8 @@ A save that fails shows "Couldn't save: ..." and the change stays for now only.
 ## The VFO
 
 The VFO keeps its frequency and mode when you go to a channel or restart. It also keeps DMR settings such as color
-code, timeslot, and talk target. For M17 and its temporary Talk to setting, see [Select M17 in the VFO](24-m17.md#select-m17-in-the-vfo).
+code, timeslot, and talk target. In M17, Quick offers CAN, CAN squelch, and Talk to. See
+[Quick settings on the M17 VFO](24-m17.md#quick-settings-on-the-m17-vfo).
 
 1. **OK**, **4** (Zones). The VFO is the first row.
 2. Press **OK**. Home shows the frequency large, and the radio says "VFO: type a frequency".

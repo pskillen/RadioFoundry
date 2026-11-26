@@ -1000,6 +1000,9 @@ static bool sim_m17_fail;
 static bool sim_m17_model, sim_m17_queue_fail;
 static uint32_t sim_m17_generation, sim_m17_requests, sim_m17_queued;
 static uint64_t sim_m17_override, sim_m17_request_dst, sim_m17_vfo_dst[2];
+static uint32_t sim_m17_can_queued;
+static uint8_t sim_m17_can_value, sim_m17_vfo_can;
+static bool sim_m17_can_field_squelch, sim_m17_vfo_squelch;
 static uint8_t sim_kv_serial;
 uint8_t codeplug_kv_serial(void) { return (uint8_t)(sim_kv_serial + (uint8_t)sim_cp_serial); }
 #endif
@@ -2415,6 +2418,8 @@ static m17_chan_t sim_m17_base(const radio_m17_context_t *ctx, const channel_t *
 {
 	m17_chan_t base = { .dst = M17_ADDR_BROADCAST };
 	if (ctx->is_vfo) {
+		base.can = sim_m17_vfo_can;
+		base.can_squelch = sim_m17_vfo_squelch;
 		uint64_t dst = sim_m17_vfo_dst[ctx->vfo_index];
 		if (dst != 0)
 			base.dst = dst;
@@ -2442,6 +2447,16 @@ bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst)
 		return false;
 	sim_m17_queued = generation;
 	sim_m17_request_dst = dst;
+	return true;
+}
+
+bool radio_req_m17_vfo_can(uint32_t generation, bool squelch, uint8_t value)
+{
+	if (!generation || sim_m17_queue_fail || sim_m17_can_queued)
+		return false;
+	sim_m17_can_queued = generation;
+	sim_m17_can_field_squelch = squelch;
+	sim_m17_can_value = value;
 	return true;
 }
 
@@ -2496,11 +2511,23 @@ static void sim_m17_update(void)
 			sim_m17_override = sim_m17_request_dst;
 			changed();
 		}
+		if (ctx.is_vfo && sim_m17_can_queued == sel->generation) {
+			if (sim_m17_can_field_squelch)
+				base.can_squelch = sim_m17_vfo_squelch = sim_m17_can_value != 0;
+			else
+				base.can = sim_m17_vfo_can = sim_m17_can_value;
+		}
+		if (sel->can != base.can || sel->can_squelch != base.can_squelch) {
+			sel->can = base.can;
+			sel->can_squelch = base.can_squelch;
+			changed();
+		}
 		sel->effective_dst = sim_m17_override != 0 ? sim_m17_override : base.dst;
 	} else if (sel->generation != 0) {
 		*sel = (radio_m17_selected_t){ 0 };
 		changed();
 	}
+	sim_m17_can_queued = 0;
 	sim_m17_queued = 0;
 	if (view.ch.mode == RADIO_MODE_M17) {
 		m17_chan_t base = sim_m17_base(&tuned, &view.ch);
@@ -3175,6 +3202,9 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 	sim_m17_call[0] = '\0';
 	sim_m17_fail = false;
 	sim_m17_model = sim_m17_queue_fail = false;
+	sim_m17_can_queued = 0;
+	sim_m17_vfo_can = 0;
+	sim_m17_vfo_squelch = false;
 	sim_m17_queued = sim_m17_generation = sim_m17_requests = 0;
 	sim_m17_override = sim_m17_vfo_dst[0] = sim_m17_vfo_dst[1] = 0;
 	sim_kv_serial = 0;
@@ -3397,6 +3427,8 @@ static bool check(const char *kv, char *err, size_t len)
 		if (!ui_quick_tile(7, ui_view(), &ui_st, label, sizeof label, got, sizeof got))
 			got[0] = '\0';
 	}
+	else if (strcmp(key, "m17can") == 0) snprintf(got, sizeof got, "%u", view.m17.can);
+	else if (strcmp(key, "m17squelch") == 0) snprintf(got, sizeof got, "%u", view.m17_selected.can_squelch);
 	else if (strcmp(key, "m17tx") == 0) snprintf(got, sizeof got, "%s", view.m17.tx_dst);
 	else if (strcmp(key, "m17base") == 0) sim_m17_text(view.m17_selected.base_dst, got, sizeof got);
 	else if (strcmp(key, "m17selected") == 0) sim_m17_text(view.m17_selected.effective_dst, got, sizeof got);

@@ -816,15 +816,23 @@ bool radio_get_m17_msg_tx_result(radio_m17_msg_tx_result_t *out)
 #endif
 
 #if CONFIG_M17
+static bool m17_selection_request(uint8_t type, uint32_t generation, int32_t arg, uint32_t arg2)
+{
+	if (requests == NULL || generation == 0)
+		return false;
+	const radio_req_t req = { .type = type, .arg = arg, .arg2 = arg2, .generation = generation };
+	return send(&req, pdMS_TO_TICKS(50));
+}
+
 bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst)
 {
-	if (requests == NULL || generation == 0 || dst >> 48 != 0)
-		return false;
-	const radio_req_t req = {
-		.type = RREQ_M17_TALK_TO, .arg = (int32_t)(uint32_t)dst, .arg2 = (uint32_t)(dst >> 32),
-		.generation = generation,
-	};
-	return send(&req, pdMS_TO_TICKS(50));
+	return dst >> 48 == 0 &&
+		m17_selection_request(RREQ_M17_TALK_TO, generation, (int32_t)(uint32_t)dst, (uint32_t)(dst >> 32));
+}
+
+bool radio_req_m17_vfo_can(uint32_t generation, bool squelch, uint8_t value)
+{
+	return m17_selection_request(RREQ_M17_VFO_CAN, generation, value, squelch);
 }
 
 void radio_req_m17_settings(const radio_m17_settings_t *s)

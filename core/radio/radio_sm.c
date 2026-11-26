@@ -6717,8 +6717,9 @@ static void m17_select_base(radio_sm_t *sm, const radio_m17_context_t *ctx, cons
 		v->base_dst = base->dst;
 		changed(sm);
 	}
-	if (v->can != base->can) {
+	if (v->can != base->can || v->can_squelch != base->can_squelch) {
 		v->can = base->can;
+		v->can_squelch = base->can_squelch;
 		changed(sm);
 	}
 }
@@ -9646,14 +9647,24 @@ static void m17_set_request(radio_sm_t *sm)
 	changed(sm);
 }
 
-static void m17_talk_to_request(radio_sm_t *sm, const radio_req_t *req)
+static void m17_selection_request(radio_sm_t *sm, const radio_req_t *req)
 {
 	const radio_m17_selected_t *v = &sm->view.m17_selected;
-	uint64_t dst = ((uint64_t)req->arg2 << 32) | (uint32_t)req->arg;
-	if (v->generation == 0 || req->generation != v->generation || dst > M17_ADDR_BROADCAST ||
+	if (v->generation == 0 || req->generation != v->generation ||
 	    sm->hotspot || BENCH_HELD(sm) || codeplug_serial() != sm->codeplug_serial || ZONES_MOVED(sm))
 		return;
 
+	if (req->type == RREQ_M17_VFO_CAN) {
+		if (v->context.is_vfo && (uint32_t)req->arg <= (req->arg2 ? 1u : RADIO_M17_CAN_MAX)) {
+			radio_m17_set_vfo_can(req->arg2 != 0, (uint8_t)req->arg);
+			m17_set_request(sm);
+		}
+		return;
+	}
+
+	uint64_t dst = ((uint64_t)req->arg2 << 32) | (uint32_t)req->arg;
+	if (dst > M17_ADDR_BROADCAST)
+		return;
 	sm->m17_override = dst;
 	if (!m17_selected_loaded(sm))
 		m17_select_effective(sm, dst != 0 ? dst : v->base_dst);
@@ -9721,8 +9732,8 @@ static void bench_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_m
 void radio_sm_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms)
 {
 #if CONFIG_M17
-	if (req->type == RREQ_M17_TALK_TO) {
-		m17_talk_to_request(sm, req);
+	if (req->type == RREQ_M17_TALK_TO || req->type == RREQ_M17_VFO_CAN) {
+		m17_selection_request(sm, req);
 		return;
 	}
 #endif

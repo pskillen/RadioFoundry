@@ -652,6 +652,7 @@ void radio_req_m17_settings(const radio_m17_settings_t *s);
 void radio_req_m17_bert(uint8_t cmd);
 // Queue a 48-bit destination for the selected generation. Zero selects Default.
 bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst);
+bool radio_req_m17_vfo_can(uint32_t generation, bool squelch, uint8_t value);
 #endif
 #if CONFIG_M17_PACKET
 // Returns a serial for a copied request, or zero if it could not be queued.

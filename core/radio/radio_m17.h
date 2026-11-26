@@ -88,6 +88,7 @@ typedef struct {
 	uint32_t generation;		// zero when there is no selected M17 channel
 	radio_m17_context_t context;
 	uint8_t can;
+	bool can_squelch;
 } radio_m17_selected_t;
 
 extern const radio_air_ops_t radio_m17_air;
@@ -104,6 +105,7 @@ bool radio_m17_take(channel_t *ch);
 bool radio_m17_receives(const channel_t *ch, uint16_t number);
 void radio_m17_settings(radio_m17_settings_t *out);		// any task
 void radio_m17_set_settings(const radio_m17_settings_t *s);	// radio task
+void radio_m17_set_vfo_can(bool squelch, uint8_t value);	// radio task, validated by the selection request
 // The radio name, the callsign's fallback. Radio task; taken at the next begin or apply.
 void radio_m17_set_radio_name(const char *name);
 

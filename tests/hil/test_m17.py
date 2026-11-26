@@ -271,3 +271,52 @@ def test_m17_callsign_on_radio(radio, backup_dir):
             radio.link.dmr_fields(mode=mode0)
         radio.go_home()
         restore_backup(radio, backup, path, backup, regions=regions)
+
+
+@pytest.mark.feature("m17")
+def test_m17_vfo_can_on_radio(radio):
+    """Choose and restore the VFO's session CAN and squelch through Quick. Nothing is sent."""
+    from test_ui import wait_screen
+
+    v = m17_view(radio)
+    core = radio.core()
+    link = radio.view(["link"])
+    if core.get("vfo") != "1" or core.get("mode") != "m17" or link.get("ui.dual") == "1" or v.get("m17.on") != "1":
+        skip("state", "the test requires a running M17 VFO in single-channel Home")
+    key = radio.unlock_key(link)
+    if key == "none":
+        skip("no_hw", "the fixture needs a Quick or Back key")
+
+    def quick():
+        radio.go_home()
+        if key == "quick":
+            radio.press("quick")
+        else:
+            radio.press("ok", LONG)
+        wait_screen(radio, "quick")
+
+    def choose(tile, screen, field, count):
+        quick()
+        before = as_int(radio.view(["m17"]).get(field))
+        assert before is not None and 0 <= before < count
+        after = (before + 1) % count
+        try:
+            radio.press(tile)
+            assert as_int(wait_screen(radio, screen).get("ui.focus")) == before
+            radio.press("down")
+            radio.press("ok")
+            wait_screen(radio, "quick")
+            radio.wait_for(lambda x: as_int(x.get(field)) == after, 3.0, sections=("m17",), what=f"{field} changed")
+        finally:
+            quick()
+            if as_int(radio.view(["m17"]).get(field)) == after:
+                radio.press(tile)
+                wait_screen(radio, screen)
+                radio.press("up")
+                radio.press("ok")
+                radio.wait_for(lambda x: as_int(x.get(field)) == before, 3.0, sections=("m17",),
+                               what=f"{field} restored")
+            radio.go_home()
+
+    choose("2", "m17-can", "m17.run.can", 16)
+    choose("3", "m17-can-squelch", "m17.run.squelch", 2)

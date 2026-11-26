@@ -2324,7 +2324,7 @@ msgctxt "CHAN_LABEL_RATE"
 msgid "Rate"
 msgstr "速率"
 
-#: core/ui/ui_menus.c
+#: core/ui/ui_menus.c core/ui/ui_screens.c
 msgctxt "M17_LABEL_CAN"
 msgid "CAN"
 msgstr "CAN"
@@ -5728,6 +5728,11 @@ msgstr "{加密|加密}"
 msgctxt "QUICK_LABEL_TALK_TO"
 msgid "{Talk to|Talk}"
 msgstr "{通话对象|通话}"
+
+#: core/ui/ui_screens.c
+msgctxt "QUICK_LABEL_CAN_SQUELCH"
+msgid "{CAN squelch|CAN sq}"
+msgstr "{CAN静噪|CAN静}"
 
 #: core/ui/ui_screens.c
 msgctxt "QUICK_LABEL_COPY_TO_VFO"

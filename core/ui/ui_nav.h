@@ -53,6 +53,8 @@ typedef enum {
 	SCR_M17_CHAN_DST,		// an M17 channel's Talk to (the channel editor; CONFIG_M17)
 	SCR_M17_TALK_TO,		// temporary M17 destination (Quick settings; CONFIG_M17)
 	SCR_M17_TALK_TO_OTHER,		// custom temporary M17 destination (CONFIG_M17)
+	SCR_M17_CAN,			// Quick settings: the M17 VFO's CAN (CONFIG_M17)
+	SCR_M17_CAN_SQUELCH,		// Quick settings: the M17 VFO's CAN filter (CONFIG_M17)
 	SCR_M17_MESSAGE_TO,		// M17 message destination (Messages; CONFIG_M17_PACKET)
 	SCR_COUNT
 } ui_scr_t;

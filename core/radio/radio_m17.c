@@ -270,6 +270,14 @@ void radio_m17_set_settings(const radio_m17_settings_t *s)
 		set.dst = M17_ADDR_BROADCAST;
 }
 
+void radio_m17_set_vfo_can(bool squelch, uint8_t value)
+{
+	if (squelch)
+		set.can_squelch = value != 0;
+	else
+		set.can = value;
+}
+
 uint32_t radio_m17_fit(void)
 {
 	return board.air != NULL && board.air->fit != NULL ? board.air->fit(&m17_air_mode.profile) : 0;

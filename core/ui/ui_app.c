@@ -1494,6 +1494,8 @@ static void quick_unavailable(uint8_t kind)
 	case QT_TO_VFO: ui_toast(TR(WHY_VFO_NOT_IN_BUILD, "VFO: not in this build")); break;
 	case QT_VOX: ui_toast(TR(WHY_VOX_NOT_ON_RADIO_YET, "VOX: not on this radio yet")); break;
 #if CONFIG_M17
+	case QT_M17_CAN:
+	case QT_M17_SQUELCH:
 	case QT_TALK_TO: ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed")); break;
 #endif
 	default: ui_toast(TR(WHY_NOT_IN_BUILD, "Not in this build")); break;
@@ -1639,6 +1641,12 @@ static void quick_activate(int tile)
 		else
 #endif
 			ui_push(SCR_PICKER, 0);
+		break;
+#endif
+#if CONFIG_M17
+	case QT_M17_CAN:
+	case QT_M17_SQUELCH:
+		ui_push(kind == QT_M17_CAN ? SCR_M17_CAN : SCR_M17_CAN_SQUELCH, 0);
 		break;
 #endif
 	case QT_POWER: {

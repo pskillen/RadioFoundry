@@ -206,6 +206,7 @@ typedef enum {
 	RREQ_M17_BERT,		// arg: 1 count received BERT, 2 transmit BERT, 3 stop
 #if CONFIG_M17
 	RREQ_M17_TALK_TO,	// arg and arg2 carry the low and high words of the destination
+	RREQ_M17_VFO_CAN,	// arg: new value, arg2: edit CAN squelch instead of CAN
 #endif
 #if CONFIG_M17_PACKET
 	RREQ_M17_MSG_SEND,	// radio_task.c: arg and arg2 carry the serial, never radio_sm_request
@@ -236,7 +237,7 @@ typedef struct {
 	int32_t arg;
 	uint32_t arg2;
 #if CONFIG_M17
-	uint32_t generation;	// RREQ_M17_TALK_TO
+	uint32_t generation;	// RREQ_M17_TALK_TO, RREQ_M17_VFO_CAN
 #endif
 } radio_req_t;
 

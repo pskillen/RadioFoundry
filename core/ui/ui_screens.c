@@ -3814,8 +3814,16 @@ uint8_t ui_quick_kind(int pos, const radio_view_t *v)
 	if (!v->vfo && pos == 3)
 		return QT_TO_VFO;	// a channel's tile 4 copies it to the VFO; the VFO's stays Mode
 #if CONFIG_M17
-	if (pos == 7 && v->ch.mode == RADIO_MODE_M17 && (ui_svc_features() & UI_FEAT_M17))
-		return QT_TALK_TO;
+	if (v->ch.mode == RADIO_MODE_M17 && (ui_svc_features() & UI_FEAT_M17)) {
+		if (pos == 7)
+			return QT_TALK_TO;
+		if (v->vfo) {
+			if (pos == 1)
+				return QT_M17_CAN;
+			if (pos == 2)
+				return QT_M17_SQUELCH;
+		}
+	}
 #endif
 	uint8_t kind = v->ch.mode == RADIO_MODE_DMR ? dmr[pos] : fm[pos];
 	if (v->vfo && (kind == QT_MONITOR || kind == QT_PRIVACY))
@@ -3852,6 +3860,11 @@ bool ui_quick_tile(int tile, const radio_view_t *v, const ui_state_t *s, char *l
 			TEXT_ALT_NEXT "DMon" TEXT_ALT_CLOSE),
 		[QT_PRIVACY] = TRN(QUICK_LABEL_PRIVACY, TEXT_ALT_OPEN "Privacy" TEXT_ALT_NEXT "Priv" TEXT_ALT_CLOSE),
 		[QT_TALK_TO] = TRN(QUICK_LABEL_TALK_TO, TEXT_ALT_OPEN "Talk to" TEXT_ALT_NEXT "Talk" TEXT_ALT_CLOSE),
+#if CONFIG_M17
+		[QT_M17_CAN] = TRN(M17_LABEL_CAN, "CAN"),
+		[QT_M17_SQUELCH] = TRN(QUICK_LABEL_CAN_SQUELCH, TEXT_ALT_OPEN "CAN squelch"
+			TEXT_ALT_NEXT "CAN sq" TEXT_ALT_CLOSE),
+#endif
 		[QT_TO_VFO] = TRN(QUICK_LABEL_COPY_TO_VFO, TEXT_ALT_OPEN "Copy to VFO"
 			TEXT_ALT_NEXT "To VFO" TEXT_ALT_CLOSE),
 		[QT_SPLIT] = TRN(QUICK_LABEL_TX_FREQ, TEXT_ALT_OPEN "TX freq" TEXT_ALT_NEXT "TXFreq" TEXT_ALT_CLOSE),
@@ -3973,6 +3986,19 @@ bool ui_quick_tile(int tile, const radio_view_t *v, const ui_state_t *s, char *l
 		else
 			sb_u32(&b, v->dmr.target_id, 1);
 		return true;
+#endif
+#if CONFIG_M17
+	case QT_M17_CAN:
+	case QT_M17_SQUELCH: {
+		const radio_m17_selected_t *sel = ui_m17_selected(v);
+		if (sel == NULL)
+			return false;
+		if (kind == QT_M17_CAN)
+			sb_u32(&b, sel->can, 1);
+		else
+			sb_str(&b, sel->can_squelch ? TR(VALUE_ON, "On") : TR(VALUE_OFF, "Off"));
+		return true;
+	}
 #endif
 	default:
 		return false;
