@@ -42,6 +42,9 @@
 #if CONFIG_M17
 #include "radio/radio_m17.h"
 #include "m17/m17.h"
+#if CONFIG_M17_PACKET
+#include "m17/m17_codeplug.h"	// M17_CP_ADDR_RESERVED
+#endif
 #endif
 #if CONFIG_P25
 #include "radio/radio_p25.h"	// P25 conventional (docs/spec/p25.md 7)
@@ -97,6 +100,25 @@ static void cw_cancel(radio_sm_t *sm);
 #endif
 
 static void ptt_release(radio_sm_t *sm, bool roger, uint32_t now_ms);
+#if CONFIG_M17_PACKET
+enum { M17_MSG_IDLE, M17_MSG_WAIT, M17_MSG_READY, M17_MSG_SENDING };
+
+#define M17_MSG_WAIT_MS	5000u
+// A maximum packet takes under 1.5 s on air. Allow provider lead, tail and scheduling before closing a stalled session.
+#define M17_MSG_MAX_TX_MS	2500u
+#define M17_MSG_RX_SETTLE_MS	RADIO_SAVE_SETTLE_MS
+
+static void m17_msg_finish(radio_sm_t *sm, uint8_t reason)
+{
+	const radio_m17_msg_tx_request_t *request = sm->m17_msg.request;
+	void (*complete)(uint64_t, uint8_t) = sm->m17_msg.complete;
+
+	sm->m17_msg.phase = M17_MSG_IDLE;
+	sm->m17_msg.request = NULL;
+	sm->m17_msg.complete = NULL;
+	complete(request->serial, reason);
+}
+#endif
 
 // The radio's own DMR ID when the codeplug's general settings hold none (build value; 0 = refuse DMR transmit)
 #ifndef RADIO_DMR_ID_DEFAULT
@@ -931,6 +953,14 @@ static void tune(radio_sm_t *sm, uint32_t now_ms)
 	}
 	#endif
 	sm->retune_pending = sm->retune_due = false;	// this tune is the one they wait for
+#if CONFIG_M17_PACKET
+	if (sm->m17_msg.phase == M17_MSG_SENDING)
+		air_stop(sm);	// close the old session before the board retunes
+	else if (sm->m17_msg.phase != M17_MSG_IDLE)
+		m17_msg_finish(sm, RADIO_M17_MSG_TX_CONTEXT);
+	sm->m17_rx_hz = 0;
+	sm->m17_rx_ms = now_ms;
+#endif
 #if CONFIG_SFR_CWID
 	cw_cancel(sm);		// the repeater's ID: the board is set up for the channel below
 #endif
@@ -995,9 +1025,17 @@ static void tune(radio_sm_t *sm, uint32_t now_ms)
 #if CONFIG_BCAST_FM
 	bcast_tune(sm);		// the channel receiver keeps its last frequency, muted, while the broadcast one plays
 #endif
-	if (!sm->view.am && !sm->view.bcast)
-		board.radio->rx(sm->view.ch.rx_hz, air ? RADIO_BW_12K5 : (radio_bw_t)sm->view.ch.bw,
-				mode != RADIO_MODE_FM ? &no_tone : &sm->view.ch.rx_tone);
+	if (!sm->view.am && !sm->view.bcast) {
+#if CONFIG_M17_PACKET
+		bool tuned =
+#endif
+			board.radio->rx(sm->view.ch.rx_hz, air ? RADIO_BW_12K5 : (radio_bw_t)sm->view.ch.bw,
+					mode != RADIO_MODE_FM ? &no_tone : &sm->view.ch.rx_tone);
+#if CONFIG_M17_PACKET
+		if (tuned && mode == RADIO_MODE_M17)
+			sm->m17_rx_hz = sm->view.ch.rx_hz;
+#endif
+	}
 	if (mode == RADIO_MODE_DMR) {
 		dmr_begin(sm);		// after set_mode(DMR): the modem only starts in DMR mode
 	}
@@ -6210,6 +6248,9 @@ static inline void aprs_rf_abort(radio_sm_t *sm, uint32_t now_ms) { (void)sm; (v
 static void aprs_poll(radio_sm_t *sm, uint32_t now_ms)
 {
 	bool tx_now = sm->view.state == RS_TX && !sm->tx_no_ptt;
+#if CONFIG_M17_PACKET
+	tx_now = tx_now && sm->m17_msg.phase != M17_MSG_SENDING;
+#endif
 #if CONFIG_APRS_AFSK
 	tx_now = tx_now && sm->aprs_phase == APRS_RF_OFF;
 #endif
@@ -6928,6 +6969,17 @@ static void air_stop(radio_sm_t *sm)
 	sm->view.m17.flags &= (uint8_t)~(RADIO_M17_ON | RADIO_M17_RX | RADIO_M17_LATE);
 	sm->view.m17.tx = AIR_TX_IDLE;
 #endif
+#if CONFIG_M17_PACKET
+	if (sm->m17_msg.phase != M17_MSG_IDLE) {
+		bool sending = sm->m17_msg.phase == M17_MSG_SENDING;
+		uint8_t reason = sm->m17_msg.reason;
+		m17_msg_finish(sm, reason ? reason : RADIO_M17_MSG_TX_CONTEXT);
+		if (sending) {
+			sm->ptt = false;
+			fm_tx_end(sm, true, sm->led_now);
+		}
+	}
+#endif
 }
 
 // PTT on an air mode's channel, tx_check passed: the header queued, the transmitter keyed at the channel's power, the
@@ -6978,6 +7030,195 @@ static void air_key(radio_sm_t *sm, uint32_t now_ms, uint32_t hz)
 	air_poll(sm);			// the engine's transmit state in the view now, not at the next tick
 	changed(sm);
 }
+
+#if CONFIG_M17_PACKET
+static bool m17_msg_route(const radio_sm_t *sm, uint32_t generation)
+{
+	const radio_m17_selected_t *selected = &sm->view.m17_selected;
+	const radio_m17_context_t *ctx = &selected->context;
+	const channel_t *ch = &sm->view.ch;
+
+	if (generation == 0 || generation != selected->generation || ch->mode != RADIO_MODE_M17 ||
+	    !m17_selected_loaded(sm) || ctx->is_vfo != sm->view.vfo || sm->reload_pending ||
+	    codeplug_serial() != sm->codeplug_serial || ZONE_WRITE_BUSY() || ZONES_MOVED(sm))
+		return false;
+	if (ctx->is_vfo)
+		return ctx->vfo_index == sm->view.vfo_index &&
+		       ctx->vfo.rx_hz == ch->rx_hz && ctx->vfo.tx_hz == ch->tx_hz;
+	return sm->have_channels && ctx->stored.zone == sm->view.zone_index &&
+	       ctx->stored.pos == sm->view.zone_pos && ctx->stored.number == sm->view.channel_number;
+}
+
+static bool m17_msg_guard(const radio_sm_t *sm, bool sending)
+{
+	if (sm->power_off_req || sm->hotspot || BENCH_HELD(sm) || radio_m17_bert_on())
+		return false;
+	if (!sending && (sm->ptt || sm->air_tx || sm->air_keyed ||
+			 (sm->view.state != RS_IDLE && sm->view.state != RS_RX)))
+		return false;
+#if CONFIG_SCAN
+	if (scan_on(&sm->scan) || dual_running(sm))
+		return false;
+#endif
+#if CONFIG_APRS_AFSK
+	if (sm->aprs_phase != APRS_RF_OFF)
+		return false;
+#endif
+#if CONFIG_APRS_RX
+	if (aprs_rx_listening())
+		return false;
+#endif
+#if CONFIG_DMR
+	if (sm->dmr_running || sm->dmr_keyed || sm->sfr_rpt)
+		return false;
+#endif
+	return tx_check(sm) == TXDENY_NONE;
+}
+
+void __attribute__((noinline)) radio_sm_m17_msg_accept(radio_sm_t *sm, const radio_m17_msg_tx_request_t *request,
+		void (*complete)(uint64_t serial, uint8_t reason), uint32_t now_ms)
+{
+	uint8_t reason;
+	uint64_t source = radio_m17_packet_tx_source();
+
+	if (!m17_msg_route(sm, request->generation))
+		reason = RADIO_M17_MSG_TX_CONTEXT;
+	else if (sm->m17_msg.phase != M17_MSG_IDLE || !m17_msg_guard(sm, false))
+		reason = RADIO_M17_MSG_TX_GUARD;
+	else if (!radio_m17_running() || !(sm->view.m17.fit & AIR_FIT_TX))
+		reason = RADIO_M17_MSG_TX_FIT;
+	else if (source == 0 || request->destination == 0 ||
+		 (request->destination >= M17_CP_ADDR_RESERVED && request->destination != M17_ADDR_BROADCAST))
+		reason = RADIO_M17_MSG_TX_ADDRESS;
+	else if (sm->view.m17.can != sm->view.m17_selected.can)
+		reason = RADIO_M17_MSG_TX_CONTEXT;
+	else {
+		sm->m17_msg.request = request;
+		sm->m17_msg.complete = complete;
+		sm->m17_msg.source = source;
+		sm->m17_msg.can = sm->view.m17.can;
+		sm->m17_msg.rx_hz = sm->view.ch.rx_hz;
+		sm->m17_msg.tx_hz = sm->view.ch.tx_hz;
+		sm->m17_msg.start_ms = now_ms;
+		sm->m17_msg.sampled = false;
+		sm->m17_msg.reason = 0;
+		sm->m17_msg.phase = M17_MSG_WAIT;
+		m17_csma_init(&sm->m17_msg.csma);
+		return;
+	}
+	complete(request->serial, reason);
+}
+
+static uint8_t m17_msg_coin(radio_sm_t *sm, uint32_t now_ms)
+{
+	uint32_t x = sm->m17_msg_rng;
+
+	if (x == 0) {
+		// Devices with different callsigns or request times start at different points in the sequence.
+		x = now_ms ^ (uint32_t)sm->m17_msg.source ^ (uint32_t)(sm->m17_msg.source >> 32);
+		if (x == 0)
+			x = 1;
+	}
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	sm->m17_msg_rng = x;
+	return (uint8_t)(x >> 24);
+}
+
+static void __attribute__((noinline)) m17_msg_sample(radio_sm_t *sm, const radio_status_t *st,
+						      bool own_rx, uint32_t now_ms)
+{
+	uint32_t age = now_ms - sm->m17_msg.start_ms;
+	if (age >= M17_MSG_WAIT_MS)
+		return;		// tick also enforces this when status polling exits early
+
+	if (sm->m17_msg.phase == M17_MSG_READY ||
+	    (sm->m17_msg.sampled && now_ms - sm->m17_msg.sample_ms > RADIO_POLL_MS)) {
+		// A grant or a clear interval cannot survive a gap in the observations.
+		sm->m17_msg.phase = M17_MSG_WAIT;
+		m17_csma_init(&sm->m17_msg.csma);
+	}
+	sm->m17_msg.sample_ms = now_ms;
+	sm->m17_msg.sampled = true;
+	int16_t rssi_busy = RADIO_DMR_SQL_L1_DBM + (RADIO_SQUELCH_DEFAULT - 1) * RADIO_SQL_DB_PER_STEP;
+	bool signal = !own_rx || !(sm->view.m17.fit & AIR_FIT_RX) ||
+		      sm->m17_rx_hz != sm->m17_msg.rx_hz || now_ms - sm->m17_rx_ms < M17_MSG_RX_SETTLE_MS ||
+		      st->noise == UINT8_MAX || st->noise < radio_sm_squelch_open_below(RADIO_SQUELCH_DEFAULT) ||
+		      st->carrier || st->rssi_dbm >= 0 || st->rssi_dbm == INT16_MIN || st->rssi_dbm > rssi_busy;
+	if (m17_csma_poll(&sm->m17_msg.csma, age, radio_m17_rx_locked(), signal, m17_msg_coin(sm, now_ms)) ==
+	    M17_CSMA_SEND)
+		sm->m17_msg.phase = M17_MSG_READY;
+}
+
+// Cancel through the shared unkey path even if a broken provider has stopped delivering events.
+static void m17_msg_stop(radio_sm_t *sm, uint8_t reason)
+{
+	sm->m17_msg.reason = reason;
+	sm->m17_rx_ms = sm->led_now;
+	air_stop(sm);
+	if (!sm->power_off_req && !air_running())
+		air_begin(sm);
+}
+
+static void __attribute__((noinline)) m17_msg_tick(radio_sm_t *sm, uint32_t now_ms)
+{
+	const radio_m17_msg_tx_request_t *request = sm->m17_msg.request;
+	bool sending = sm->m17_msg.phase == M17_MSG_SENDING;
+	uint8_t reason = 0;
+
+	if (!m17_msg_route(sm, request->generation) ||
+	    sm->m17_msg.rx_hz != sm->view.ch.rx_hz || sm->m17_msg.tx_hz != sm->view.ch.tx_hz ||
+	    sm->m17_msg.can != sm->view.m17.can || sm->m17_msg.can != sm->view.m17_selected.can ||
+	    sm->m17_msg.source != radio_m17_packet_tx_source())
+		reason = RADIO_M17_MSG_TX_CONTEXT;
+	else if (!m17_msg_guard(sm, sending))
+		reason = RADIO_M17_MSG_TX_GUARD;
+	else if (!sending && now_ms - sm->m17_msg.start_ms >= M17_MSG_WAIT_MS)
+		reason = RADIO_M17_MSG_TX_BUSY;
+	else if (sending && sm->view.tot_s != 0 && now_ms - sm->tx_start_ms >= (uint32_t)sm->view.tot_s * 1000u)
+		reason = RADIO_M17_MSG_TX_TIMEOUT;
+	else if (sending && now_ms - sm->tx_start_ms >= M17_MSG_MAX_TX_MS &&
+		 radio_m17_packet_tx_status() == RADIO_M17_PACKET_TX_PENDING)
+		reason = RADIO_M17_MSG_TX_FAILED;
+
+	if (reason != 0) {
+		if (sending)
+			m17_msg_stop(sm, reason);
+		else
+			m17_msg_finish(sm, reason);
+		return;
+	}
+
+	if (sm->m17_msg.phase != M17_MSG_READY)
+		return;
+	if (now_ms - sm->m17_msg.sample_ms >= RADIO_POLL_MS || radio_m17_rx_locked()) {
+		sm->m17_msg.phase = M17_MSG_WAIT;
+		m17_csma_init(&sm->m17_msg.csma);
+		return;
+	}
+	if (!radio_m17_packet_tx_prepare(request->destination, (const uint8_t *)request->text,
+					  (uint16_t)(request->length + 1u))) {
+		m17_msg_finish(sm, RADIO_M17_MSG_TX_REFUSED);
+		return;
+	}
+
+	sm->m17_msg.phase = M17_MSG_SENDING;
+	sm->tot_warned = sm->view.tot_warning = false;
+	end_reception(sm, now_ms);
+	activity(sm, now_ms);
+	air_key(sm, now_ms, sm->m17_msg.tx_hz);
+	if (sm->view.tx_deny != TXDENY_NONE || !sm->air_keyed) {
+		sm->m17_msg.reason = RADIO_M17_MSG_TX_REFUSED;
+		if (!sm->air_tx) {
+			radio_m17_air.tx_abort();	// an unstarted adapter has no DONE to consume
+			radio_m17_air.tx_clear();
+			m17_msg_finish(sm, RADIO_M17_MSG_TX_REFUSED);
+			fm_tx_end(sm, true, now_ms);
+		}
+	}
+}
+#endif
 
 // The settings sent while it transmitted (RREQ_P25_SET, RREQ_NXDN_SET): the engine takes them now
 static void air_apply(radio_sm_t *sm)
@@ -7106,12 +7347,28 @@ static void air_tick(radio_sm_t *sm, uint32_t now_ms)
 		changed(sm);
 	}
 	if (sm->air_tx && o->tx_state() == AIR_TX_DONE) {
+#if CONFIG_M17_PACKET
+		bool packet = sm->m17_msg.phase == M17_MSG_SENDING;
+		bool keyed = sm->air_keyed;
+#endif
 		if (sm->air_keyed) {
 			sm->air_keyed = false;
 			board.radio->tx_off();
 		}
 		o->tx_clear();
 		sm->air_tx = false;
+#if CONFIG_M17_PACKET
+		sm->m17_rx_ms = now_ms;
+		if (packet) {
+			uint8_t reason = sm->m17_msg.reason;
+			if (reason == 0)
+				reason = keyed && radio_m17_packet_tx_status() == RADIO_M17_PACKET_TX_DRAINED ?
+					 RADIO_M17_MSG_TX_SENT : RADIO_M17_MSG_TX_FAILED;
+			m17_msg_finish(sm, reason);
+			if (sm->view.state == RS_TX_DENIED)
+				fm_tx_end(sm, true, now_ms);
+		}
+#endif
 #if CONFIG_P25_TRUNK
 		if (sm->p25_talk) {
 			sm->p25_talk = false;
@@ -7156,6 +7413,10 @@ static void air_poll_tx(radio_sm_t *sm, uint32_t now_ms)
 		return;
 	}
 	tx_timer(sm, now_ms);
+#if CONFIG_M17_PACKET
+	if (sm->m17_msg.phase == M17_MSG_SENDING)
+		return;		// the tick enforces the packet time-out even if this poll was skipped
+#endif
 	if (sm->view.tot_s != 0 && sm->view.tx_elapsed_ms >= (uint32_t)sm->view.tot_s * 1000) {
 		const radio_air_ops_t *o = air_ops(sm);	// a typed pointer: the stack check follows its calls
 		o->tx_abort();	// cut at once; AIR_TX_DONE follows and air_tick switches off
@@ -7171,6 +7432,15 @@ static void ptt_down(radio_sm_t *sm, uint32_t now_ms)
 	if (sm->ptt) {
 		return;
 	}
+#if CONFIG_M17_PACKET
+	if (sm->m17_msg.phase == M17_MSG_SENDING) {
+		sm->ptt = true;	// a held press starts voice after the packet unkeys
+		activity(sm, now_ms);
+		return;
+	}
+	if (sm->m17_msg.phase != M17_MSG_IDLE)
+		m17_msg_finish(sm, RADIO_M17_MSG_TX_GUARD);
+#endif
 #if CONFIG_DMR_TRUNK
 	if (sm->t3_fb == 2) {
 		t3_to_fallback(sm, now_ms);	// looking for the TSCC from the fallback channel: PTT talks on the fallback
@@ -7346,6 +7616,10 @@ static void ptt_release(radio_sm_t *sm, bool roger, uint32_t now_ms)
 #endif
 	sm->ptt = false;
 	activity(sm, now_ms);
+#if CONFIG_M17_PACKET
+	if (sm->m17_msg.phase == M17_MSG_SENDING)
+		return;		// only the packet owner may end its transmission
+#endif
 	if (sm->host_audio) {
 		roger = false;		// the host sends its own audio, tones included
 	}
@@ -9390,6 +9664,12 @@ static void m17_bert_request(radio_sm_t *sm, const radio_req_t *req, uint32_t no
 {
 	uint8_t cmd = (uint8_t)req->arg;
 
+#if CONFIG_M17_PACKET
+	if (sm->m17_msg.phase == M17_MSG_SENDING)
+		return;
+	if (cmd != 3 && sm->m17_msg.phase != M17_MSG_IDLE)
+		m17_msg_finish(sm, RADIO_M17_MSG_TX_GUARD);
+#endif
 	if (cmd == 3) {
 		if (sm->ptt && sm->view.ch.mode == RADIO_MODE_M17)
 			ptt_release(sm, false, now_ms);
@@ -10065,6 +10345,10 @@ void radio_sm_poll(radio_sm_t *sm, uint32_t now_ms)
 	else
 #endif
 	board.radio->status(&st);
+#if CONFIG_M17_PACKET
+	if (sm->m17_msg.phase == M17_MSG_WAIT || sm->m17_msg.phase == M17_MSG_READY)
+		m17_msg_sample(sm, &st, own_rx, now_ms);
+#endif
 #if CONFIG_AM_RX
 	if (sm->view.am && own_rx) {
 		st.tone_ok = true;	// no sub-audio in AM; the board gives the AM squelch value (hal_radio.h rx_am)
@@ -10363,6 +10647,10 @@ void radio_sm_tick(radio_sm_t *sm, uint32_t now_ms)
 #if CONFIG_DMR_TRUNK
 	t3_tick(sm, now_ms);
 #endif
+#endif
+#if CONFIG_M17_PACKET
+	if (sm->m17_msg.phase != M17_MSG_IDLE)
+		m17_msg_tick(sm, now_ms);
 #endif
 #if CONFIG_AIR
 	if (air_running()) {

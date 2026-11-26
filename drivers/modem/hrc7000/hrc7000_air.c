@@ -85,7 +85,7 @@ uint32_t hrc7000_air_mod_bias(const air_profile_t *p, uint32_t dmr_mod_bias)
 
 // TX_SPACE events in a row are one (the count is tx_space's), and the last place is kept for TX_DONE: the core's TX
 // off waits on it
-static AIR_ISR void ev_push(hrc7000_air_t *a, uint8_t kind, uint32_t t)
+static AIR_ISR void ev_push(hrc7000_air_t *a, uint8_t kind, uint32_t t, uint8_t arg)
 {
 	uint8_t used = (uint8_t)(a->ev_head - a->ev_tail);
 	if (kind == AIR_EV_TX_SPACE && used > 0 && a->evq[(uint8_t)(a->ev_head - 1u) % HRC7000_AIR_EVQ].kind == kind) {
@@ -97,6 +97,7 @@ static AIR_ISR void ev_push(hrc7000_air_t *a, uint8_t kind, uint32_t t)
 	}
 	hrc7000_air_ev_t *e = &a->evq[a->ev_head % HRC7000_AIR_EVQ];
 	e->kind = kind;
+	e->arg = arg;
 	e->t_us = t;
 	__atomic_thread_fence(__ATOMIC_RELEASE);
 	a->ev_head++;
@@ -251,7 +252,7 @@ static AIR_ISR void write_half(hrc7000_air_t *a, const air_tx_chunk_t *c)
 
 // The transmission ends now: PA off, the queue dropped, the modulation bytes back, receiving (chip: the registers may
 // be written)
-static AIR_ISR void tx_stop(hrc7000_air_t *a, uint32_t t, bool chip)
+static AIR_ISR void tx_stop(hrc7000_air_t *a, uint32_t t, bool chip, air_tx_end_reason_t reason)
 {
 	if (chip) {
 		w(a, C7_LAYER2_TXRX_CTRL, TXRX_NONE);
@@ -277,7 +278,7 @@ static AIR_ISR void tx_stop(hrc7000_air_t *a, uint32_t t, bool chip)
 	a->mod_saved = false;
 	a->tx = HRC7000_AIR_RX;
 	a->st.tx_done++;
-	ev_push(a, AIR_EV_TX_DONE, t);
+	ev_push(a, AIR_EV_TX_DONE, t, reason);
 }
 
 // A slot boundary: set up the slot that goes on air about 5 ms from now
@@ -299,7 +300,8 @@ static AIR_ISR void boundary(hrc7000_air_t *a, uint32_t t)
 	}
 	switch (a->tx) {
 	case HRC7000_AIR_TAIL:
-		tx_stop(a, t, true);	// the idle slot after the last chunk is on air: the PA ramps down in it
+		// The idle slot after the last chunk is on air: the PA ramps down in it
+		tx_stop(a, t, true, AIR_TX_END_DRAINED);
 		return;
 	case HRC7000_AIR_LAST:
 		write_half(a, NULL);
@@ -316,10 +318,10 @@ static AIR_ISR void boundary(hrc7000_air_t *a, uint32_t t)
 		a->txq_tail++;
 		a->underrun = false;
 		if (a->tx == HRC7000_AIR_START) {
-			ev_push(a, AIR_EV_TX_STARTED, t + TX_AIR_DELAY_US + HALF_SYM_US);
+			ev_push(a, AIR_EV_TX_STARTED, t + TX_AIR_DELAY_US + HALF_SYM_US, 0);
 		}
 		a->tx = last ? HRC7000_AIR_LAST : HRC7000_AIR_RUN;
-		ev_push(a, AIR_EV_TX_SPACE, t);
+		ev_push(a, AIR_EV_TX_SPACE, t, 0);
 	} else if (a->end_req) {
 		write_half(a, NULL);	// the last chunk is on air in the slot now starting
 		a->tx = HRC7000_AIR_TAIL;
@@ -328,7 +330,7 @@ static AIR_ISR void boundary(hrc7000_air_t *a, uint32_t t)
 		a->st.tx_underruns++;
 		if (!a->underrun) {
 			a->underrun = true;
-			ev_push(a, AIR_EV_TX_UNDERRUN, t + TX_AIR_DELAY_US);
+			ev_push(a, AIR_EV_TX_UNDERRUN, t + TX_AIR_DELAY_US, 0);
 		}
 	}
 }
@@ -500,7 +502,7 @@ void hrc7000_air_close(hrc7000_air_t *a, bool chip)
 	if (a->open) {
 		if (a->tx != HRC7000_AIR_RX) {
 			bool mod = a->mod_saved;
-			tx_stop(a, now(a), false);	// its TX_DONE goes nowhere: the session ends
+			tx_stop(a, now(a), false, AIR_TX_END_ABORTED);	// its TX_DONE goes nowhere: the session ends
 			if (chip) {
 				w(a, C7_LAYER2_TXRX_CTRL, TXRX_NONE);
 				if (mod) {
@@ -536,7 +538,7 @@ void hrc7000_air_suspend(hrc7000_air_t *a)
 	lock(a);
 	if (a->open || a->tap) {
 		if (a->tx != HRC7000_AIR_RX) {
-			tx_stop(a, now(a), false);
+			tx_stop(a, now(a), false, AIR_TX_END_ABORTED);
 		}
 		a->copy = false;	// the saved registers stay: they are put back at the end
 		a->suspended = true;
@@ -587,7 +589,7 @@ void hrc7000_air_poll(hrc7000_air_t *a)
 		uint32_t last = a->tick_any ? a->t_tick : a->t_begin;
 		if ((uint32_t)(t - last) > STALL_US || (!a->pa && (uint32_t)(t - a->t_begin) > NO_KEY_US)) {
 			a->st.stalls++;		// no slot clock or no RF TX interrupt: never leave the PA up without them
-			tx_stop(a, t, true);
+			tx_stop(a, t, true, AIR_TX_END_STALLED);
 		}
 	}
 	// A copy request lost for good (modem-hrc7000.md 3.3): a request line still high after the interrupt took the
@@ -607,7 +609,7 @@ void hrc7000_air_poll(hrc7000_air_t *a)
 		__atomic_thread_fence(__ATOMIC_ACQUIRE);
 		hrc7000_air_ev_t e = a->evq[a->ev_tail % HRC7000_AIR_EVQ];
 		a->ev_tail++;
-		air_event_t ev = { .kind = e.kind, .t_us = e.t_us, .arg = 0, .chunk = NULL };
+		air_event_t ev = { .kind = e.kind, .t_us = e.t_us, .arg = e.arg, .chunk = NULL };
 		air_event_cb_t cb = a->cb;
 		if (cb != NULL) {
 			cb(&ev, a->cb_ctx);
@@ -690,7 +692,7 @@ void hrc7000_air_tx_abort(hrc7000_air_t *a)
 	lock(a);
 	if (a->open) {
 		if (a->tx != HRC7000_AIR_RX) {
-			tx_stop(a, now(a), true);
+			tx_stop(a, now(a), true, AIR_TX_END_ABORTED);
 		} else {
 			a->txq_tail = a->txq_head;
 			a->end_req = false;

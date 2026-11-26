@@ -54,6 +54,7 @@ typedef struct {
 
 typedef struct {
 	uint8_t kind;		// air_event_kind_t
+	uint8_t arg;		// air_tx_end_reason_t for AIR_EV_TX_DONE
 	uint32_t t_us;
 } hrc7000_air_ev_t;
 

@@ -56,6 +56,7 @@ static void on_event(const air_event_t *ev, void *ctx)
 	case AIR_EV_TX_DONE:
 		if (s->tx == AIR_TX_IDLE)
 			break;
+		s->tx_end_reason = ev->arg <= AIR_TX_END_STALLED ? (uint8_t)ev->arg : AIR_TX_END_UNKNOWN;
 		s->tx = AIR_TX_DONE;
 		// What was on the channel while we sent is not a continuation of what was there before
 		air_framer_rx_reset(&s->fr);
@@ -119,6 +120,7 @@ bool air_session_tx_prime(air_session_t *s)
 	if (!s->air || !(s->fit & AIR_FIT_TX) || (s->tx != AIR_TX_IDLE && s->tx != AIR_TX_PRIMING))
 		return false;
 	if (s->tx == AIR_TX_IDLE) {
+		s->tx_end_reason = AIR_TX_END_UNKNOWN;
 		s->finish = s->finished = false;
 		air_framer_tx_start(&s->fr, s->fit);
 		s->tx = AIR_TX_PRIMING;
@@ -145,7 +147,7 @@ void air_session_tx_abort(air_session_t *s)
 	if (!s->air || s->tx == AIR_TX_IDLE || s->tx == AIR_TX_DONE)
 		return;
 	if (s->tx == AIR_TX_PRIMING) {
-		// Never keyed, but chunks sit in the provider's queue: it drops them, and says done
+		// Never keyed, but chunks sit in the provider's queue: it drops them
 		s->tx = AIR_TX_ON;
 	}
 	s->air->tx_abort();

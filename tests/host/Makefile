@@ -170,18 +170,31 @@ m17RadioTest: m17RadioTest.c $(M17ENG) $(CORE)/radio/radio_m17.c $(CORE)/radio/r
 		-I$(ROOT)/hal -Wshadow -o $@ m17RadioTest.c $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c \
 		$(M17ENG) $(CORE)/air/air_session.c $(M17MSG) -lm
 
-TESTS   += m17MessageDecodeTest m17MessageStoreTest m17MessageRxTest
+TESTS   += m17MessageDecodeTest m17MessageStoreTest m17MessageRxTest m17MessageTxRequestTest m17MessageTxAdapterTest
 m17MessageDecodeTest: m17MessageDecodeTest.c $(M17DECODE) $(M17FEC) $(M17MSG_HEADERS) $(wildcard $(CORE)/m17/*.h)
 	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -o $@ m17MessageDecodeTest.c $(M17DECODE) $(M17FEC)
 
 m17MessageStoreTest: m17MessageStoreTest.c $(CORE)/radio/radio_m17_msg.c $(M17MSG_HEADERS)
 	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -o $@ m17MessageStoreTest.c $(CORE)/radio/radio_m17_msg.c
 
+m17MessageTxRequestTest: m17MessageTxRequestTest.c $(CORE)/radio/radio_m17_msg_tx.c $(CORE)/radio/radio_m17_msg_tx.h $(CORE)/m17/m17_text.h $(M17MSG_HEADERS)
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -o $@ m17MessageTxRequestTest.c $(CORE)/radio/radio_m17_msg_tx.c
+
 M17RX := $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(CORE)/air/air_session.c $(M17ENG) $(M17MSG)
 m17MessageRxTest: m17MessageRxTest.c $(M17RX) $(M17MSG_HEADERS) $(CORE)/radio/radio_m17.h \
                   $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_session.h
 	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -DCONFIG_P25=1 -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
 		-o $@ m17MessageRxTest.c $(M17RX) -lm
+
+m17MessageTxAdapterTest: m17MessageTxAdapterTest.c $(M17RX) $(M17MSG_HEADERS) $(CORE)/radio/radio_m17.h \
+                         $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_session.h
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -DCONFIG_P25=1 -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
+		-o $@ m17MessageTxAdapterTest.c $(M17RX) -lm
+
+TESTS   += airSessionTxEndTest
+airSessionTxEndTest: airSessionTxEndTest.c $(CORE)/air/air_session.c $(CORE)/air/air_session.h \
+                     $(CORE)/air/air_framer.c $(CORE)/air/air_framer.h
+	$(CC) $(CFLAGS) -Wshadow -o $@ airSessionTxEndTest.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c
 
 nxdnEngineTest: nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC)
 	$(CC) $(CFLAGS) -DCONFIG_NXDN_SCRAMBLER=1 -I$(ROOT)/hal -Wshadow -o $@ nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC) -lm
@@ -313,6 +326,9 @@ run: $(TESTS)
 	./m17MessageDecodeTest
 	./m17MessageStoreTest
 	./m17MessageRxTest
+	./m17MessageTxRequestTest
+	./m17MessageTxAdapterTest
+	./airSessionTxEndTest
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest
 	./p25VoiceTest
@@ -430,6 +446,13 @@ radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/
                   $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
 		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ $(RCM17) -lm
+
+# M17 message state tests include the radio core test harness.
+TESTS   += m17MessageRadioTest
+m17MessageRadioTest: m17MessageRadioTest.c $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/call/*.h) $(CORE)/dmr/dmrDataService.h \
+                     $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
+	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
+		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ m17MessageRadioTest.c $(filter-out radioCoreTest.c,$(RCM17)) -lm
 
 # The same with APRS: what the data service hears goes into the station list (a DMR APRS position, docs/spec/aprs.md 8.2)
 TESTS   += radioCoreTestAprs
@@ -557,7 +580,7 @@ boardBandTest: boardBandTest.c $(ROOT)/hal/board.h
 	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -o $@ boardBandTest.c
 
 run: run-core
-run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
+run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 m17MessageRadioTest radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
           rx2LinkTest keyassignTest powerSwitchTest powerKeyTest boardBandTest batteryTest
 	./aprsRadioTest
 	./radioCoreTest
@@ -566,6 +589,7 @@ run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T
 	./radioCoreTestNxdn
 	./radioCoreTestP25Nxdn
 	./radioCoreTestM17
+	./m17MessageRadioTest
 	./radioCoreTestP25T
 	./radioCoreTestAprs
 	./radioCoreTestAprsDmr

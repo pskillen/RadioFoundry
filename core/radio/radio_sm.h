@@ -14,6 +14,9 @@
 #include "radio/radio_cwid.h"
 #include "radio/beep.h"	// beep_seg_t
 #include "radio/sigtone.h"	// SIG_STEPS
+#if CONFIG_M17_PACKET
+#include "m17/m17_engine.h"	// m17_csma_t
+#endif
 #if CONFIG_APRS
 #include "aprs/aprs.h"
 #endif
@@ -204,6 +207,9 @@ typedef enum {
 #if CONFIG_M17
 	RREQ_M17_TALK_TO,	// arg and arg2 carry the low and high words of the destination
 #endif
+#if CONFIG_M17_PACKET
+	RREQ_M17_MSG_SEND,	// radio_task.c: arg and arg2 carry the serial, never radio_sm_request
+#endif
 	// New request types go above
 
 	RREQ_COUNT		// KEEP LAST: sizes req_flags[] (radio_sm.c)
@@ -307,6 +313,21 @@ typedef struct {
 
 #if CONFIG_M17
 	uint64_t m17_override;		// temporary choice for view.m17_selected; zero selects its base
+#if CONFIG_M17_PACKET
+	struct {
+		const radio_m17_msg_tx_request_t *request;
+		void (*complete)(uint64_t serial, uint8_t reason);
+		uint64_t source;
+		m17_csma_t csma;
+		uint32_t rx_hz, tx_hz;
+		uint32_t start_ms, sample_ms;
+		uint8_t can, phase;
+		bool sampled;
+		uint8_t reason;
+	} m17_msg;
+	uint32_t m17_msg_rng;
+	uint32_t m17_rx_hz, m17_rx_ms;	// last successful tune and receiver settle reference
+#endif
 #if CONFIG_SCAN && CONFIG_DUAL_WATCH
 	bool m17_dual_scoped;		// the full watch selects a pane; the debug scan uses the tuned channel
 #endif
@@ -622,6 +643,11 @@ void radio_sm_t3_brief(radio_sm_t *sm);
 #endif
 void radio_sm_init(radio_sm_t *sm, uint32_t now_ms);
 void radio_sm_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms);
+#if CONFIG_M17_PACKET
+// The owner retains request until complete, then must not access it again.
+void radio_sm_m17_msg_accept(radio_sm_t *sm, const radio_m17_msg_tx_request_t *request,
+		void (*complete)(uint64_t serial, uint8_t reason), uint32_t now_ms);
+#endif
 // Every RADIO_POLL_MS: status, squelch, audio, LEDs, TX time-out
 void radio_sm_poll(radio_sm_t *sm, uint32_t now_ms);
 

@@ -21,7 +21,7 @@ typedef enum {
 	AIR_TX_PRIMING,		// symbols are being queued, nothing is keyed
 	AIR_TX_ON,		// the provider modulates; tx_fill keeps it fed
 	AIR_TX_ENDING,		// the last symbol is queued
-	AIR_TX_DONE,		// AIR_EV_TX_DONE came: the owner switches the transmitter off, then air_session_tx_clear
+	AIR_TX_DONE,		// the provider stopped or refused to start: the owner switches off, then clears
 } air_tx_state_t;
 
 typedef struct {
@@ -29,7 +29,7 @@ typedef struct {
 	// air_session_tx_prime (owner's task) and, once the transmission runs, on the provider's events. Not adding
 	// any is allowed (nothing ready yet): it is called again when the next chunk has left
 	void (*tx_fill)(void *ctx);
-	// The transmission has left the air (provider's task). May be NULL: the owner polls air_session_tx_state
+	// Transmit stopped (provider's task). May be NULL: the owner polls air_session_tx_state
 	void (*tx_done)(void *ctx);
 } air_session_ops_t;
 
@@ -50,6 +50,7 @@ typedef struct {
 	volatile uint8_t tx;		// air_tx_state_t
 	volatile bool finish;		// air_session_tx_finish was called ...
 	volatile bool finished;		// ... and the last chunk is in the provider's queue (it may have had to wait for room)
+	volatile uint8_t tx_end_reason;	// air_tx_end_reason_t, set before DONE and kept until the next prime
 	air_session_stats_t stats;
 } air_session_t;
 
@@ -69,7 +70,7 @@ void air_session_retuned(air_session_t *s);
 // (hal_radio_t.tx), go. False from go: the provider refused; the owner switches off again
 bool air_session_tx_prime(air_session_t *s);
 bool air_session_tx_go(air_session_t *s);
-// Stop at once, whatever is queued (owner's task). AIR_TX_DONE follows
+// Stop at once, whatever is queued (owner's task). An active transmission reports AIR_TX_DONE
 void air_session_tx_abort(air_session_t *s);
 air_tx_state_t air_session_tx_state(const air_session_t *s);
 // After AIR_TX_DONE and hal_radio_t.tx_off: back to AIR_TX_IDLE

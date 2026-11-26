@@ -28,6 +28,7 @@ typedef struct {
 #if CONFIG_M17_PACKET
 	radio_m17_msg_decoded_t msg;	// decode workspace used only by the synchronous RX hook
 	bool rx_restarting;
+	uint32_t packet_started_base, packet_underruns_base;
 #endif
 	uint8_t hard[(M17_FRAME_SYMS + 3) / 4];
 	int8_t soft[M17_FRAME_SYMS];
@@ -53,6 +54,9 @@ static radio_m17_msg_store_t inbox;
 static uint32_t last_received_id;
 static radio_m17_packet_stats_t packet_stats;
 static m17_packet_rx_stats_t packet_base;	// last protocol counters folded into packet_stats
+static uint8_t packet_tx_status;		// radio task only; survives releasing the engine lend
+
+static void m17_tx_abort(void);
 
 void radio_m17_inbox_bind(const radio_m17_inbox_ops_t *ops)
 {
@@ -181,6 +185,7 @@ void radio_m17_init(void)
 	inbox_lock();
 	radio_m17_msg_store_init(&inbox);
 	last_received_id = 0;
+	packet_tx_status = RADIO_M17_PACKET_TX_NONE;
 	memset(&packet_stats, 0, sizeof packet_stats);
 	inbox_unlock();
 #endif
@@ -290,6 +295,94 @@ static bool callsign_ok(void)
 
 	return applied.callsign[0] != '\0' && m17_addr_encode(applied.callsign, raw);
 }
+
+#if CONFIG_M17_PACKET
+bool radio_m17_rx_locked(void)
+{
+	inbox_lock();
+	bool locked = blk != NULL && (blk->session.fit & AIR_FIT_RX) && air_framer_locked(&blk->session.fr);
+	inbox_unlock();
+	return locked;
+}
+
+uint64_t radio_m17_packet_tx_source(void)
+{
+	uint64_t src = blk != NULL ? blk->tx.cfg.own : 0;
+
+	return src < M17_CP_ADDR_RESERVED ? src : 0;
+}
+
+static void packet_tx_restore(m17_block_t *b)
+{
+	b->tx.active = false;
+	b->tx.cfg.dst = applied.dst;
+	b->tx.cfg.tx_kind = M17_TX_VOICE;
+}
+
+bool radio_m17_packet_tx_prepare(uint64_t dst, const uint8_t *data, uint16_t len)
+{
+	m17_block_t *b = blk;
+
+	if (b == NULL || !air_session_is_open(&b->session) || !(b->session.fit & AIR_FIT_TX) ||
+	    air_session_tx_state(&b->session) != AIR_TX_IDLE || b->tx.cfg.tx_kind != M17_TX_VOICE ||
+	    radio_m17_packet_tx_source() == 0 || dst == 0 ||
+	    (dst >= M17_CP_ADDR_RESERVED && dst != M17_ADDR_BROADCAST) ||
+	    data == NULL || len == 0 || len > RADIO_M17_MSG_TEXT_MAX + 1 ||
+	    data[len - 1] != 0 || memchr(data, 0, len - 1) != NULL)
+		return false;
+
+	b->tx.cfg.dst = dst;
+	b->tx.cfg.tx_kind = M17_TX_PACKET;
+	if (!m17_engine_tx_start(&b->tx, 0x05, data, len)) {
+		packet_tx_restore(b);
+		return false;
+	}
+	b->packet_started_base = b->session.stats.tx_chunks_started;
+	b->packet_underruns_base = b->session.stats.tx_underruns;
+	packet_tx_status = RADIO_M17_PACKET_TX_PENDING;
+	return true;
+}
+
+radio_m17_packet_tx_status_t radio_m17_packet_tx_status(void)
+{
+	m17_block_t *b = blk;
+	radio_m17_packet_tx_status_t status = (radio_m17_packet_tx_status_t)packet_tx_status;
+
+	if (b == NULL || status != RADIO_M17_PACKET_TX_PENDING)
+		return status;
+	inbox_lock();
+	if (air_session_tx_state(&b->session) == AIR_TX_DONE) {
+		status = b->session.tx_end_reason == AIR_TX_END_DRAINED && b->session.finished &&
+			 b->session.stats.tx_chunks_started != b->packet_started_base &&
+			 b->session.stats.tx_underruns == b->packet_underruns_base ?
+			 RADIO_M17_PACKET_TX_DRAINED : RADIO_M17_PACKET_TX_FAILED;
+	}
+	inbox_unlock();
+	return status;
+}
+
+// Before a successful go there is no transmission to wait for. Drop the queue even if go marked DONE
+// on refusal, and complete locally because a provider can flush an unstarted queue without an event.
+static void packet_tx_cancel_unstarted(m17_block_t *b)
+{
+	packet_tx_status = RADIO_M17_PACKET_TX_FAILED;
+	if (air_session_tx_state(&b->session) != AIR_TX_IDLE) {
+		b->session.air->tx_abort();
+		b->session.tx = AIR_TX_DONE;
+	}
+	packet_tx_restore(b);
+}
+
+static void packet_tx_fail_active(m17_block_t *b)
+{
+	packet_tx_status = RADIO_M17_PACKET_TX_FAILED;
+	// A deferred SPACE event may precede the abort's DONE. Stop refills before the flush.
+	inbox_lock();
+	if (air_session_tx_state(&b->session) == AIR_TX_ON)
+		b->session.tx = AIR_TX_ENDING;
+	inbox_unlock();
+}
+#endif
 
 // Symbols the engine has built, while the provider's queue has room. A voice transmission keeps producing
 // frames until it is stopped; an empty read is the end marker already sent.
@@ -404,8 +497,18 @@ void radio_m17_end(void)
 	bert_done.frames += b->rx.bert.frames;
 	bert_done.lost += b->rx.bert.lost;
 	bert_sum(NULL);
+#if CONFIG_M17_PACKET
+	if (b->tx.cfg.tx_kind == M17_TX_PACKET) {
+		if (air_session_tx_state(&b->session) <= AIR_TX_PRIMING)
+			packet_tx_cancel_unstarted(b);
+		else
+			packet_tx_fail_active(b);
+	}
+#endif
 	air_session_close(&b->session);
 #if CONFIG_M17_PACKET
+	if (b->tx.cfg.tx_kind == M17_TX_PACKET)
+		packet_tx_restore(b);
 	inbox_lock();
 	packet_capture(&b->rx.pkt_stats);
 	memset(&packet_base, 0, sizeof packet_base);
@@ -423,6 +526,10 @@ bool radio_m17_running(void)
 
 void radio_m17_bert(uint8_t cmd)
 {
+#if CONFIG_M17_PACKET
+	if (blk != NULL && blk->tx.cfg.tx_kind == M17_TX_PACKET)
+		return;
+#endif
 	if (cmd == 3) {
 		bert_on = false;
 		if (blk != NULL)
@@ -463,6 +570,8 @@ void radio_m17_retuned(void)
 	// admission until the old provenance has been reset, and keep the provider call outside the gate.
 	m17_block_t *b = blk;
 
+	if (b->tx.cfg.tx_kind == M17_TX_PACKET)
+		m17_tx_abort();
 	inbox_lock();
 	b->rx_restarting = true;
 	inbox_unlock();
@@ -486,6 +595,10 @@ bool radio_m17_apply(const radio_m17_settings_t *base, uint64_t dst)
 
 	if (blk == NULL || air_session_tx_state(&blk->session) != AIR_TX_IDLE)
 		return false;
+#if CONFIG_M17_PACKET
+	if (blk->tx.cfg.tx_kind == M17_TX_PACKET)
+		return false;
+#endif
 	params(base, dst, &cfg);
 	cfg.tx_kind = blk->tx.cfg.tx_kind;
 #if CONFIG_M17_PACKET
@@ -690,6 +803,14 @@ static bool m17_tx_prepare(void)
 	prepare_deny = 0;
 	if (b == NULL || !air_session_is_open(&b->session))
 		return false;
+#if CONFIG_M17_PACKET
+	if (b->tx.cfg.tx_kind == M17_TX_PACKET) {
+		if (air_session_tx_prime(&b->session))
+			return true;
+		m17_tx_abort();
+		return false;
+	}
+#endif
 	if (b->tx.cfg.tx_kind != M17_TX_BERT && !callsign_ok()) {
 		prepare_deny = 1;
 		return false;
@@ -701,11 +822,30 @@ static bool m17_tx_prepare(void)
 
 static bool m17_tx_go(void)
 {
+#if CONFIG_M17_PACKET
+	if (blk != NULL && blk->tx.cfg.tx_kind == M17_TX_PACKET) {
+		air_tx_state_t state = air_session_tx_state(&blk->session);
+
+		if (state != AIR_TX_PRIMING) {
+			if (state == AIR_TX_IDLE)
+				packet_tx_cancel_unstarted(blk);
+			return false;
+		}
+		if (air_session_tx_go(&blk->session))
+			return true;
+		packet_tx_cancel_unstarted(blk);
+		return false;
+	}
+#endif
 	return blk != NULL && air_session_tx_go(&blk->session);
 }
 
 static void m17_tx_stop(void)
 {
+#if CONFIG_M17_PACKET
+	if (blk != NULL && blk->tx.cfg.tx_kind == M17_TX_PACKET)
+		return;	// a PTT release must not truncate a packet
+#endif
 	if (blk != NULL)
 		m17_engine_tx_stop(&blk->tx);
 }
@@ -714,6 +854,15 @@ static void m17_tx_abort(void)
 {
 	if (blk == NULL)
 		return;
+#if CONFIG_M17_PACKET
+	if (blk->tx.cfg.tx_kind == M17_TX_PACKET) {
+		if (air_session_tx_state(&blk->session) <= AIR_TX_PRIMING) {
+			packet_tx_cancel_unstarted(blk);
+			return;
+		}
+		packet_tx_fail_active(blk);
+	}
+#endif
 	m17_engine_tx_stop(&blk->tx);
 	air_session_tx_abort(&blk->session);
 }
@@ -726,6 +875,19 @@ static uint8_t m17_tx_state(void)
 static void m17_tx_clear(void)
 {
 	if (blk != NULL) {
+#if CONFIG_M17_PACKET
+		if (blk->tx.cfg.tx_kind == M17_TX_PACKET) {
+			air_tx_state_t state = air_session_tx_state(&blk->session);
+			if (state <= AIR_TX_PRIMING) {
+				packet_tx_cancel_unstarted(blk);
+			} else if (state == AIR_TX_DONE) {
+				packet_tx_status = (uint8_t)radio_m17_packet_tx_status();
+				packet_tx_restore(blk);
+			} else {
+				return;
+			}
+		}
+#endif
 		air_session_tx_clear(&blk->session);
 		blk->tx.cfg.tx_kind = M17_TX_VOICE;	// a BERT transmission was selected for this key-up
 	}

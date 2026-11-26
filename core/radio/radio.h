@@ -9,6 +9,9 @@
 #include <stdbool.h>
 #include "codeplug/codeplug.h"
 #include "config.h"
+#if CONFIG_M17_PACKET
+#include "radio/radio_m17_msg_tx.h"
+#endif
 #if CONFIG_SATELLITE_TLE
 #include "satellite/path.h"
 #include "satellite/store.h"
@@ -649,6 +652,12 @@ void radio_req_m17_settings(const radio_m17_settings_t *s);
 void radio_req_m17_bert(uint8_t cmd);
 // Queue a 48-bit destination for the selected generation. Zero selects Default.
 bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst);
+#endif
+#if CONFIG_M17_PACKET
+// Returns a serial for a copied request, or zero if it could not be queued.
+uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const char *text, size_t length);
+// Copies the latest terminal result; false until a request has completed.
+bool radio_get_m17_msg_tx_result(radio_m17_msg_tx_result_t *out);
 #endif
 #if CONFIG_DMR
 void radio_req_reply_cancel(void);		// BACK on Home: end the DMR reply window

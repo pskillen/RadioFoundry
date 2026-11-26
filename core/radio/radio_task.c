@@ -103,6 +103,17 @@ static SemaphoreHandle_t view_lock;
 static QueueHandle_t requests;
 
 static volatile uint32_t req_handled, req_dropped;
+#if CONFIG_M17_PACKET
+// One copied request, shared by submitters and the radio owner under the scheduler gate.
+static radio_m17_msg_tx_t m17_msg_tx;
+
+static void m17_msg_complete(uint64_t serial, uint8_t reason)
+{
+	vTaskSuspendAll();
+	(void)radio_m17_msg_tx_complete(&m17_msg_tx, serial, reason);
+	(void)xTaskResumeAll();
+}
+#endif
 
 static bool send(const radio_req_t *req, TickType_t wait)
 {
@@ -313,6 +324,16 @@ static void radio_task(void *arg)
 				} else if (req.type == RREQ_SETTINGS) {
 					apply_pending_settings();
 				}
+#if CONFIG_M17_PACKET
+				else if (req.type == RREQ_M17_MSG_SEND) {
+					uint64_t serial = (uint32_t)req.arg | ((uint64_t)req.arg2 << 32);
+					vTaskSuspendAll();
+					const radio_m17_msg_tx_request_t *request = radio_m17_msg_tx_consume(&m17_msg_tx, serial);
+					(void)xTaskResumeAll();
+					if (request)
+						radio_sm_m17_msg_accept(&sm, request, m17_msg_complete, hal_millis());
+				}
+#endif
 #if CONFIG_SATELLITE_TLE
 				else if (req.type == RREQ_SATELLITE_TRACK) {
 					satellite_request(req.arg != 0, (uint8_t)req.arg2, hal_millis());
@@ -743,6 +764,38 @@ void radio_req_nxdn_settings(const radio_nxdn_settings_t *s)
 	post(RREQ_NXDN_SET, 0, pdMS_TO_TICKS(50));
 }
 #endif
+#if CONFIG_M17_PACKET
+uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const char *text, size_t length)
+{
+	if (requests == NULL || !radio_m17_msg_tx_validate(text, length))
+		return 0;
+	vTaskSuspendAll();
+	uint64_t serial = radio_m17_msg_tx_reserve(&m17_msg_tx, generation, destination, text, length);
+	(void)xTaskResumeAll();
+	if (!serial)
+		return 0;
+	const radio_req_t req = { .type = RREQ_M17_MSG_SEND, .arg = (int32_t)(uint32_t)serial,
+		.arg2 = (uint32_t)(serial >> 32) };
+	if (!send(&req, 0)) {
+		vTaskSuspendAll();
+		(void)radio_m17_msg_tx_rollback(&m17_msg_tx, serial);
+		(void)xTaskResumeAll();
+		return 0;
+	}
+	return serial;
+}
+
+bool radio_get_m17_msg_tx_result(radio_m17_msg_tx_result_t *out)
+{
+	if (!out)
+		return false;
+	vTaskSuspendAll();
+	*out = radio_m17_msg_tx_result(&m17_msg_tx);
+	(void)xTaskResumeAll();
+	return out->serial != 0;
+}
+#endif
+
 #if CONFIG_M17
 bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst)
 {

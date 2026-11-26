@@ -130,6 +130,23 @@ void radio_m17_stats(radio_m17_stats_t *out);
 void radio_m17_reset_stats(void);
 
 #if CONFIG_M17_PACKET
+typedef enum {
+	RADIO_M17_PACKET_TX_NONE,
+	RADIO_M17_PACKET_TX_PENDING,
+	RADIO_M17_PACKET_TX_DRAINED,
+	RADIO_M17_PACKET_TX_FAILED,
+} radio_m17_packet_tx_status_t;
+
+// Radio task. Current framer lock and resolved nonreserved source address (zero if unavailable).
+bool radio_m17_rx_locked(void);
+uint64_t radio_m17_packet_tx_source(void);
+// Arm one idle voice session with a resolved destination and text ending in one NUL. The engine copies
+// the payload synchronously. On success use the normal air prepare/go path. Abort or clear to discard.
+bool radio_m17_packet_tx_prepare(uint64_t dst, const uint8_t *data, uint16_t len);
+// Last armed packet's status, retained across clear and teardown until the next arm or init.
+// The radio owner must drop carrier before reporting DRAINED as sent.
+radio_m17_packet_tx_status_t radio_m17_packet_tx_status(void);
+
 typedef struct {
 	radio_m17_msg_summary_t summary;
 	uint32_t last_received_id;	// changes on insertion and survives deletion of the newest entry

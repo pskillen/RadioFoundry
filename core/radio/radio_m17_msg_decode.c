@@ -6,6 +6,7 @@
 
 #if CONFIG_M17 && CONFIG_M17_PACKET
 #include "m17/m17_packet.h"
+#include "m17/m17_text.h"
 
 static bool usable(const uint8_t *addr)
 {
@@ -41,32 +42,9 @@ radio_m17_msg_result_t radio_m17_msg_decode(const uint8_t lsf[M17_LSF_BYTES],
 	bool cut = false;
 	for (size_t at = 1; at < len - 1;) {
 		size_t start = at;
-		uint32_t cp = packet[at++];
-		unsigned tail;
-		if (cp < 0x80u)
-			tail = 0;
-		else if (cp >= 0xC2u && cp <= 0xDFu)
-			tail = 1;
-		else if (cp >= 0xE0u && cp <= 0xEFu)
-			tail = 2;
-		else if (cp >= 0xF0u && cp <= 0xF4u)
-			tail = 3;
-		else
+		uint32_t cp;
+		if (!m17_text_next(packet, len - 1, &at, &cp))
 			return RADIO_M17_MSG_MALFORMED_TEXT;
-		if (cp == 0 || at + tail > len - 1)
-			return RADIO_M17_MSG_MALFORMED_TEXT;
-		if (tail) {
-			cp &= 0x7Fu >> (tail + 1);
-			for (unsigned i = 0; i < tail; i++) {
-				uint8_t b = packet[at++];
-				if ((b & 0xC0u) != 0x80u)
-					return RADIO_M17_MSG_MALFORMED_TEXT;
-				cp = (cp << 6) | (b & 0x3Fu);
-			}
-			if (cp < (tail == 1 ? 0x80u : tail == 2 ? 0x800u : 0x10000u) ||
-			    (cp >= 0xD800u && cp <= 0xDFFFu) || cp > 0x10FFFFu)
-				return RADIO_M17_MSG_MALFORMED_TEXT;
-		}
 		unsigned n = CONFIG_LANG_ZH && cp >= 0x800u && cp <= 0xFFFFu ? 3u : 1u;
 		if (cut || used + n > RADIO_M17_MSG_DISPLAY_MAX) {
 			cut = true;

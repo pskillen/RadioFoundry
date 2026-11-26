@@ -497,7 +497,7 @@ static void write_half(hrc6000_air_t *a, uint8_t addr, const air_tx_chunk_t *c)
 }
 
 // The transmission ends now: PA off, the queue dropped, the pair back, receiving (chip: the registers may be written)
-static void tx_stop(hrc6000_air_t *a, uint32_t t, bool chip)
+static void tx_stop(hrc6000_air_t *a, uint32_t t, bool chip, air_tx_end_reason_t reason)
 {
 	a->last_out = true;
 	if (a->pa) {
@@ -519,7 +519,7 @@ static void tx_stop(hrc6000_air_t *a, uint32_t t, bool chip)
 	a->tx = HRC6000_AIR_RX;
 	a->gap = true;
 	a->st.tx_done++;
-	ev_push(a, AIR_EV_TX_DONE, t, 0);
+	ev_push(a, AIR_EV_TX_DONE, t, reason);
 }
 
 static void key(hrc6000_air_t *a)
@@ -528,6 +528,7 @@ static void key(hrc6000_air_t *a)
 		a->pa = true;
 	} else {
 		a->st.rf_fail++;	// tried again at the next slot
+		a->key_failed = true;
 	}
 }
 
@@ -543,7 +544,7 @@ static void tx_slot(hrc6000_air_t *a, uint32_t t)
 	if (a->tx == HRC6000_AIR_TAIL) {
 		if (a->tail >= 1) {
 			// The last chunk left the air 2.2 ms into the slot that started at the previous interrupt
-			tx_stop(a, t, true);
+			tx_stop(a, t, true, a->key_failed ? AIR_TX_END_STALLED : AIR_TX_END_DRAINED);
 			return;
 		}
 		write_half(a, addr, NULL);
@@ -886,7 +887,7 @@ void hrc6000_air_close(hrc6000_air_t *a, bool chip)
 	lock(a);
 	if (a->open) {
 		if (a->tx != HRC6000_AIR_RX) {
-			tx_stop(a, now(a), chip);	// its TX_DONE goes nowhere: the session ends
+			tx_stop(a, now(a), chip, AIR_TX_END_ABORTED);	// its TX_DONE goes nowhere: the session ends
 		}
 		copy_restore(a, chip);
 		if (chip) {
@@ -924,7 +925,7 @@ void hrc6000_air_suspend(hrc6000_air_t *a)
 	lock(a);
 	if (a->open || a->tap) {
 		if (a->open && a->tx != HRC6000_AIR_RX) {
-			tx_stop(a, now(a), false);
+			tx_stop(a, now(a), false, AIR_TX_END_ABORTED);
 		}
 		a->copy = false;	// the board's mode entry rewrote what copy_on changed; rx_restart sets it up again
 		copy_forget(a);
@@ -958,7 +959,7 @@ void hrc6000_air_poll(hrc6000_air_t *a)
 		uint32_t last = a->tx_n > 0 ? a->t_tick : a->t_begin;
 		if (a->tx != HRC6000_AIR_RX && (uint32_t)(t - last) > STALL_US) {
 			a->st.stalls++;		// no slot clock: never leave the PA up without it
-			tx_stop(a, t, true);
+			tx_stop(a, t, true, AIR_TX_END_STALLED);
 		}
 	}
 	unlock(a);
@@ -1043,6 +1044,7 @@ bool hrc6000_air_tx_begin(hrc6000_air_t *a)
 		a->t_begin = now(a);
 		a->rearm_hold = false;
 		a->underrun = false;
+		a->key_failed = false;
 		a->pa = false;
 		a->tx = HRC6000_AIR_START;
 		w(a, R_L2_CTL, L2_ACTIVE);	// own timing: the first timeslot interrupt comes up to 30 ms after
@@ -1092,7 +1094,7 @@ void hrc6000_air_tx_abort(hrc6000_air_t *a)
 	lock(a);
 	if (a->open) {
 		if (a->tx != HRC6000_AIR_RX) {
-			tx_stop(a, now(a), true);
+			tx_stop(a, now(a), true, AIR_TX_END_ABORTED);
 		} else {
 			a->txq_tail = a->txq_head;
 			a->end_req = false;

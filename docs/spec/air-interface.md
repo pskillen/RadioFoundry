@@ -83,8 +83,14 @@ Events:
 | `AIR_EV_TX_STARTED` | the first queued symbol is on air, with its time |
 | `AIR_EV_TX_SPACE` | a chunk left the queue |
 | `AIR_EV_TX_UNDERRUN` | the queue ran dry before the last chunk: idle symbols went out |
-| `AIR_EV_TX_DONE` | the last chunk has left the air, or the abort is through; receiving again |
+| `AIR_EV_TX_DONE` | the provider stopped transmitting. `arg` gives the end reason |
 | `AIR_EV_SLOT` | TDMA: a slot boundary, with its counter and time |
+
+The provider reports `AIR_TX_END_DRAINED` (1) on a confirmed tail after the last chunk. An owner stop (abort,
+suspend, or close) reports `AIR_TX_END_ABORTED` (2) when it ends an active transmission. The transmit watchdog or a
+missed PA key reports `AIR_TX_END_STALLED` (3). The first stop sets the reason, and a missed key takes precedence
+over a later tail. Providers that supply no reason report `AIR_TX_END_UNKNOWN` (0). Close discards pending
+callbacks, and abort may simply drop chunks queued before key-up.
 
 A chunk starts wherever the provider's record does, never at a frame boundary. The framer finds the frames.
 
@@ -203,7 +209,11 @@ Before `air_session_tx_go` only the radio core's task touches the transmit side,
 A mode that has nothing ready in `tx_fill` adds nothing and is asked again one chunk later; it must add something
 before the queue falls under the provider's lead, or the provider sends idle symbols and reports an underrun.
 
-Transmit states: idle, priming, on, ending (the last symbol is queued), done.
+Transmit states are idle, priming, on, ending (the last symbol is queued), and done.
+The session stores the provider's reason in `tx_end_reason` before publishing `AIR_TX_DONE` and keeps it through
+`air_session_tx_clear`. A fresh prime resets the reason to unknown. A refused start can set done with no provider
+event. The owner switches the board transmitter off for every done state. For packet success it must additionally
+require a confirmed drain, no underrun, and completion of the board's `tx_off()`.
 
 In the radio core each mode on the air interface fills one table of these steps (`radio_air_ops_t`,
 `core/radio/radio_air.h`: running, no TX, prepare, go, stop, abort, state, clear), so PTT, the time-out and the
