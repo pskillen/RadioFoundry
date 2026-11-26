@@ -328,8 +328,6 @@ run: $(TESTS)
 	./m17MessageRxTest
 	./m17MessageTxRequestTest
 	./m17MessageTxAdapterTest
-	./m17MessageDebugTest
-	./m17MessageDebugTestNoPacket
 	./airSessionTxEndTest
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest
@@ -458,7 +456,7 @@ m17MessageRadioTest: m17MessageRadioTest.c $(RCM17) $(wildcard $(CORE)/radio/*.h
 		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ m17MessageRadioTest.c $(filter-out radioCoreTest.c,$(RCM17)) -lm
 
 TESTS   += m17MessageDebugTest m17MessageDebugTestNoPacket
-M17DBG  := $(CORE)/radio/radio_m17_msg_tx.c $(filter-out radioCoreTest.c,$(RCM17))
+M17DBG  := $(filter-out radioCoreTest.c,$(RCM17))
 m17MessageDebugTest: m17MessageDebugTest.c $(M17DBG) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/m17/*.h)
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
 		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ m17MessageDebugTest.c $(M17DBG) -lm
@@ -592,7 +590,7 @@ boardBandTest: boardBandTest.c $(ROOT)/hal/board.h
 	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -o $@ boardBandTest.c
 
 run: run-core
-run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 m17MessageRadioTest radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
+run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 m17MessageRadioTest m17MessageDebugTest m17MessageDebugTestNoPacket radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
           rx2LinkTest keyassignTest powerSwitchTest powerKeyTest boardBandTest batteryTest
 	./aprsRadioTest
 	./radioCoreTest
@@ -602,6 +600,8 @@ run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T
 	./radioCoreTestP25Nxdn
 	./radioCoreTestM17
 	./m17MessageRadioTest
+	./m17MessageDebugTest
+	./m17MessageDebugTestNoPacket
 	./radioCoreTestP25T
 	./radioCoreTestAprs
 	./radioCoreTestAprsDmr
