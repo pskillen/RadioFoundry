@@ -635,6 +635,25 @@ test("a switch a board leaves off by default can be chosen, with the board's rea
 	assert.equal(new Selection(radios.find((r) => r.id === "dm1701"), features, variants).defaultOffWhy("NET_PPP"), null);
 });
 
+test("every switch a board leaves off by default is offered, off, with a reason", () => {
+	const radios = json("radios.json").radios;
+	const features = json("features.json").features, variants = json("variants.json").variants;
+	for (const radio of radios) {
+		for (const name of Object.keys(radio.default_off)) {
+			const selection = new Selection(radio, features, variants);
+			const label = `${radio.id} ${name}`;
+			assert.ok(selection.supported(name), `${label} is supported`);
+			assert.ok(!radio.config.full.includes(name), `${label} is off by default`);
+			assert.ok(selection.defaultOffWhy(name)?.trim(), `${label} has a reason`);
+			selection.set(name, true);
+			assert.ok(selection.on.has(name), `${label} can be turned on`);
+		}
+	}
+	const dm1701 = radios.find((r) => r.id === "dm1701");
+	assert.ok(Object.hasOwn(dm1701.default_off, "HOTSPOT_SPLIT"));
+	assert.ok(Object.hasOwn(dm1701.default_off, "P25_TRUNK"));
+});
+
 // A codec slot's board reports the stock build its slot came from (rfoundry Board.codec_present): any build counts, an
 // unknown slot or another board's codec doesn't; a stock-file board has only its profile's id
 test("a reported codec counts for the board", () => {

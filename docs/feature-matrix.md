@@ -52,7 +52,7 @@ is `tools/bringup.py list --radio <id>`.
 | `bcast_fm` | not recorded | ✕ | not recorded | not written | ✕ | ✕ | ✕ | ✕ |
 | `rx_ext` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not written | not recorded |
 | `p25` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | partial, needs re-run |
-| `p25_trunk` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
+| `p25_trunk` | not recorded | off | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
 | `nxdn` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | partial, needs re-run |
 | `nxdn_scrambler` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
 | `m17` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
@@ -111,7 +111,7 @@ is `tools/bringup.py list --radio <id>`.
 | `usb` | ✕ | pass (seed) | ✕ | ✕ | not recorded | not recorded | not recorded | ✕ |
 | `hostlink` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |
 | `hotspot` | pass (seed) | pass (seed) | pass (seed) | pass (seed) | not recorded | not recorded | pass, needs re-run | off |
-| `split_duplex` | pass (seed) | pass (seed) | pass (seed) | not written | not written | not recorded | partial, needs re-run | not written |
+| `split_duplex` | pass (seed) | off | pass (seed) | not written | not written | not recorded | partial, needs re-run | not written |
 | `debuglink` | pass (seed) | pass (seed) | pass (seed) | pass (seed) | pass (seed) | not recorded | pass | partial |
 | `task_stacks` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | pass | pass |
 | `cps_openfw` | not recorded | pass (seed) | not recorded | pass (seed) | pass (seed) | not recorded | pass, needs re-run | pass, needs re-run |
@@ -247,7 +247,7 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | `USB_NETWORK` | ✕ | ● | ✕ | ✕ | ● | ● | ● | ✕ |
 | `NET_PPP` | ● | ○ | ● | ● | ○ | ○ | ○ | ○ |
 | `HOTSPOT` | ● | ● | ● | ● | ● | ● | ● | ○ |
-| `HOTSPOT_SPLIT` | ● | ● | ● | … | … | ● | ● | … |
+| `HOTSPOT_SPLIT` | ● | ○ | ● | … | … | ● | ● | … |
 | `DEBUGLINK` | ● | ● | ● | ● | ● | ● | ● | ● |
 | `CPS_OPENFW` | ● | ● | ● | ● | ● | ● | ● | ● |
 | `CPS_FAST` | ● | ● | ● | ● | ● | ● | ● | ● |
@@ -307,7 +307,7 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | `CONTACT_EDIT` | ● | ● | ● | ● | ● | ● | ● | ✕ |
 | `VOLUME_BAR` | ● | ● | ● | ● | ● | ● | ● | ● |
 | `P25` | ● | ● | ● | ● | … | ● | ● | ● |
-| `P25_TRUNK` | ● | ● | ● | ● | … | ● | ● | ● |
+| `P25_TRUNK` | ● | ○ | ● | ● | … | ● | ● | ● |
 | `NXDN` | ● | ● | ● | ● | … | ● | ● | ● |
 | `NXDN_SCRAMBLER` | ● | ● | ● | ● | … | ● | ● | ● |
 | `M17` | ● | ● | ● | ● | … | ● | ● | ● |
@@ -351,7 +351,7 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | Trunked supplementary data and the short data poll | `DMR_TRUNK_SUPL` | 724 | 684 | Needs `DMR_TRUNK_TX` |
 | Trunked calls through a system's telephone, line and dispatcher gateways: dialed digits sent with the call | `DMR_TRUNK_GW` | 1,552 | 1,732 | Needs `DMR_TRUNK_TX` |
 | P25 channels in the codeplug: the conventional codec | `P25` | 56 | — | The codec only: a P25 channel is shown as a mode not in this build ([p25-codeplug.md](spec/p25-codeplug.md)). A stored P25 channel runs on its own parameters ([p25.md](spec/p25.md) 7) |
-| P25 trunked systems in the codeplug: the codec | `P25_TRUNK` | 13,300* | — | Needs `P25`; on top of it. Off on the MD-380 with `P25`. A trunked channel hunts its system's control channel and follows voice grants for its talk group; where the system allows transmit it registers, affiliates, asks for a voice channel on PTT and transmits on the grant ([p25-trunking.md](spec/p25-trunking.md)). Run on the DM-1701 and the DM-32UV against a control channel the SDR bench plays, not on a live system. RAM: 1,232 B on the DM-1701 |
+| P25 trunked systems in the codeplug: the codec | `P25_TRUNK` | 13,300* | — | Needs `P25`; on top of it. Off on the MD-380 with `P25`. A trunked channel hunts its system's control channel and follows voice grants for its talk group; where the system allows transmit it registers, affiliates, asks for a voice channel on PTT and transmits on the grant ([p25-trunking.md](spec/p25-trunking.md)). Run on the DM-1701 and the DM-32UV against a control channel the SDR bench plays, not on a live system. RAM: 1,232 B on the DM-1701. Off by default on the DM-1701 to make room for M17; with LTO it costs 14,124 B there (2273e30e) |
 | VFO (hand-tuned frequency) | `VFO` | 656 | 516 | Includes the DMR VFO; `VFO` and `VFO_DMR` re-measured 2026-10-17 (DM-1701 plain build, MD-380 with LTO). Copy to VFO ([dmr-voice.md](spec/dmr-voice.md) 2.2) is on top of that figure, behind the same switch: about 630 B on the DM-1701 and 730 B on the MD-380 (default builds, LTO as each has it), 750 B on the C-SKY radios |
 | FM VFO | `VFO_FM` | 504 | 452 |  |
 | DMR VFO (color code, slot, talk target typed in; mode change FM / DMR) | `VFO_DMR` | 144 | 104 | The VFO's mode, color code, slot and talk target are settings of the VFO, kept across power cycles ([dmr-voice.md](spec/dmr-voice.md) 2.1) |
@@ -395,7 +395,7 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | USB device | `USB` | 127,300 | 87,848 | DM-32 has no USB (host link on the programming cable's UART). Includes everything on USB |
 | Host link: hotspot, CPS, debug link on the host port | `HOSTLINK` | 115,640 | 77,644 | Includes its children |
 | MMDVM hotspot | `HOTSPOT` | 34,196 | ~12,400 | Includes split duplex and MMDVM SFR where built. MD-380: size estimated |
-| Split duplex repeater (two radios, one duplex modem) | `HOTSPOT_SPLIT` | 12,584 | — | MD-380: HR_C6000-only glue. DM-1701, DM-32UV, DM-1801 Pro: each half checked alone on the SDR bench; one pair (DM-1801 Pro TX, DM-32UV RX) with a subscriber: 29 of 31 calls on the right slot |
+| Split duplex repeater (two radios, one duplex modem) | `HOTSPOT_SPLIT` | 12,584 | — | MD-380: HR_C6000-only glue. DM-1701, DM-32UV, DM-1801 Pro: each half checked alone on the SDR bench; one pair (DM-1801 Pro TX, DM-32UV RX) with a subscriber: 29 of 31 calls on the right slot. Off by default on the DM-1701 to make room for M17; with LTO it costs 19,424 B there (2273e30e) |
 | Debug link | `DEBUGLINK` | 32,376 | 29,084 |  |
 | Task stacks in the debug link view | `TASK_STACKS` | 536 | 560 | Each task's least free stack, the `tasks` view section ([debuglink](spec/debuglink.md) 3.7) |
 | Open-firmware CPS protocol (qdmr) | `CPS_OPENFW` | 3,064 | 3,008 |  |
