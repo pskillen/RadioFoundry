@@ -14,6 +14,9 @@
 #include <stdint.h>
 #include "config.h"
 #include "codeplug/codeplug.h"
+#if CONFIG_M17_PACKET
+#include "radio/radio_m17_msg.h"
+#endif
 
 #define RADIO_M17_CAN_MAX	15
 #define RADIO_M17_CALL_LEN	10	// nine base-40 characters and a NUL (docs/spec/m17.md 7)
@@ -125,6 +128,35 @@ uint8_t radio_m17_prepare_deny(void);
 
 void radio_m17_stats(radio_m17_stats_t *out);
 void radio_m17_reset_stats(void);
+
+#if CONFIG_M17_PACKET
+typedef struct {
+	radio_m17_msg_summary_t summary;
+	uint32_t last_received_id;	// changes on insertion and survives deletion of the newest entry
+} radio_m17_inbox_t;
+
+typedef struct {
+	uint32_t crc_ok, crc_fail, fec_reject, can_reject, fec_samples;
+	uint32_t unsupported_type, bad_address, malformed_text;
+	uint16_t fec_peak;
+} radio_m17_packet_stats_t;
+
+typedef struct {
+	void (*lock)(void);
+	void (*unlock)(void);
+	uint32_t (*now_ms)(void);
+} radio_m17_inbox_ops_t;
+
+// The task layer binds these for the life of the radio core, before init or provider open.
+void radio_m17_inbox_bind(const radio_m17_inbox_ops_t *ops);
+// Any task, with caller-owned outputs. Timestamps are milliseconds since boot.
+void radio_m17_inbox_get(radio_m17_inbox_t *out);
+bool radio_m17_inbox_copy(uint32_t id, radio_m17_msg_entry_t *out);
+bool radio_m17_inbox_copy_at(size_t index, radio_m17_msg_entry_t *out);
+bool radio_m17_inbox_read(uint32_t id);
+bool radio_m17_inbox_delete(uint32_t id);
+void radio_m17_packet_stats(radio_m17_packet_stats_t *out);
+#endif
 
 // Radio task. 1: count received BERT from here, 2: the next transmission is BERT, 3: stop and return to voice.
 // The flag is what the debug link shows; any task may read it

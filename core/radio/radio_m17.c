@@ -25,6 +25,10 @@ typedef struct {
 	m17_engine_t tx;
 	m17_rx_t rx;
 	air_session_t session;
+#if CONFIG_M17_PACKET
+	radio_m17_msg_decoded_t msg;	// decode workspace used only by the synchronous RX hook
+	bool rx_restarting;
+#endif
 	uint8_t hard[(M17_FRAME_SYMS + 3) / 4];
 	int8_t soft[M17_FRAME_SYMS];
 } m17_block_t;
@@ -43,9 +47,143 @@ static radio_m17_stats_t stats;
 static air_session_stats_t air_base;
 static m17_bert_count_t bert_done;	// sessions already closed; the open one's counters sit on its receiver
 
+#if CONFIG_M17_PACKET
+static const radio_m17_inbox_ops_t *inbox_ops;
+static radio_m17_msg_store_t inbox;
+static uint32_t last_received_id;
+static radio_m17_packet_stats_t packet_stats;
+static m17_packet_rx_stats_t packet_base;	// last protocol counters folded into packet_stats
+
+void radio_m17_inbox_bind(const radio_m17_inbox_ops_t *ops)
+{
+	inbox_ops = ops;
+}
+
+static void inbox_lock(void)
+{
+	if (inbox_ops != NULL)
+		inbox_ops->lock();
+}
+
+static void inbox_unlock(void)
+{
+	if (inbox_ops != NULL)
+		inbox_ops->unlock();
+}
+
+void radio_m17_inbox_get(radio_m17_inbox_t *out)
+{
+	inbox_lock();
+	radio_m17_msg_store_summary(&inbox, &out->summary);
+	out->last_received_id = last_received_id;
+	inbox_unlock();
+}
+
+bool radio_m17_inbox_copy(uint32_t id, radio_m17_msg_entry_t *out)
+{
+	inbox_lock();
+	bool found = radio_m17_msg_store_get(&inbox, id, out);
+	inbox_unlock();
+	return found;
+}
+
+bool radio_m17_inbox_copy_at(size_t index, radio_m17_msg_entry_t *out)
+{
+	inbox_lock();
+	bool found = radio_m17_msg_store_get_at(&inbox, index, out);
+	inbox_unlock();
+	return found;
+}
+
+bool radio_m17_inbox_read(uint32_t id)
+{
+	inbox_lock();
+	bool found = radio_m17_msg_store_read(&inbox, id);
+	inbox_unlock();
+	return found;
+}
+
+bool radio_m17_inbox_delete(uint32_t id)
+{
+	inbox_lock();
+	bool found = radio_m17_msg_store_delete(&inbox, id);
+	inbox_unlock();
+	return found;
+}
+
+void radio_m17_packet_stats(radio_m17_packet_stats_t *out)
+{
+	inbox_lock();
+	*out = packet_stats;
+	inbox_unlock();
+}
+
+// The radio task folds the provider's counters with the scheduler held. The session baseline is
+// dropped at each RX reset or close, and observers copy only the accumulated counters.
+static void packet_capture(const m17_packet_rx_stats_t *live)
+{
+	packet_stats.crc_ok += live->crc_ok - packet_base.crc_ok;
+	packet_stats.crc_fail += live->crc_fail - packet_base.crc_fail;
+	packet_stats.fec_reject += live->fec_reject - packet_base.fec_reject;
+	packet_stats.can_reject += live->can_reject - packet_base.can_reject;
+	packet_stats.fec_samples += live->fec_samples - packet_base.fec_samples;
+	if (live->fec_peak > packet_stats.fec_peak)
+		packet_stats.fec_peak = live->fec_peak;
+	packet_base = *live;
+}
+
+static void rx_packet(const uint8_t *data, uint16_t len, void *ctx)
+{
+	m17_block_t *b = ctx;
+	uint8_t own[M17_ADDR_BYTES];
+
+	// The provider's deferred task owns data and the scratch, even during open. Copy the address
+	// under the same gate as apply, then validate the whole packet with the scheduler running.
+	inbox_lock();
+	if (b->rx_restarting) {
+		inbox_unlock();
+		return;
+	}
+	uint64_t addr = b->tx.cfg.own;
+	inbox_unlock();
+	for (unsigned i = sizeof own; i != 0; i--, addr >>= 8)
+		own[i - 1] = (uint8_t)addr;
+
+	memset(&b->msg, 0, sizeof b->msg);
+	radio_m17_msg_result_t result = radio_m17_msg_decode(b->rx.lsf, own, data, len, &b->msg);
+	uint32_t now = result == RADIO_M17_MSG_ADMITTED && inbox_ops != NULL ? inbox_ops->now_ms() : 0;
+
+	inbox_lock();
+	switch (result) {
+	case RADIO_M17_MSG_ADMITTED:
+		last_received_id = radio_m17_msg_store_add(&inbox, &b->msg, now);
+		break;
+	case RADIO_M17_MSG_UNSUPPORTED_TYPE:
+		packet_stats.unsupported_type++;
+		break;
+	case RADIO_M17_MSG_ADDRESS:
+		packet_stats.bad_address++;
+		break;
+	case RADIO_M17_MSG_MALFORMED_TEXT:
+		packet_stats.malformed_text++;
+		break;
+	}
+	inbox_unlock();
+}
+
+static const m17_engine_hooks_t rx_hooks = { .rx_packet = rx_packet };
+#endif
+
 void radio_m17_init(void)
 {
 	radio_m17_end();
+#if CONFIG_M17_PACKET
+	inbox_lock();
+	radio_m17_msg_store_init(&inbox);
+	last_received_id = 0;
+	memset(&packet_stats, 0, sizeof packet_stats);
+	inbox_unlock();
+#endif
 	set = defaults;
 	applied = defaults;
 }
@@ -224,15 +362,31 @@ bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst)
 	memset(b, 0, sizeof *b);
 	params(base, dst, &cfg);
 	m17_engine_init(&b->tx, &cfg, NULL, NULL);
+#if CONFIG_M17_PACKET
+	m17_rx_init(&b->rx, &rx_hooks, b);
+#else
 	m17_rx_init(&b->rx, NULL, NULL);
+#endif
 	m17_rx_set_can(&b->rx, cfg.rx_can, cfg.can_squelch);
 	if (!air_session_open(&b->session, board.air, &m17_air_mode, &b->rx, b->hard, b->soft, M17_FRAME_SYMS,
 			      &session_ops, b)) {
 		stats.begin_fails++;
+#if CONFIG_M17_PACKET
+		inbox_lock();
+		packet_capture(&b->rx.pkt_stats);
+		memset(&packet_base, 0, sizeof packet_base);
+		inbox_unlock();
+#endif
 		return false;
 	}
 	memset(&air_base, 0, sizeof air_base);
+#if CONFIG_M17_PACKET
+	inbox_lock();
+#endif
 	blk = b;
+#if CONFIG_M17_PACKET
+	inbox_unlock();
+#endif
 	return true;
 }
 
@@ -251,7 +405,15 @@ void radio_m17_end(void)
 	bert_done.lost += b->rx.bert.lost;
 	bert_sum(NULL);
 	air_session_close(&b->session);
+#if CONFIG_M17_PACKET
+	inbox_lock();
+	packet_capture(&b->rx.pkt_stats);
+	memset(&packet_base, 0, sizeof packet_base);
+#endif
 	blk = NULL;
+#if CONFIG_M17_PACKET
+	inbox_unlock();
+#endif
 }
 
 bool radio_m17_running(void)
@@ -296,8 +458,26 @@ void radio_m17_retuned(void)
 {
 	if (blk == NULL)
 		return;
+#if CONFIG_M17_PACKET
+	// The provider may deliver RX during restart, which can take its own lock. Suppress inbox
+	// admission until the old provenance has been reset, and keep the provider call outside the gate.
+	m17_block_t *b = blk;
+
+	inbox_lock();
+	b->rx_restarting = true;
+	inbox_unlock();
+	board.air->rx_restart();
+	inbox_lock();
+	packet_capture(&b->rx.pkt_stats);
+	memset(&packet_base, 0, sizeof packet_base);
+	m17_rx_reset(&b->rx);
+	air_framer_rx_reset(&b->session.fr);
+	b->rx_restarting = false;
+	inbox_unlock();
+#else
 	m17_rx_reset(&blk->rx);
 	air_session_retuned(&blk->session);
+#endif
 }
 
 bool radio_m17_apply(const radio_m17_settings_t *base, uint64_t dst)
@@ -308,8 +488,14 @@ bool radio_m17_apply(const radio_m17_settings_t *base, uint64_t dst)
 		return false;
 	params(base, dst, &cfg);
 	cfg.tx_kind = blk->tx.cfg.tx_kind;
+#if CONFIG_M17_PACKET
+	inbox_lock();
+#endif
 	blk->tx.cfg = cfg;
 	m17_rx_set_can(&blk->rx, cfg.rx_can, cfg.can_squelch);
+#if CONFIG_M17_PACKET
+	inbox_unlock();
+#endif
 	return true;
 }
 
@@ -453,6 +639,11 @@ bool radio_m17_poll(radio_m17_view_t *v)
 
 		count_air(&blk->session.stats);
 		bert_sum(&rx->bert);
+#if CONFIG_M17_PACKET
+		inbox_lock();
+		packet_capture(&rx->pkt_stats);
+		inbox_unlock();
+#endif
 		memset(&n, 0, sizeof n);
 		n.flags = RADIO_M17_ON;
 		n.tx = (uint8_t)air_session_tx_state(&blk->session);
@@ -552,6 +743,14 @@ void radio_m17_stats(radio_m17_stats_t *out)
 
 void radio_m17_reset_stats(void)
 {
+#if CONFIG_M17_PACKET
+	inbox_lock();
+	memset(&packet_stats, 0, sizeof packet_stats);
+	memset(&packet_base, 0, sizeof packet_base);
+	if (blk != NULL)
+		memset(&blk->rx.pkt_stats, 0, sizeof blk->rx.pkt_stats);
+	inbox_unlock();
+#endif
 	memset(&stats, 0, sizeof stats);
 	memset(&bert_done, 0, sizeof bert_done);
 	memset(&air_base, 0, sizeof air_base);

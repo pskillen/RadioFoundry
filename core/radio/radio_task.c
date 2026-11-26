@@ -374,8 +374,18 @@ static void satellite_set_locked(bool locked)
 }
 #endif
 
+#if CONFIG_M17_PACKET
+// The RX hook runs in task context and can publish without waiting or taking the view mutex.
+static void m17_inbox_lock(void) { vTaskSuspendAll(); }
+static void m17_inbox_unlock(void) { (void)xTaskResumeAll(); }
+static const radio_m17_inbox_ops_t m17_inbox_ops = { m17_inbox_lock, m17_inbox_unlock, hal_millis };
+#endif
+
 void radio_core_start(void)
 {
+#if CONFIG_M17_PACKET
+	radio_m17_inbox_bind(&m17_inbox_ops);
+#endif
 #if CONFIG_APRS
 	aprs_set_lock(copy_lock, copy_unlock);
 #endif

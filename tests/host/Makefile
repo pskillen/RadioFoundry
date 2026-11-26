@@ -157,13 +157,32 @@ m17PacketRxTest: m17PacketRxTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(wildc
                  $(CORE)/air/air_softmodem.c
 	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17PacketRxTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
 
+M17DECODE := $(CORE)/radio/radio_m17_msg_decode.c
+M17MSG  := $(M17DECODE) $(CORE)/radio/radio_m17_msg.c
+M17MSG_HEADERS := $(CORE)/radio/radio_m17_msg.h $(CORE)/radio/radio_m17_msg_decode.h
+M17MSG_FLAGS := -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow
+
 # The radio module's lend, without the state machine: a fake vocoder block and a fake P25 block
 TESTS   += m17RadioTest
 m17RadioTest: m17RadioTest.c $(M17ENG) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(CORE)/air/air_session.c \
-              $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/radio/radio_m17.h) $(CORE)/air/air_session.h
+              $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/radio/radio_m17.h) $(CORE)/air/air_session.h $(M17MSG) $(M17MSG_HEADERS)
 	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DCONFIG_P25=1 -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
 		-I$(ROOT)/hal -Wshadow -o $@ m17RadioTest.c $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c \
-		$(M17ENG) $(CORE)/air/air_session.c -lm
+		$(M17ENG) $(CORE)/air/air_session.c $(M17MSG) -lm
+
+TESTS   += m17MessageDecodeTest m17MessageStoreTest m17MessageRxTest
+m17MessageDecodeTest: m17MessageDecodeTest.c $(M17DECODE) $(M17FEC) $(M17MSG_HEADERS) $(wildcard $(CORE)/m17/*.h)
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -o $@ m17MessageDecodeTest.c $(M17DECODE) $(M17FEC)
+
+m17MessageStoreTest: m17MessageStoreTest.c $(CORE)/radio/radio_m17_msg.c $(M17MSG_HEADERS)
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -o $@ m17MessageStoreTest.c $(CORE)/radio/radio_m17_msg.c
+
+M17RX := $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(CORE)/air/air_session.c $(M17ENG) $(M17MSG)
+m17MessageRxTest: m17MessageRxTest.c $(M17RX) $(M17MSG_HEADERS) $(CORE)/radio/radio_m17.h \
+                  $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_session.h
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -DCONFIG_P25=1 -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
+		-o $@ m17MessageRxTest.c $(M17RX) -lm
+
 nxdnEngineTest: nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC)
 	$(CC) $(CFLAGS) -DCONFIG_NXDN_SCRAMBLER=1 -I$(ROOT)/hal -Wshadow -o $@ nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC) -lm
 
@@ -291,6 +310,9 @@ run: $(TESTS)
 	./m17EngineTest
 	./m17PacketRxTest
 	./m17RadioTest
+	./m17MessageDecodeTest
+	./m17MessageStoreTest
+	./m17MessageRxTest
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest
 	./p25VoiceTest
@@ -402,7 +424,7 @@ radioCoreTestP25Nxdn: $(RCP25NX) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE
 
 # M17 only (no P25, no NXDN): the air-mode table has one row, and PTT does not ask for the DMR vocoder
 TESTS   += radioCoreTestM17
-RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c \
+RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c $(M17MSG) \
            $(CORE)/hostlink/build_info.c $(CORE)/debuglink/debuglink_view_m17.c
 radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/call/*.h) $(CORE)/dmr/dmrDataService.h \
                   $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
