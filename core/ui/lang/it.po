@@ -512,6 +512,11 @@ msgctxt "WHY_VOX_NOT_ON_RADIO_YET"
 msgid "VOX: not on this radio yet"
 msgstr "VOX: non ancora su questa radio"
 
+#: core/ui/ui_app.c core/ui/ui_menus.c
+msgctxt "M17_TOAST_CHANNEL_CHANGED"
+msgid "Channel changed"
+msgstr "Canale cambiato"
+
 #: core/ui/ui_app.c
 msgctxt "QUICK_TOAST_BANDWIDTH_25_KHZ"
 msgid "Bandwidth 25 kHz"
@@ -4551,6 +4556,11 @@ msgstr "Parla a"
 msgctxt "PICKER_HINT"
 msgid "{PTT once  OK use  Hold OK set|OK use  Hold OK set}"
 msgstr "{PTT una volta  OK usa  Tieni OK imposta|OK usa  Tieni OK imposta}"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_TALK_TO_FAILED"
+msgid "Couldn't queue Talk to"
+msgstr "Impossibile impostare la destinazione"
 
 #: core/ui/ui_menus.c
 msgctxt "SCAN_ROW_SKIP_FOR_NOW"

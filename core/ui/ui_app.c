@@ -1410,6 +1410,9 @@ static void quick_unavailable(uint8_t kind)
 	case QT_MODE: ui_toast(TR(WHY_VFO_ONE_MODE_IN_BUILD, "VFO: one mode in this build")); break;
 	case QT_TO_VFO: ui_toast(TR(WHY_VFO_NOT_IN_BUILD, "VFO: not in this build")); break;
 	case QT_VOX: ui_toast(TR(WHY_VOX_NOT_ON_RADIO_YET, "VOX: not on this radio yet")); break;
+#if CONFIG_M17
+	case QT_TALK_TO: ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed")); break;
+#endif
 	default: ui_toast(TR(WHY_NOT_IN_BUILD, "Not in this build")); break;
 	}
 }
@@ -1547,7 +1550,12 @@ static void quick_activate(int tile)
 		}
 		break;
 	case QT_TALK_TO:
-		ui_push(SCR_PICKER, 0);
+#if CONFIG_M17
+		if (view->ch.mode == RADIO_MODE_M17)
+			ui_push(SCR_M17_TALK_TO, 0);
+		else
+#endif
+			ui_push(SCR_PICKER, 0);
 		break;
 #endif
 	case QT_POWER: {

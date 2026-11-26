@@ -238,6 +238,13 @@ On the home screen an M17 channel shows **M17**, a line **CAN n** then the desti
 **CAN n** beside the power. The VFO's mode cycle includes M17 on a radio that carries it. Pressing PTT with no
 callsign shows **M17: set your callsign**. A radio that can hear M17 but not send it shows **M17: receive only**.
 
+Open **Quick settings > 8 Talk to** to choose `ALL`, `ECHO`, `INFO` or `UNLINK` for the current M17 channel or
+VFO. **Default** shows and restores the channel's programmed destination or the VFO's base destination. OK
+returns to Quick settings and Back returns to Home. Quick shows the destination in use, as does the transmit
+line on single-channel Home. The choice is temporary
+and leaves the programmed destination in the channel editor. Changing channels or VFO frequencies, leaving M17,
+selecting a different dual-watch pane, or restarting clears the choice.
+
 Set your **M17 callsign** on the **Radio** tab, or on the radio under **Settings > My radio > M17 callsign**. If it
 is blank, the radio uses the first word of the radio name, up to a space or `-`. M17 voice transmission requires a
 valid callsign from one of these sources.

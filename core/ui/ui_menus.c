@@ -8442,6 +8442,55 @@ static const ui_scr_def_t picker_screen = {
 	.target = picker_target, .enter = picker_enter, .title = picker_title,
 };
 
+#if CONFIG_M17
+static const char *const m17_presets[] = { "ALL", "ECHO", "INFO", "UNLINK" };
+static uint32_t m17_talk_generation;
+static uint64_t m17_talk_base;
+
+static void m17_talk_enter(void)
+{
+	const radio_m17_selected_t *sel = ui_m17_selected(ui_view());
+	m17_talk_generation = sel != NULL ? sel->generation : 0;
+	m17_talk_base = sel != NULL ? sel->base_dst : 0;
+}
+
+static uint16_t m17_talk_count(void) { return 1 + sizeof m17_presets / sizeof m17_presets[0]; }
+
+static void m17_talk_item(uint16_t i, ui_item_t *it)
+{
+	if (i == 0) {
+		char dst[RADIO_M17_CALL_LEN];
+		str_copy(it->label, sizeof it->label, TR(VALUE_DEFAULT, "Default"));
+		str_copy(it->value, sizeof it->value, ui_m17_destination(m17_talk_base, dst));
+	} else {
+		str_copy(it->label, sizeof it->label, m17_presets[i - 1]);
+	}
+}
+
+static void m17_talk_select(uint16_t i, bool hold)
+{
+	if (hold)
+		return;
+	const radio_m17_selected_t *sel = ui_m17_selected(ui_view());
+	if (sel == NULL || sel->generation != m17_talk_generation) {
+		ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed"));
+		return;
+	}
+	uint64_t dst = 0;
+	if ((i != 0 && !m17_dst_parse(m17_presets[i - 1], &dst)) || !radio_req_m17_talk_to(m17_talk_generation, dst)) {
+		ui_toast(TR(M17_TOAST_TALK_TO_FAILED, "Couldn't queue Talk to"));
+		return;
+	}
+	ui_pop();
+}
+
+static const ui_scr_def_t m17_talk_screen = {
+	.name = "m17-talk-to", .flags = SF_LIST | SF_FIELD, .prefix = TRN(M17_LABEL_TALK_TO, "Talk to"),
+	.hint = TRN(HINT_OK_CHOOSE_BACK_CANCELS, "OK choose  Back cancel"),
+	.count = m17_talk_count, .item = m17_talk_item, .select = m17_talk_select, .enter = m17_talk_enter,
+};
+#endif
+
 // ======================= Scan: what to do with the channel that stopped it =======================
 
 static uint16_t scan_count(void) { return 3; }
@@ -8651,6 +8700,9 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 #endif
 #if CONFIG_M17 && CONFIG_CHANNEL_EDIT
 	[SCR_M17_CHAN_DST] = &m17_dst_screen,
+#endif
+#if CONFIG_M17
+	[SCR_M17_TALK_TO] = &m17_talk_screen,
 #endif
 #if CONFIG_CRASH_SCREEN
 	[SCR_CRASH] = &crash_screen,

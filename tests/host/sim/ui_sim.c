@@ -985,6 +985,9 @@ static char sim_m17_call[10];
 static char sim_m17_dst[8][10];
 static uint8_t sim_m17_dst_n;
 static bool sim_m17_fail;
+static bool sim_m17_model, sim_m17_queue_fail;
+static uint32_t sim_m17_generation, sim_m17_requests, sim_m17_queued;
+static uint64_t sim_m17_override, sim_m17_request_dst, sim_m17_vfo_dst[2];
 static uint8_t sim_kv_serial;
 uint8_t codeplug_kv_serial(void) { return (uint8_t)(sim_kv_serial + (uint8_t)sim_cp_serial); }
 #endif
@@ -1434,6 +1437,10 @@ static void load_channel(void)
 	view.channel_number = z.channels[view.zone_pos];
 	codeplug_channel(view.channel_number, &ch_saved);
 	view.ch = ch_saved;
+#if CONFIG_M17
+	if (sim_m17_model && view.ch.kind == CODEPLUG_KIND_M17)
+		view.ch.mode = RADIO_MODE_M17;
+#endif
 	view.power = board.power_default;
 	view.temp = 0;
 	view.temporary = false;
@@ -2361,6 +2368,116 @@ bool ui_svc_vfo_get(uint8_t index, channel_t *out)
 	out->timeslot = o.ts;
 	return true;
 }
+
+#if CONFIG_M17
+static bool sim_m17_same(const radio_m17_context_t *a, const radio_m17_context_t *b)
+{
+	if (a->is_vfo != b->is_vfo)
+		return false;
+	return a->is_vfo ? a->vfo_index == b->vfo_index && a->vfo.rx_hz == b->vfo.rx_hz && a->vfo.tx_hz == b->vfo.tx_hz :
+		a->stored.zone == b->stored.zone && a->stored.pos == b->stored.pos && a->stored.number == b->stored.number;
+}
+
+static m17_chan_t sim_m17_base(const radio_m17_context_t *ctx, const channel_t *ch)
+{
+	m17_chan_t base = { .dst = M17_ADDR_BROADCAST };
+	if (ctx->is_vfo) {
+		uint64_t dst = sim_m17_vfo_dst[ctx->vfo_index];
+		if (dst != 0)
+			base.dst = dst;
+	} else {
+		m17_chan_load(ctx->stored.number, ch, &base);
+	}
+	return base;
+}
+
+static void sim_m17_text(uint64_t dst, char *out, size_t len)
+{
+	uint8_t raw[M17_ADDR_BYTES];
+	for (int i = M17_ADDR_BYTES - 1; i >= 0; i--) {
+		raw[i] = (uint8_t)dst;
+		dst >>= 8;
+	}
+	if (!m17_addr_decode(raw, out, len))
+		out[0] = '\0';
+}
+
+bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst)
+{
+	sim_m17_requests++;
+	if (sim_m17_queue_fail || sim_m17_queued != 0 || generation == 0)
+		return false;
+	sim_m17_queued = generation;
+	sim_m17_request_dst = dst;
+	return true;
+}
+
+static void sim_m17_update(void)
+{
+	if (!sim_m17_model)
+		return;
+	radio_m17_context_t tuned = { .is_vfo = view.vfo, .vfo_index = view.vfo_index };
+	if (view.vfo) {
+		tuned.vfo.rx_hz = view.ch.rx_hz;
+		tuned.vfo.tx_hz = view.ch.tx_hz;
+	} else {
+		tuned.stored.zone = view.zone_index;
+		tuned.stored.pos = view.zone_pos;
+		tuned.stored.number = view.channel_number;
+	}
+	radio_m17_context_t ctx = tuned;
+	channel_t ch = view.ch;
+	if (view.scan == 3 && sim_at != sim_sel) {
+		const ui_dual_ref_t *ref = &sim_dual[sim_sel];
+		ctx.is_vfo = ref->vfo;
+		if (ref->vfo) {
+			ctx.vfo_index = (uint8_t)ref->pos;
+			ui_svc_vfo_get(ctx.vfo_index, &ch);
+			ctx.vfo.rx_hz = ch.rx_hz;
+			ctx.vfo.tx_hz = ch.tx_hz;
+		} else {
+			zone_t z;
+			codeplug_zone(ref->zone, &z);
+			ctx.stored.zone = ref->zone;
+			ctx.stored.pos = ref->pos;
+			ctx.stored.number = z.channels[ref->pos];
+			codeplug_channel(ctx.stored.number, &ch);
+			if (ch.kind == CODEPLUG_KIND_M17)
+				ch.mode = RADIO_MODE_M17;
+		}
+	}
+	radio_m17_selected_t *sel = &view.m17_selected;
+	bool same = sel->generation != 0 && sim_m17_same(&ctx, &sel->context);
+	if (!same || ch.mode != RADIO_MODE_M17 || !m17_radio)
+		sim_m17_override = 0;
+	if (ch.mode == RADIO_MODE_M17 && m17_radio) {
+		m17_chan_t base = sim_m17_base(&ctx, &ch);
+		if (!same || sel->base_dst != base.dst) {
+			sel->generation = ++sim_m17_generation;
+			sel->context = ctx;
+			sel->base_dst = base.dst;
+			sel->can = base.can;
+			changed();
+		}
+		if (sim_m17_queued == sel->generation) {
+			sim_m17_override = sim_m17_request_dst;
+			changed();
+		}
+		sel->effective_dst = sim_m17_override != 0 ? sim_m17_override : base.dst;
+	} else if (sel->generation != 0) {
+		*sel = (radio_m17_selected_t){ 0 };
+		changed();
+	}
+	sim_m17_queued = 0;
+	if (view.ch.mode == RADIO_MODE_M17) {
+		m17_chan_t base = sim_m17_base(&tuned, &view.ch);
+		view.m17.can = base.can;
+		sim_m17_text(sel->generation != 0 && sim_m17_same(&tuned, &ctx) ? sel->effective_dst : base.dst,
+			view.m17.tx_dst, sizeof view.m17.tx_dst);
+	}
+}
+#endif
+
 uint16_t ui_svc_msg_count(void) { return n_inbox; }
 uint16_t ui_svc_msg_unread(void)
 {
@@ -2725,6 +2842,9 @@ void sim_set_tick_hook(void (*hook)(uint32_t now_ms)) { tick_hook = hook; }
 static void step(void)
 {
 	now_ms += TICK_MS;
+#if CONFIG_M17
+	sim_m17_update();
+#endif
 	if (view.state == RS_TX)
 		view.tx_elapsed_ms += TICK_MS;
 	if (ptt_up_at && now_ms >= ptt_up_at) {
@@ -2900,6 +3020,9 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 #if CONFIG_M17
 	sim_m17_call[0] = '\0';
 	sim_m17_fail = false;
+	sim_m17_model = sim_m17_queue_fail = false;
+	sim_m17_queued = sim_m17_generation = sim_m17_requests = 0;
+	sim_m17_override = sim_m17_vfo_dst[0] = sim_m17_vfo_dst[1] = 0;
 	sim_kv_serial = 0;
 	sim_m17_dst_n = 0;
 #endif
@@ -3107,6 +3230,29 @@ static bool check(const char *kv, char *err, size_t len)
 	bool prefix = false;
 	if (strcmp(key, "screen") == 0) snprintf(got, sizeof got, "%s", s.screen);
 	else if (strcmp(key, "focus") == 0) { snprintf(got, sizeof got, "%s", ui_app_focus_label()); prefix = true; }
+#if CONFIG_M17
+	else if (strcmp(key, "focusvalue") == 0) {
+		const ui_scr_def_t *def = ui_scr[ui_frame()->scr];
+		ui_item_t it = { 0 };
+		if (def->item != NULL && s.focus < s.count)
+			def->item(s.focus, &it);
+		snprintf(got, sizeof got, "%s", it.value);
+	}
+	else if (strcmp(key, "quick8") == 0) {
+		char label[24];
+		if (!ui_quick_tile(7, ui_view(), &ui_st, label, sizeof label, got, sizeof got))
+			got[0] = '\0';
+	}
+	else if (strcmp(key, "m17tx") == 0) snprintf(got, sizeof got, "%s", view.m17.tx_dst);
+	else if (strcmp(key, "m17base") == 0) sim_m17_text(view.m17_selected.base_dst, got, sizeof got);
+	else if (strcmp(key, "m17selected") == 0) sim_m17_text(view.m17_selected.effective_dst, got, sizeof got);
+	else if (strcmp(key, "m17programmed") == 0) {
+		const ui_air_conv_t *air = sim_air(view.channel_number);
+		sim_m17_text(air != NULL ? air->m17.dst : 0, got, sizeof got);
+	}
+	else if (strcmp(key, "m17gen") == 0) snprintf(got, sizeof got, "%u", (unsigned)view.m17_selected.generation);
+	else if (strcmp(key, "m17requests") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_m17_requests);
+#endif
 	else if (strcmp(key, "zone") == 0) snprintf(got, sizeof got, "%u", view.zone_index);
 	else if (strcmp(key, "pos") == 0) snprintf(got, sizeof got, "%u", view.zone_pos + 1u);
 	else if (strcmp(key, "vfo") == 0) snprintf(got, sizeof got, "%u", view.vfo);
@@ -3610,6 +3756,48 @@ static bool run_token(char *t, char *err, size_t len)
 		return true;
 	}
 #if CONFIG_M17
+	if (strcmp(t, "m17stored") == 0 && arg != NULL) {	// channel number and programmed destination
+		unsigned number;
+		char dst[RADIO_M17_CALL_LEN];
+		channel_t ch;
+		ui_air_conv_t air = { .m17.can = 3 };
+		if (sscanf(arg, "%u,%9s", &number, dst) != 2 || !m17_dst_parse(dst, &air.m17.dst)) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		// The layout check replays gallery scripts with the built-in channels renumbered.
+		if (worst && number >= 1 && number <= sizeof chans / sizeof chans[0])
+			number += WORST_FIRST - 1u;
+		if (!codeplug_channel((uint16_t)number, &ch)) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		ch.kind = CODEPLUG_KIND_M17;
+		ch.mode = RADIO_MODE_DMR;	// the tag goes over the stand-in record
+		if (!ui_svc_write_channel_air((uint16_t)number, &ch, 0, &air)) {
+			snprintf(err, len, "no room for %s", t);
+			return false;
+		}
+		sim_rec.codeplug_writes--;
+		sim_m17_model = true;
+		if (!view.vfo && view.channel_number == number)
+			load_channel();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17vfo") == 0 && arg != NULL && view.vfo) {
+		if (!m17_dst_parse(arg, &sim_m17_vfo_dst[view.vfo_index])) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		sim_m17_model = true;
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17queuefail") == 0) {
+		sim_m17_queue_fail = true;
+		return true;
+	}
 	if (strcmp(t, "m17rxaddr") == 0 && arg != NULL) {
 		snprintf(view.m17.dest, sizeof view.m17.dest, "%s", arg);
 		changed();

@@ -17,6 +17,9 @@ test_m17_callsign_on_radio: opt-in `--allow-codeplug-write`. Types a callsign on
 test_m17_channel_on_radio: opt-in `--allow-codeplug-write`. Plants a receive-only kind-6 channel, then sets CAN 15
 in the channel editor and checks `m17.run.can`. The codeplug is put back after. Nothing is sent.
 
+test_m17_talk_to_on_radio: opt-in `--allow-codeplug-write`. Chooses INFO and Default in Quick on the stored
+receive-only M17 channel. The codeplug is put back after. Nothing is sent.
+
 test_m17_bert_rx_from_bench, test_m17_bert_tx_off_air, test_m17_lsf_off_air: opt-in `--allow-rf`. The bench
 transmitter and receiver are not wired into this file yet, so the bodies skip rather than transmit.
 """
@@ -117,9 +120,8 @@ def make_m17(img, number):
     img[lo:hi] = area_with(area, KEY_CALL, RADIO_CALL.encode() + bytes(10 - len(RADIO_CALL)))
 
 
-@pytest.mark.feature("m17")
-@pytest.mark.codeplug_write
-def test_m17_stored_channel(radio, backup_dir):
+@pytest.fixture
+def stored_m17(radio, backup_dir):
     m17_view(radio)
     if "M17" not in radio.features():
         skip("not_built", "M17 isn't in the radio's feature list")
@@ -139,12 +141,54 @@ def test_m17_stored_channel(radio, backup_dir):
     with codeplug_edited(radio, backup_dir, lambda img: make_m17(img, number), "m17", regions):
         v = radio.wait_for(lambda x: x.get("ch.kind") == str(KIND_M17) and x.get("m17.on") == "1", 5.0,
                            sections=("core", "channel", "m17"), what="the stored M17 channel running")
-        assert v.get("mode") == "m17", v
-        assert v.get("m17.run.can") == str(STORED_CAN) and v.get("m17.run.squelch") == "0", v
-        assert v.get("m17.run.dst") == STORED_DST, v
-        assert v.get("m17.run.call") == RADIO_CALL, v
+        yield v
     radio.wait_for(lambda x: x.get("ch.kind") == "0" and x.get("m17.on") != "1", 5.0,
                    sections=("core", "channel", "m17"), what="the channel back as it was, M17 stopped")
+
+
+@pytest.mark.feature("m17")
+@pytest.mark.codeplug_write
+def test_m17_stored_channel(stored_m17):
+    v = stored_m17
+    assert v.get("mode") == "m17", v
+    assert v.get("m17.run.can") == str(STORED_CAN) and v.get("m17.run.squelch") == "0", v
+    assert v.get("m17.run.dst") == STORED_DST, v
+    assert v.get("m17.run.call") == RADIO_CALL, v
+
+
+@pytest.mark.feature("m17")
+@pytest.mark.codeplug_write
+def test_m17_talk_to_on_radio(radio, stored_m17):
+    from test_ui import wait_screen
+
+    assert stored_m17.get("m17.run.dst") == STORED_DST, stored_m17
+    radio.go_home()
+    link = radio.view(["link"])
+    if link.get("ui.dual") == "1":
+        skip("state", "the stored-channel fixture requires single-channel Home")
+    key = radio.unlock_key(link)
+    if key == "none":
+        skip("no_hw", "the fixture needs a Quick or Back key")
+    if key == "quick":
+        radio.press("quick")
+    else:
+        radio.press("ok", LONG)
+    wait_screen(radio, "quick")
+
+    for destination, row in (("INFO", 3), (STORED_DST, 0)):
+        radio.press("8")
+        picker = wait_screen(radio, "m17-talk-to")
+        assert picker.get("ui.focus") == "0" and as_int(picker.get("ui.count"), 0) >= 5, picker
+        for _ in range(row):
+            radio.press("down")
+        radio.press("ok")
+        wait_screen(radio, "quick")
+        v = radio.wait_for(lambda x: x.get("m17.run.dst") == destination, 5.0,
+                           sections=("m17",), what=f"M17 destination {destination}")
+        assert v.get("m17.run.can") == str(STORED_CAN) and v.get("m17.run.squelch") == "0", v
+        assert v.get("m17.run.call") == RADIO_CALL, v
+    radio.press("back")
+    wait_screen(radio, "home")
 
 
 @pytest.mark.feature("m17")

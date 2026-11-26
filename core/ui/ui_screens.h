@@ -149,6 +149,10 @@ enum {
 };
 // The tile kind at position 0..8 (keys 1..9) for this channel or the VFO
 uint8_t ui_quick_kind(int pos, const radio_view_t *v);
+#if CONFIG_M17
+const radio_m17_selected_t *ui_m17_selected(const radio_view_t *v);
+const char *ui_m17_destination(uint64_t dst, char out[RADIO_M17_CALL_LEN]);
+#endif
 // True when a contact name only repeats its ID ("TG 123" for talkgroup 123): Home then shows the ID once
 bool ui_name_is_id(const char *name, uint32_t id, bool private_call);
 

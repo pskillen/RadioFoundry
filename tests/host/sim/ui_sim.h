@@ -10,6 +10,8 @@
 #include <stdbool.h>
 #include "radio/radio.h"
 
+#define SIM_M17_STORED_ECHO "m17 m17stored:3,ECHO"
+
 // Display classes (information-architecture.md, wireframes) and key maps (7.1 - 7.5)
 typedef struct {
 	const char *name;	// "160x120i5", "160x128", "240x320i10x5", "128x64", "240x320"

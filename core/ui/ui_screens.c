@@ -12,6 +12,9 @@
 #include "cjk_font.h"	// CJK_FONT_H: the line height a CJK language needs (CONFIG_LANG_ZH)
 #include "config.h"
 #include "codeplug/codeplug_modes.h"	// channel kinds: the mode word
+#if CONFIG_M17
+#include "m17/m17.h"
+#endif
 #if CONFIG_DMR_TRUNK
 #include "dmr/trunk/t3_ms.h"	// the engine's states, for the trunked status words
 #endif
@@ -3663,6 +3666,32 @@ void ui_draw_hotspot(const radio_view_t *v, const hotspot_view_t *h, const ui_st
 
 // --- Quick settings (3x3 grid, positions match the keypad; a numbered list on 128x64) ---
 
+#if CONFIG_M17
+const radio_m17_selected_t *ui_m17_selected(const radio_view_t *v)
+{
+	const radio_m17_selected_t *sel = &v->m17_selected;
+	const radio_m17_context_t *c = &sel->context;
+	if (v->ch.mode != RADIO_MODE_M17 || sel->generation == 0 || c->is_vfo != v->vfo)
+		return NULL;
+	bool matches = v->vfo ? c->vfo_index == v->vfo_index && c->vfo.rx_hz == v->ch.rx_hz &&
+		c->vfo.tx_hz == v->ch.tx_hz :
+		c->stored.zone == v->zone_index && c->stored.pos == v->zone_pos && c->stored.number == v->channel_number;
+	return matches ? sel : NULL;
+}
+
+const char *ui_m17_destination(uint64_t dst, char out[RADIO_M17_CALL_LEN])
+{
+	if (dst == M17_ADDR_BROADCAST)
+		return TR(QUICK_VALUE_ALL, "All");
+	uint8_t raw[M17_ADDR_BYTES];
+	for (int i = M17_ADDR_BYTES - 1; i >= 0; i--) {
+		raw[i] = (uint8_t)dst;
+		dst >>= 8;
+	}
+	return m17_addr_decode(raw, out, RADIO_M17_CALL_LEN) ? out : "";
+}
+#endif
+
 uint8_t ui_quick_kind(int pos, const radio_view_t *v)
 {
 	static const uint8_t fm[UI_QUICK_TILES] = {
@@ -3675,6 +3704,10 @@ uint8_t ui_quick_kind(int pos, const radio_view_t *v)
 		return QT_POWER;
 	if (!v->vfo && pos == 3)
 		return QT_TO_VFO;	// a channel's tile 4 copies it to the VFO; the VFO's stays Mode
+#if CONFIG_M17
+	if (pos == 7 && v->ch.mode == RADIO_MODE_M17 && (ui_svc_features() & UI_FEAT_M17))
+		return QT_TALK_TO;
+#endif
 	uint8_t kind = v->ch.mode == RADIO_MODE_DMR ? dmr[pos] : fm[pos];
 	if (v->vfo && (kind == QT_MONITOR || kind == QT_PRIVACY))
 		return QT_SPLIT;	// the VFO's TX frequency; Monitor stays on its key, privacy on channels
@@ -3814,6 +3847,16 @@ bool ui_quick_tile(int tile, const radio_view_t *v, const ui_state_t *s, char *l
 		sb_str(&b, s->privacy ? TR(VALUE_ON, "On") : TR(VALUE_OFF, "Off"));
 		return feat(UI_FEAT_PRIVACY) && CONFIG_DMR_PRIVACY;
 	case QT_TALK_TO:
+#if CONFIG_M17
+		if (v->ch.mode == RADIO_MODE_M17) {
+			const radio_m17_selected_t *sel = ui_m17_selected(v);
+			if (sel == NULL)
+				return false;
+			char dst[RADIO_M17_CALL_LEN];
+			sb_str(&b, ui_m17_destination(sel->effective_dst, dst));
+			return true;
+		}
+#endif
 		if (v->dmr.target_private)
 			sb_u32(&b, v->dmr.target_id, 1);
 		else if (v->dmr.target_id == 0xFFFFFFu)

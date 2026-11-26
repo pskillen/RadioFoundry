@@ -324,6 +324,8 @@ static void snap_put(uint8_t i, radio_view_t *v)
 {
 	const snap_t *s = &snap[i];
 	v->vfo = s->vfo;
+	if (s->vfo)
+		v->vfo_index = (uint8_t)ref[i].pos;
 	v->temporary = s->temporary;
 	v->am = s->am;
 	v->vox_on = s->vox_on;
@@ -376,6 +378,10 @@ static void snap_seed(uint8_t i, const radio_view_t *v)
 	s->valid = true;
 	if (radio_listen_band(s->ch.rx_hz))
 		s->ch.mode = RADIO_MODE_FM;	// as the radio core tunes it (pane_fill)
+#if CONFIG_M17
+	else if (s->ch.kind == CODEPLUG_KIND_M17 && (ui_svc_features() & UI_FEAT_M17))
+		s->ch.mode = RADIO_MODE_M17;
+#endif
 	s->am = radio_am_channel(&s->ch);	// as the radio core's view has it: Home's chips, the mode tile's refusal
 	s->tot_s = v->tot_s;
 	s->power = s->ch.power != CODEPLUG_POWER_DEFAULT ? s->ch.power : v->power;	// the default level, as on the other
@@ -406,15 +412,23 @@ const radio_view_t *ui_dual_view(const radio_view_t *v)
 	uint8_t t = tuned_pane(v);
 	if (t != UI_DUAL_NONE)
 		snap_take(t, v);
-	if (t == d->sel || t == UI_DUAL_NONE)
+	if (t == d->sel)
 		return v;
-	if (!snap[d->sel].valid)
+	if (t != UI_DUAL_NONE && !snap[d->sel].valid)
 		snap_seed(d->sel, v);
-	if (!snap[d->sel].valid)
-		return v;
-	mixed = *v;
-	snap_put(d->sel, &mixed);
-	return &mixed;
+	if (t != UI_DUAL_NONE && snap[d->sel].valid) {
+		mixed = *v;
+		snap_put(d->sel, &mixed);
+		return &mixed;
+	}
+#if CONFIG_M17
+	if (v->ch.mode == RADIO_MODE_M17) {
+		mixed = *v;
+		mixed.m17_selected.generation = 0;	// no selected pane settings to match against the radio's preview
+		return &mixed;
+	}
+#endif
+	return v;
 }
 
 // Ask the radio for the watch as ref[] and sel say; false (and a toast saying what to do) when it can't

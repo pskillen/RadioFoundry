@@ -300,6 +300,74 @@ static const flow_t flows[] = {
 	  "screen=home shows=M17 shows=CAN_3", 0, false },
 	{ "M17 home: broadcast is All", "m17 dlmode:m17", "",
 	  "screen=home shows=CAN_0 shows=All", 0, false },
+	{ "M17 Talk to: stored list", SIM_M17_STORED_ECHO,
+	  "quick up up expect:quick8=ECHO expect:shows=ECHO 8 expect:screen=m17-talk-to expect:count=5 "
+	  "expect:focus=Default expect:focusvalue=ECHO down expect:focus=ALL down expect:focus=ECHO "
+	  "down expect:focus=INFO down expect:focus=UNLINK",
+	  "screen=m17-talk-to m17tx=ECHO m17programmed=ECHO", 8, false },
+	{ "M17 Talk to: every preset (ALL)", SIM_M17_STORED_ECHO " quick 8",
+	  "down expect:focus=ALL ok expect:screen=quick expect:quick8=All expect:shows=All back",
+	  "screen=home shows=All m17tx=ALL m17programmed=ECHO", 3, false },
+	{ "M17 Talk to: every preset (ECHO)", SIM_M17_STORED_ECHO " quick 8 down down down ok 8",
+	  "down down ok expect:screen=quick expect:quick8=ECHO expect:shows=ECHO back",
+	  "screen=home shows=ECHO m17tx=ECHO m17programmed=ECHO m17requests=2", 4, false },
+	{ "M17 Talk to: every preset (INFO)", SIM_M17_STORED_ECHO " quick 8",
+	  "down down down ok expect:screen=quick expect:quick8=INFO expect:shows=INFO back",
+	  "screen=home shows=INFO m17tx=INFO m17programmed=ECHO", 5, false },
+	{ "M17 Talk to: every preset (UNLINK)", SIM_M17_STORED_ECHO " quick 8",
+	  "up ok expect:screen=quick expect:quick8=UNLINK expect:shows=UNLINK back",
+	  "screen=home shows=UNLINK m17tx=UNLINK m17programmed=ECHO", 3, false },
+	{ "M17 Talk to: VFO Default", "m17 dlvfo:438800000 dlmode:m17 m17vfo:ECHO quick 8",
+	  "expect:focusvalue=ECHO down down down ok expect:screen=quick expect:quick8=INFO expect:shows=INFO "
+	  "back expect:screen=home expect:m17tx=INFO expect:shows=INFO quick 8 ok "
+	  "expect:screen=quick expect:quick8=ECHO expect:shows=ECHO back",
+	  "screen=home vfo=1 m17base=ECHO m17tx=ECHO shows=ECHO m17requests=2", 9, false },
+	{ "M17 Talk to: stored Default and channel change", SIM_M17_STORED_ECHO " m17stored:5,UNLINK quick 8 down down down ok",
+	  "8 expect:focusvalue=ECHO ok expect:screen=quick expect:quick8=ECHO back "
+	  "expect:screen=home expect:m17tx=ECHO expect:shows=ECHO expect:m17programmed=ECHO "
+	  "quick 8 up ok back expect:m17tx=UNLINK dlpos:5 expect:m17tx=UNLINK dlpos:3",
+	  "screen=home m17tx=ECHO m17programmed=ECHO shows=ECHO m17requests=3", 8, false },
+#if CONFIG_CHANNEL_EDIT
+	{ "M17 Talk to: channel editor", SIM_M17_STORED_ECHO " quick 8 down down down ok",
+	  "expect:quick8=INFO back expect:screen=home expect:shows=INFO ok 5 ok down down down down down",
+	  "screen=channel focus=Talk_to focusvalue=ECHO m17tx=INFO m17programmed=ECHO", 9, false },
+#endif
+#if CONFIG_DUAL_WATCH
+	{ "M17 Talk to: selected watch side", SIM_M17_STORED_ECHO " m17stored:5,UNLINK quick 7 ctx 3 5 ok",
+	  "ctx 1 expect:sel=B expect:m17gen=2 expect:m17tx=ECHO expect:m17selected=UNLINK "
+	  "quick up up expect:quick8=UNLINK expect:shows=UNLINK expect:hides=ECHO 8 expect:screen=m17-talk-to "
+	  "expect:focusvalue=UNLINK down down down ok expect:screen=quick expect:quick8=INFO "
+	  "expect:m17gen=2 expect:m17tx=ECHO expect:m17selected=INFO back tune:b",
+	  "screen=home dual=1 sel=B m17tx=INFO m17programmed=UNLINK m17requests=1", 11, false },
+	{ "M17 Talk to: selected watch VFO",
+	  "m17 dlvfo:438800000 dlmode:m17 m17vfo:ECHO quick 7 ctx 1 vfokey wait:3000 "
+	  "dlmode:m17 m17vfo:UNLINK wait:3000 tune:a",
+	  "expect:dual=1 expect:sel=B expect:bvfo=1 expect:m17tx=ECHO expect:m17selected=UNLINK "
+	  "quick expect:quick8=UNLINK 8 expect:screen=m17-talk-to expect:focusvalue=UNLINK down down down ok",
+	  "screen=quick quick8=INFO m17selected=INFO m17tx=ECHO m17requests=1", 6, false },
+#endif
+	{ "M17 Talk to: cancel", SIM_M17_STORED_ECHO " quick 8 down",
+	  "back expect:screen=quick expect:quick8=ECHO back",
+	  "screen=home m17tx=ECHO m17programmed=ECHO m17requests=0", 2, false },
+	{ "M17 Talk to: stale context", SIM_M17_STORED_ECHO " m17stored:5,UNLINK quick 8",
+	  "dlpos:5 expect:m17gen=2 expect:focusvalue=ECHO down down down ok expect:screen=m17-talk-to "
+	  "expect:toast=Channel_changed expect:m17requests=0 back expect:screen=quick expect:quick8=UNLINK back",
+	  "screen=home m17tx=UNLINK m17programmed=UNLINK", 6, false },
+	{ "M17 Talk to: queue unavailable", SIM_M17_STORED_ECHO " quick 8 down m17queuefail",
+	  "ok expect:screen=m17-talk-to expect:toast=Couldn't_queue_Talk_to back expect:screen=quick back",
+	  "screen=home m17tx=ECHO m17programmed=ECHO m17requests=1", 3, false },
+	{ "M17 Talk to: unavailable (FM)", "m17 dlmode:fm", "quick 8",
+	  "screen=quick hides=Talk_to m17requests=0", 2, false },
+#if CONFIG_P25
+	{ "M17 Talk to: unavailable (P25)", "m17 p25 dlmode:p25", "quick 8",
+	  "screen=quick hides=Talk_to m17requests=0", 2, false },
+#endif
+#if CONFIG_NXDN
+	{ "M17 Talk to: unavailable (NXDN)", "m17 nxdn dlmode:nxdn", "quick 8",
+	  "screen=quick hides=Talk_to m17requests=0", 2, false },
+#endif
+	{ "M17 Talk to: unavailable (provider)", "dlmode:m17", "quick 8",
+	  "screen=quick hides=Talk_to m17requests=0", 2, false },
 	{ "M17 home: VFO leaves M17", "m17 dlmode:m17 m17tx:3,M17-M17_A", "dlmode:fm",
 	  "screen=home hides=CAN_3", 1, false },
 	{ "M17 PTT: set your callsign", "m17 dlmode:m17 m17deny:call", "",
