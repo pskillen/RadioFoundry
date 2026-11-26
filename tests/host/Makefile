@@ -205,6 +205,19 @@ TESTS   += mbeTest
 mbeTest: mbeTest.c $(MBE) $(wildcard $(CORE)/mbe/*.h) $(CORE)/dsp/fxp.h
 	$(CC) $(CFLAGS) -Wshadow -o $@ mbeTest.c $(MBE) -lm
 
+# c2fx 0.2.0 decoder-only external-DSP sources, as in the firmware build.
+C2FX := $(firstword $(wildcard $(ROOT)/third_party/c2fx/include/c2fx.h) $(RFOUNDRY_THIRD_PARTY)/c2fx/include/c2fx.h)
+C2FX_DIR := $(patsubst %/include/c2fx.h,%,$(C2FX))
+C2FX_SRC := $(addprefix $(C2FX_DIR)/src/,c2fx_version.c tables/c2_3200_tab.c dsp/c2fx_exp2_tab.c \
+	c2fx_frame.c c2fx_quant.c c2fx_lpc.c c2fx_envelope.c c2fx_phase.c c2fx_synth.c c2fx_lost.c c2fx_decode.c)
+C2FX_DSP := $(addprefix $(CORE)/mbe/,c2fx_port.c mbe_dsp.c mbe_tab.c)
+TESTS += c2fxSeamTest
+c2fxSeamTest: c2fxSeamTest.c $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/include/*.h $(C2FX_DIR)/src/*/*.h) \
+              $(CORE)/mbe/mbe_dsp.h $(CORE)/dsp/fxp.h $(C2FX_DIR)/vectors/chirp_80_400hz.c2
+	$(CC) $(CFLAGS) -Wshadow -DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.0\" \
+		-DC2FX_VECTOR=\"$(abspath $(C2FX_DIR)/vectors/chirp_80_400hz.c2)\" \
+		-I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables -I$(C2FX_DIR)/src/dsp -o $@ c2fxSeamTest.c $(C2FX_DSP) $(C2FX_SRC)
+
 # The full-rate voice encoder (core/mbe): the quantizer against the dequantizer
 TESTS   += imbeEncTest
 imbeEncTest: imbeEncTest.c $(MBE) $(wildcard $(CORE)/mbe/*.h) $(CORE)/dsp/fxp.h
@@ -314,6 +327,7 @@ run: $(TESTS)
 	./p25Test
 	./fxpTest
 	./mbeTest | tail -1
+	./c2fxSeamTest
 	./imbeEncTest | tail -1
 	for v in $(VOICE_SETS); do ./imbeVoiceGen --check $(VOICE)/$$v.pcm $(VOICE)/$$v.imbe || exit 1; done
 	./airSoftmodemTest | tail -1
