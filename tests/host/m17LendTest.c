@@ -33,7 +33,7 @@ static void check_session(const void *engine, bool has_voice)
 	CHECK((view.flags & (RADIO_M17_ON | RADIO_M17_VOICE_MEM)) == 0);
 }
 
-static void test_dm1701_pool(void)
+static void test_ccm_and_p25_pool(void)
 {
 	radio_lend_t blocks[RADIO_LEND_MAX];
 	radio_m17_voice_mem_t voice;
@@ -67,7 +67,7 @@ static void test_dm1701_pool(void)
 #endif
 }
 
-static void test_dm32_pool(void)
+static void test_fixed_vocoder_pool(void)
 {
 	radio_lend_t blocks[RADIO_LEND_MAX];
 	radio_m17_voice_mem_t voice;
@@ -93,8 +93,8 @@ static void test_dm32_pool(void)
 int main(void)
 {
 	radio_m17_init();
-	test_dm1701_pool();
-	test_dm32_pool();
+	test_ccm_and_p25_pool();
+	test_fixed_vocoder_pool();
 	printf("# m17LendTest scratch=%zu engine=%zu nxdn=%zu: %d checks, %s\n",
 		C2FX_SCRATCH_BYTES, radio_m17_engine_bytes(), sizeof(nxdn_engine_t),
 		checks, failures ? "FAILED" : "PASSED");
