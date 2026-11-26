@@ -466,7 +466,7 @@ void air_framer_rx_reset(air_framer_t *fr)
 	fr->reg = 0;
 	fr->relock = false;
 	if (fr->mode->rx_discontinuity)
-		fr->mode->rx_discontinuity(fr->ctx);
+		fr->mode->rx_discontinuity(fr->ctx, 0);
 }
 
 void air_framer_rx(air_framer_t *fr, const air_chunk_t *c)
@@ -476,7 +476,7 @@ void air_framer_rx(air_framer_t *fr, const air_chunk_t *c)
 		drop(fr);
 		fr->run = 0;
 		if (fr->mode->rx_discontinuity)
-			fr->mode->rx_discontinuity(fr->ctx);
+			fr->mode->rx_discontinuity(fr->ctx, c->flags);
 		if (c->flags & AIR_CHUNK_NO_SIGNAL)
 			return;
 	}

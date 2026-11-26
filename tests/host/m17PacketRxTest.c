@@ -399,6 +399,114 @@ static void test_modeled_tap(void)
 	CHECK(r.rx.pkt_stats.fec_samples == 1 && r.rx.pkt_stats.fec_reject == 0);
 }
 
+// The first chunk is the half after a hole (AIR_CHUNK_GAP). Timestamps stay on the 40 ms marks.
+static void feed_gap(receiver_t *r, const uint8_t *bytes, unsigned frames)
+{
+	for (unsigned at = 0; at < frames * M17_FRAME_SYMS; at += CHUNK_SYMS) {
+		int8_t soft[CHUNK_SYMS];
+		air_chunk_t c = {
+			.t_us = r->t_us + at / CHUNK_SYMS * 10000u,
+			.nsyms = CHUNK_SYMS,
+			.hard = bytes + at / 4,
+			.soft = soft,
+			.sync_at = -1,
+			.flags = at == 0 ? AIR_CHUNK_GAP : 0,
+		};
+
+		for (uint16_t i = 0; i < CHUNK_SYMS; i++)
+			soft[i] = (int8_t)(air_sym_level(air_sym_get(c.hard, i)) * 32);
+		air_framer_rx(&r->fr, &c);
+	}
+	r->t_us += frames * 40000;
+}
+
+static void slip(receiver_t *r, int32_t us)
+{
+	r->t_us = (uint32_t)((int32_t)r->t_us + us);
+}
+
+// 40 ms ± the copy-clock allowance in m17_air.c (M17_PACKET_CLOCK_US).
+static void test_clock_slip(void)
+{
+	static const struct {
+		int32_t us;
+		bool deliver;
+	} slips[] = {
+		{ 2000, true }, { -2000, true },
+		{ 3000, true }, { -3000, true },
+		{ 3001, false }, { -3001, false },
+	};
+	const uint64_t source = M17_ADDR_AB1CD;
+
+	for (unsigned i = 0; i < sizeof slips / sizeof slips[0]; i++) {
+		receiver_t r;
+		packet_t p;
+
+		begin(&r);
+		make_packet(&p, 18, source);
+		feed(&r, p.air, 2);
+		slip(&r, slips[i].us);
+		feed(&r, frame(&p, 2), 1);
+		feed(&r, frame(&p, 3), 1);
+		if (slips[i].deliver)
+			expect_packet(&r, &p, 18, source, 1);
+		else
+			CHECK(r.delivered == 0 && r.rx.pkt_stats.crc_ok == 0 && r.rx.pkt_stats.crc_fail == 0);
+
+		begin(&r);
+		make_packet(&p, 18, source);
+		feed(&r, p.air, 3);
+		slip(&r, slips[i].us);
+		feed(&r, frame(&p, 3), 1);
+		if (slips[i].deliver)
+			expect_packet(&r, &p, 18, source, 1);
+		else
+			CHECK(r.delivered == 0 && r.rx.pkt_stats.crc_ok == 0 && r.rx.pkt_stats.crc_fail == 0);
+	}
+}
+
+// One 32 ms copy half dropped before the next frame, whose sync is still in the slot. A whole frame is not.
+static void test_copy_half_gap(void)
+{
+	const uint64_t source = M17_ADDR_AB1CD;
+	receiver_t r;
+	packet_t one, many;
+
+	begin(&r);
+	make_packet(&one, 18, source);
+	feed(&r, one.air, 2);
+	feed_gap(&r, frame(&one, 2), 2);
+	expect_packet(&r, &one, 18, source, 1);
+
+	begin(&r);
+	make_packet(&one, 18, source);
+	feed(&r, one.air, 3);
+	feed_gap(&r, frame(&one, 3), 1);
+	expect_packet(&r, &one, 18, source, 1);
+
+	begin(&r);
+	make_packet(&many, 80, source);
+	feed(&r, many.air, 3);
+	feed_gap(&r, frame(&many, 3), 1);
+	feed(&r, many.air + 4 * FRAME_BYTES, many.nframes - 4);
+	expect_packet(&r, &many, 80, source, 1);
+
+	begin(&r);
+	make_packet(&one, 18, source);
+	feed(&r, one.air, 2);
+	slip(&r, 40000);
+	feed_gap(&r, frame(&one, 2), 2);
+	CHECK(r.delivered == 0 && r.rx.pkt_stats.crc_ok == 0 && r.rx.pkt_stats.crc_fail == 0);
+
+	begin(&r);
+	make_packet(&many, 80, source);
+	feed(&r, many.air, 3);
+	slip(&r, 40000);
+	feed_gap(&r, frame(&many, 3), 1);
+	feed(&r, many.air + 4 * FRAME_BYTES, many.nframes - 4);
+	CHECK(r.delivered == 0 && r.rx.pkt_stats.crc_ok == 0 && r.rx.pkt_stats.crc_fail == 0);
+}
+
 int main(void)
 {
 	test_delivery();
@@ -409,6 +517,8 @@ int main(void)
 	test_interleave();
 	test_fec_limit();
 	test_modeled_tap();
+	test_clock_slip();
+	test_copy_half_gap();
 	puts("# PASSED m17PacketRxTest");
 	return EXIT_SUCCESS;
 }

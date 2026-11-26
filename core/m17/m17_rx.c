@@ -208,9 +208,10 @@ void m17_rx_on_lost(m17_rx_t *rx)
 {
 	rx->bert_run = 0;
 #if CONFIG_M17_PACKET
-	// Refusing the first provisional frame drops the LSF lock. A provider gap is reported separately,
-	// even after the framer has gone back to searching.
-	if (rx->pkt_phase == M17_PKT_MORE || rx->pkt_phase == M17_PKT_ONE)
+	// A sample hole drops the lock before the discontinuity hook runs, and so does a sync the head
+	// hook did not keep. The next frame can still land in the slot window after either, in every
+	// packet phase, so the call stays up. A late frame or an explicit end closes it.
+	if (rx->pkt_phase != M17_PKT_NONE)
 		return;
 #endif
 	if (rx->in_call)

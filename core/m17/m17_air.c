@@ -118,14 +118,21 @@ static bool preamble_run(const air_frame_t *f)
 #if CONFIG_M17_PACKET
 #define M17_PACKET_FEC_LIMIT	20
 
-// 192 symbols is 40 ms. Allow for timing recovery and ignore replayed syncs before the next slot.
+// 192 symbols is 40 ms. A provider publishes how far t_us can sit from the sample it names
+// (hal_air_t.time_accuracy_us): 3000 µs and 2000 µs. The slot uses the wider of those. Core has no
+// provider pointer, and a field to carry the number would cost RAM, so it is one constant. A frame
+// a whole slot late is not a slip of that clock. A sync earlier than the window is a replay.
+#define M17_PACKET_SLOT_US	40000
+#define M17_PACKET_CLOCK_US	3000
+
 static bool packet_slot(m17_rx_t *rx, const air_frame_t *f)
 {
 	int32_t d = (int32_t)(f->t_us - rx->pkt_t);
+	int32_t late = M17_PACKET_SLOT_US + M17_PACKET_CLOCK_US;
 
-	if (d > 41000)
+	if (d > late)
 		m17_rx_packet_end(rx);
-	return d >= 39000 && d <= 41000;
+	return d >= M17_PACKET_SLOT_US - M17_PACKET_CLOCK_US && d <= late;
 }
 
 static bool packet_crc_ok(const m17_rx_t *rx)
@@ -341,8 +348,13 @@ static void rx_lost(void *ctx)
 }
 
 #if CONFIG_M17_PACKET
-static void rx_discontinuity(void *ctx)
+static void rx_discontinuity(void *ctx, uint8_t flags)
 {
+	// The chunk after a missing copy half is AIR_CHUNK_GAP and can still hold the next frame.
+	// The slot window takes that frame or drops it. Squelch, and a reset (no flags), have no
+	// such frame on this clock.
+	if ((flags & AIR_CHUNK_GAP) != 0 && (flags & AIR_CHUNK_NO_SIGNAL) == 0)
+		return;
 	m17_rx_packet_end(ctx);
 }
 #endif
