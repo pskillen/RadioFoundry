@@ -11,6 +11,7 @@
 #define RADIO_NXDN_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "config.h"
 #include "codeplug/codeplug.h"
@@ -63,6 +64,9 @@ typedef struct {
 } radio_nxdn_stats_t;
 
 #if CONFIG_NXDN
+// Radio task. The block NXDN owns, available while its engine is idle.
+void *radio_nxdn_idle_mem(size_t *len);
+
 #include "radio/radio_air.h"
 
 extern const radio_air_ops_t radio_nxdn_air;
