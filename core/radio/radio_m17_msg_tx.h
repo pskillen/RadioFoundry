@@ -57,6 +57,9 @@ bool radio_m17_msg_tx_validate(const char *text, size_t length);
 // reservation fails rather than reusing a stale token.
 uint64_t radio_m17_msg_tx_reserve(radio_m17_msg_tx_t *store, uint32_t generation,
 		uint64_t destination, const char *text, size_t length);
+// Same slot, but text is handset display encoding (ASCII and ISO-8859-1). Converted in place.
+uint64_t radio_m17_msg_tx_reserve_display(radio_m17_msg_tx_t *store, uint32_t generation,
+		uint64_t destination, const char *text);
 bool radio_m17_msg_tx_rollback(radio_m17_msg_tx_t *store, uint64_t serial);
 // Pointer remains valid until completion. Owner must copy payload before completing.
 const radio_m17_msg_tx_request_t *radio_m17_msg_tx_consume(radio_m17_msg_tx_t *store, uint64_t serial);

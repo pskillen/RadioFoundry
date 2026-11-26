@@ -95,6 +95,12 @@ typedef struct {
 	int32_t backlight_s;	// < 0: dims, never off
 	uint32_t long_press_ms;		// handed to the input layer (ui_svc_apply)
 	uint32_t shortened;		// texts gfx_text_fit shortened with an ellipsis
+	uint32_t m17_queued;		// M17 message sends accepted, not yet finished
+	uint32_t m17_done;		// M17 message sends that reached a result
+	uint8_t m17_pending;		// 1 while one is queued and not complete
+	char m17_dest[16];		// destination of the last queued M17 message
+	char m17_body[64];		// its body after display-to-UTF-8 conversion
+	char m17_via[8];		// "m17" once a message has been queued
 } sim_record_t;
 extern sim_record_t sim_rec;
 const radio_view_t *sim_view(void);

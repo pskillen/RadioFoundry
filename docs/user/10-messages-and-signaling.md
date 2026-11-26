@@ -36,7 +36,9 @@ Messages.
 
 **#** on a DMR message opens the actions for its sender. **PTT** in an open DMR message calls the sender. The Call
 action is unavailable for APRS messages, whose sender is a callsign. **#** on an APRS message opens a composer addressed
-to that callsign. M17 messages show the sender callsign and offer Full message and Delete; reply, Call and sender PTT are unavailable. A **[Stored text truncated]** marker means the received text exceeded storage, independently of the screen preview.
+to that callsign. An M17 message shows the sender callsign. When the selected M17 channel can transmit, the open
+message offers Reply "OK", Reply "On my way", **Write...** and Delete, and **#** replies to that sender. Otherwise
+it offers Full message and Delete; Call and sender PTT stay unavailable. A **[Stored text truncated]** marker means the received text exceeded storage, independently of the screen preview.
 
 <img src="../ux/screens/160x120i5/messages.png" width="200" alt="Messages">
 <img src="../ux/screens/160x120i5/message_view.png" width="200" alt="A message">
@@ -88,6 +90,20 @@ text plus coordinates exceeds 67 characters. The position is part of the message
 The APRS destination is a callsign, not a DMR ID. A new outgoing message replaces one still awaiting an acknowledgment.
 Sending is refused if the callsign or text is invalid or the APRS RF path is unavailable. **Tools > APRS** shows the
 configured frequency and any blocking reason. Received APRS messages appear in Messages; replies go over APRS.
+
+### Sending and replying over M17
+
+1. Select an M17 channel or VFO that can transmit, then open **Messages > New M17 message**. The destination
+   starts as that channel's programmed address. A temporary **Talk to** choice is not used. Clear the field, or
+   enter ALL, to send to everyone; the radio shows that as **All**. An address it cannot use stays in the editor.
+2. Pick a preset or **Write...** (up to 143 characters) and press **OK**.
+3. To reply, open the M17 message and choose a reply, or press **#** on its row in the list. The reply goes to
+   that message's sender, even when the original was a broadcast.
+
+The radio shows "Sending to ..." and returns to Home. "Sent to ..." means the message went out on the air. M17
+has no delivery receipt, so the radio never says "Delivered" for one. If the channel is busy, the composer stays
+open and **OK** tries again. A changed channel, a missing callsign, or a receive-only channel explains the
+failure and does not send the text over DMR or APRS. A blank message is not sent.
 
 ## Message formats
 

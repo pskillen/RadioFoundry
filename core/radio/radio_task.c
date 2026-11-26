@@ -765,13 +765,8 @@ void radio_req_nxdn_settings(const radio_nxdn_settings_t *s)
 }
 #endif
 #if CONFIG_M17_PACKET
-uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const char *text, size_t length)
+static uint64_t m17_msg_submit(uint64_t serial)
 {
-	if (requests == NULL || !radio_m17_msg_tx_validate(text, length))
-		return 0;
-	vTaskSuspendAll();
-	uint64_t serial = radio_m17_msg_tx_reserve(&m17_msg_tx, generation, destination, text, length);
-	(void)xTaskResumeAll();
 	if (!serial)
 		return 0;
 	const radio_req_t req = { .type = RREQ_M17_MSG_SEND, .arg = (int32_t)(uint32_t)serial,
@@ -783,6 +778,26 @@ uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const
 		return 0;
 	}
 	return serial;
+}
+
+uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const char *text, size_t length)
+{
+	if (requests == NULL || !radio_m17_msg_tx_validate(text, length))
+		return 0;
+	vTaskSuspendAll();
+	uint64_t serial = radio_m17_msg_tx_reserve(&m17_msg_tx, generation, destination, text, length);
+	(void)xTaskResumeAll();
+	return m17_msg_submit(serial);
+}
+
+uint64_t radio_req_m17_msg_send_display(uint32_t generation, uint64_t destination, const char *text)
+{
+	if (requests == NULL)
+		return 0;
+	vTaskSuspendAll();
+	uint64_t serial = radio_m17_msg_tx_reserve_display(&m17_msg_tx, generation, destination, text);
+	(void)xTaskResumeAll();
+	return m17_msg_submit(serial);
 }
 
 bool radio_get_m17_msg_tx_result(radio_m17_msg_tx_result_t *out)

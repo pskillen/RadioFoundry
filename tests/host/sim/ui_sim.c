@@ -36,7 +36,15 @@
 //   rx:<src>,<dst>,g|p[,name]   a DMR call starts (g = group, p = private to us); rxend ends it
 //   call:<src>,<dst>,g|p        a 2 s call, then 1 s of quiet
 //   m17messages         enable the M17 packet receive capability
+//   m17nopacket         turn that capability off again (a message can already be in the inbox)
 //   nosms               disable DMR SMS capability
+//   m17txfit            the selected M17 channel can transmit packets
+//   m17notx             that transmit fit is off (receive only)
+//   m17rxonly           the channel itself is receive-only
+//   m17nocall           no M17 callsign can be resolved
+//   m17slot             the next M17 send finds the transmitter busy and is not queued
+//   m17result:<reason>  complete a queued M17 send: sent, busy, refused, failed, context,
+//                       address, fit, guard or timeout. sent is on air, not delivered
 //   m17msg:<call>,<text>,<cut>  receive an M17 message (_ = space; cut = 0 or 1)
 //   msg:<src>,<text>    a text message arrives (_ = space); alert:<src>; emergency:<src>; privcall:<src>
 //                       (each also <src>,<name>: the station's name, _ = space, for one not in the contacts)
@@ -1773,6 +1781,9 @@ static sim_m17_msg_t m17_inbox[4];
 static uint8_t n_m17_inbox;
 static uint32_t m17_seq, m17_last_id;
 static bool m17_messages;
+static bool sim_m17_tx_fit, sim_m17_rx_only, sim_m17_nocall, sim_m17_slot;
+static bool sim_m17_pending;
+static uint8_t sim_m17_result;
 #endif
 
 // The volume feature (a radio without a knob: the VOL key, Settings > Sound > Volume) only with the "softvol" token, so
@@ -1790,6 +1801,7 @@ static bool m17_radio;
 bool radio_m17_fits(void) { return m17_radio; }
 
 #include "m17/m17.h"
+#include "m17/m17_text.h"
 
 // The UI test does not link the codec. Empty and ALL are broadcast; any other legal address is remembered so a
 // saved channel shows the same text again. The wire encoding is m17CodeplugTest's.
@@ -1932,6 +1944,10 @@ bool ui_svc_m17_call_show(char out[10], bool *stored)
 	if (stored != NULL)
 		*stored = false;
 	out[0] = '\0';
+#if CONFIG_M17_PACKET
+	if (sim_m17_nocall)
+		return false;
+#endif
 	if (sim_m17_call[0] != '\0') {
 		strncpy(out, sim_m17_call, 9);
 		out[9] = '\0';
@@ -2542,6 +2558,46 @@ bool ui_svc_m17_msg_delete(uint32_t id)
 	n_m17_inbox--;
 	return true;
 }
+bool ui_svc_m17_msg_send(const char *call, const char *text)
+{
+	char utf8[sizeof sim_rec.m17_body];
+	size_t n;
+
+	if (sim_m17_slot) {
+		sim_m17_slot = false;
+		return false;
+	}
+	if (sim_m17_pending || text == NULL || text[0] == '\0')
+		return false;
+	n = m17_text_from_display(text, utf8, sizeof utf8);
+	if (n == 0)
+		return false;
+	sim_m17_pending = true;
+	sim_m17_result = 0;
+	sim_rec.m17_queued++;
+	sim_rec.m17_pending = 1;
+	snprintf(sim_rec.m17_dest, sizeof sim_rec.m17_dest, "%s", call != NULL ? call : "");
+	snprintf(sim_rec.m17_body, sizeof sim_rec.m17_body, "%s", utf8);
+	snprintf(sim_rec.m17_via, sizeof sim_rec.m17_via, "m17");
+	return true;
+}
+void ui_svc_m17_msg_poll(void)
+{
+	ui_event_t ev;
+
+	if (!sim_m17_pending || sim_m17_result == 0)
+		return;
+	memset(&ev, 0, sizeof ev);
+	ev.kind = UI_EV_M17_SENT;
+	ev.ok = sim_m17_result == RADIO_M17_MSG_TX_SENT;
+	ev.index = sim_m17_result;
+	snprintf(ev.name, sizeof ev.name, "%s", sim_rec.m17_dest);
+	sim_m17_pending = false;
+	sim_m17_result = 0;
+	sim_rec.m17_pending = 0;
+	sim_rec.m17_done++;
+	ui_notify(&ev);
+}
 static void add_m17_message(const char *call, const char *text, bool cut)
 {
 	if (n_m17_inbox == 4)
@@ -2926,6 +2982,12 @@ static void step(void)
 	now_ms += TICK_MS;
 #if CONFIG_M17
 	sim_m17_update();
+#if CONFIG_M17_PACKET
+	if (sim_m17_tx_fit)
+		view.m17.fit = (uint16_t)(AIR_FIT_RX | AIR_FIT_TX);
+	if (sim_m17_rx_only)
+		view.ch.rx_only = true;
+#endif
 #endif
 	if (view.state == RS_TX)
 		view.tx_elapsed_ms += TICK_MS;
@@ -3074,6 +3136,9 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 	m17_seq = 0;
 	m17_last_id = 65536u;
 	m17_messages = false;
+	sim_m17_tx_fit = sim_m17_rx_only = sim_m17_nocall = sim_m17_slot = false;
+	sim_m17_pending = false;
+	sim_m17_result = 0;
 #endif
 	hotspot_on = rx_on = usb_net = usb_up = false;
 	board.netif = &sim_netif;
@@ -3472,6 +3537,12 @@ static bool check(const char *kv, char *err, size_t len)
 		ui_svc_m17_msg_summary(&summary);
 		snprintf(got, sizeof got, "%u", summary.unread);
 	}
+	else if (strcmp(key, "m17q") == 0) snprintf(got, sizeof got, "%u", sim_rec.m17_pending);
+	else if (strcmp(key, "m17queued") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.m17_queued);
+	else if (strcmp(key, "m17done") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.m17_done);
+	else if (strcmp(key, "m17dest") == 0) snprintf(got, sizeof got, "%s", sim_rec.m17_dest);
+	else if (strcmp(key, "m17body") == 0) snprintf(got, sizeof got, "%s", sim_rec.m17_body);
+	else if (strcmp(key, "m17via") == 0) snprintf(got, sizeof got, "%s", sim_rec.m17_via);
 #endif
 	else if (strcmp(key, "count") == 0) snprintf(got, sizeof got, "%u", s.count);
 	else if (strcmp(key, "depth") == 0) snprintf(got, sizeof got, "%u", s.depth);
@@ -3934,7 +4005,14 @@ static bool run_token(char *t, char *err, size_t len)
 		char dst[RADIO_M17_CALL_LEN];
 		channel_t ch;
 		ui_air_conv_t air = { .m17.can = 3 };
-		if (sscanf(arg, "%u,%9s", &number, dst) != 2 || !m17_dst_parse(dst, &air.m17.dst)) {
+		if (sscanf(arg, "%u,%9s", &number, dst) != 2) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		for (char *p = dst; *p != '\0'; p++)
+			if (*p == '_')
+				*p = ' ';
+		if (!m17_dst_parse(dst, &air.m17.dst)) {
 			snprintf(err, len, "bad %s", t);
 			return false;
 		}
@@ -3959,7 +4037,12 @@ static bool run_token(char *t, char *err, size_t len)
 		return true;
 	}
 	if (strcmp(t, "m17vfo") == 0 && arg != NULL && view.vfo) {
-		if (!m17_dst_parse(arg, &sim_m17_vfo_dst[view.vfo_index])) {
+		char dst[RADIO_M17_CALL_LEN];
+		snprintf(dst, sizeof dst, "%s", arg);
+		for (char *p = dst; *p != '\0'; p++)
+			if (*p == '_')
+				*p = ' ';
+		if (!m17_dst_parse(dst, &sim_m17_vfo_dst[view.vfo_index])) {
 			snprintf(err, len, "bad %s", t);
 			return false;
 		}
@@ -4145,6 +4228,54 @@ static bool run_token(char *t, char *err, size_t len)
 #if CONFIG_M17 && CONFIG_M17_PACKET
 	if (strcmp(t, "m17messages") == 0) {
 		m17_messages = true;
+		return true;
+	}
+	if (strcmp(t, "m17nopacket") == 0) {
+		m17_messages = false;
+		return true;
+	}
+	if (strcmp(t, "m17txfit") == 0) {
+		sim_m17_tx_fit = true;
+		m17_messages = true;
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17notx") == 0) {
+		sim_m17_tx_fit = false;
+		view.m17.fit = (uint16_t)AIR_FIT_RX;
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17rxonly") == 0) {
+		sim_m17_rx_only = true;
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17nocall") == 0) {
+		sim_m17_nocall = true;
+		return true;
+	}
+	if (strcmp(t, "m17slot") == 0) {
+		sim_m17_slot = true;
+		return true;
+	}
+	if (strcmp(t, "m17result") == 0 && arg != NULL) {
+		static const struct { const char *name; uint8_t reason; } reasons[] = {
+			{ "sent", RADIO_M17_MSG_TX_SENT }, { "busy", RADIO_M17_MSG_TX_BUSY },
+			{ "refused", RADIO_M17_MSG_TX_REFUSED }, { "failed", RADIO_M17_MSG_TX_FAILED },
+			{ "context", RADIO_M17_MSG_TX_CONTEXT }, { "address", RADIO_M17_MSG_TX_ADDRESS },
+			{ "fit", RADIO_M17_MSG_TX_FIT }, { "guard", RADIO_M17_MSG_TX_GUARD },
+			{ "timeout", RADIO_M17_MSG_TX_TIMEOUT },
+		};
+		size_t i = 0;
+		while (i < sizeof reasons / sizeof reasons[0] && strcmp(arg, reasons[i].name) != 0)
+			i++;
+		if (i == sizeof reasons / sizeof reasons[0] || !sim_m17_pending) {
+			snprintf(err, len, "bad m17result");
+			return false;
+		}
+		sim_m17_result = reasons[i].reason;
+		advance(100);
 		return true;
 	}
 	if (strcmp(t, "m17msg") == 0 && arg != NULL) {

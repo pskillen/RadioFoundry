@@ -46,4 +46,33 @@ static inline bool m17_text_next(const uint8_t *text, size_t length, size_t *at,
 	*scalar = cp;
 	return true;
 }
+
+// Handset text is ASCII plus ISO-8859-1 (one byte a glyph). On-air text is UTF-8.
+// Writes a valid UTF-8 string, or returns 0 when it does not fit. An empty input returns 0.
+static inline size_t m17_text_from_display(const char *in, char *out, size_t cap)
+{
+	size_t n = 0;
+
+	if (in == NULL || out == NULL || cap == 0)
+		return 0;
+	for (const unsigned char *p = (const unsigned char *)in; *p != 0; p++) {
+		unsigned char c = *p;
+		if (c >= 0x20u && c < 0x80u) {
+			if (n + 1u >= cap)
+				return 0;
+			out[n++] = (char)c;
+		} else if (c >= 0xA0u) {
+			if (n + 2u >= cap)
+				return 0;
+			out[n++] = (char)(0xC0u | (c >> 6));
+			out[n++] = (char)(0x80u | (c & 0x3Fu));
+		} else {
+			if (n + 1u >= cap)
+				return 0;
+			out[n++] = '?';
+		}
+	}
+	out[n] = '\0';
+	return n;
+}
 #endif

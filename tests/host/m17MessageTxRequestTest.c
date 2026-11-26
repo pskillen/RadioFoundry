@@ -48,6 +48,21 @@ int main(void)
 	assert(radio_m17_msg_tx_complete(&s, last, 3));
 	assert(!radio_m17_msg_tx_reserve(&s, 4, 1, "", 0));
 	assert(radio_m17_msg_tx_result(&s).serial == last && radio_m17_msg_tx_result(&s).reason == 3);
+	memset(&s, 0, sizeof s);
+	{
+		char disp[] = { 'A', (char)0xE9, (char)0x80, 0 };
+		uint64_t shown = radio_m17_msg_tx_reserve_display(&s, 5, 1, disp);
+		const radio_m17_msg_tx_request_t *q;
+		assert(shown);
+		q = radio_m17_msg_tx_consume(&s, shown);
+		assert(q && q->length == 4);
+		assert((unsigned char)q->text[0] == 'A');
+		assert((unsigned char)q->text[1] == 0xC3 && (unsigned char)q->text[2] == 0xA9);
+		assert(q->text[3] == '?');
+		assert(radio_m17_msg_tx_complete(&s, shown, RADIO_M17_MSG_TX_SENT));
+	}
+	assert(!radio_m17_msg_tx_reserve_display(&s, 5, 1, ""));
+	assert(!radio_m17_msg_tx_reserve_display(&s, 5, 1, NULL));
 	puts("m17 message TX request: ok");
 	return 0;
 }

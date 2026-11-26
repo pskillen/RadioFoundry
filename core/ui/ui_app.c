@@ -695,6 +695,43 @@ static void handle_event(const ui_event_t *ev)
 				TR(MSG_BANNER_NOT_DELIVERED, "Not delivered: send again"));
 		}
 		break;
+#if CONFIG_M17_PACKET
+	case UI_EV_M17_SENT: {
+		// Sent means the packet went out. M17 has no delivery receipt, so this is never "Delivered".
+		const char *who = (ev->name[0] == '\0' || strcmp(ev->name, "ALL") == 0) ?
+			TR(QUICK_VALUE_ALL, "All") : ev->name;
+		const char *why = NULL;
+		if (ev->ok) {
+			sb_str(&b, TR(BANNER_SENT_TO, "Sent to "));
+			name_mark = b.p;
+			sb_str(&b, who);
+			banner(UI_BANNER_RESULT, false, 0, title, NULL);
+			break;
+		}
+		switch (ev->index) {
+		case RADIO_M17_MSG_TX_BUSY:
+			why = TR(MSG_M17_RESULT_BUSY, "Channel busy: try again");
+			break;
+		case RADIO_M17_MSG_TX_REFUSED:
+			why = TR(MSG_M17_RESULT_REFUSED, "Radio refused the message");
+			break;
+		case RADIO_M17_MSG_TX_CONTEXT:
+			why = TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed");
+			break;
+		case RADIO_M17_MSG_TX_ADDRESS:
+			why = TR(M17_DENY_CALLSIGN, "M17: set your callsign");
+			break;
+		case RADIO_M17_MSG_TX_FIT:
+			why = TR(M17_DENY_RX_ONLY, "M17: receive only");
+			break;
+		default:
+			why = TR(MSG_M17_RESULT_FAILED, "Message was not sent");
+			break;
+		}
+		banner(UI_BANNER_RESULT, true, 0, why, who);
+		break;
+	}
+#endif
 	case UI_EV_CALL_ALERT:
 		sb_str(&b, TR(ALERT_BANNER_FROM, "Call alert from "));
 		station(&b, ev);
@@ -2576,6 +2613,7 @@ bool ui_app_tick(const radio_view_t *v, uint32_t now_ms)
 			vibrate(UI_VIBE_MESSAGE);
 		}
 	}
+	ui_svc_m17_msg_poll();
 #endif
 	ui_svc_keys_poll();
 #if CONFIG_ZONE_EDIT

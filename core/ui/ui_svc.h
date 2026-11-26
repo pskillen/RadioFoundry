@@ -238,6 +238,12 @@ bool ui_svc_m17_msg_get_at(uint16_t i, uint32_t *id, ui_msg_t *out);
 bool ui_svc_m17_msg_get(uint32_t id, ui_msg_t *out);
 bool ui_svc_m17_msg_read(uint32_t id);
 bool ui_svc_m17_msg_delete(uint32_t id);
+// Queue one M17 text message on the selected channel. call is the destination
+// (blank or ALL is broadcast). text is handset display text; the service turns
+// it into UTF-8 and checks the wire length. False: nothing queued. A queued
+// send finishes later, as UI_EV_M17_SENT from ui_svc_m17_msg_poll().
+bool ui_svc_m17_msg_send(const char *call, const char *text);
+void ui_svc_m17_msg_poll(void);
 // Queue a text message; the result comes back as a ui_notify() event
 bool ui_svc_msg_send(uint32_t dst, bool group, const char *text);
 bool ui_svc_msg_reply(uint16_t i, const char *text);
@@ -527,6 +533,8 @@ typedef enum {
 				// says why
 	UI_EV_CODEPLUG_FOREIGN,	// a codeplug write is held: ask what to do with another firmware's codeplug
 	UI_EV_APRS_MESSAGE,	// an APRS message addressed to us: name = sender callsign, text = message text
+	UI_EV_M17_SENT,		// an M17 message finished: ok = sent on air (not a delivery receipt);
+				// name = destination (ALL is broadcast); index = radio_m17_msg_tx_reason_t when !ok
 } ui_event_kind_t;
 
 typedef struct {

@@ -656,6 +656,8 @@ bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst);
 #if CONFIG_M17_PACKET
 // Returns a serial for a copied request, or zero if it could not be queued.
 uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const char *text, size_t length);
+// text is handset display encoding. The UTF-8 copy uses the request slot, not a second buffer.
+uint64_t radio_req_m17_msg_send_display(uint32_t generation, uint64_t destination, const char *text);
 // Copies the latest terminal result; false until a request has completed.
 bool radio_get_m17_msg_tx_result(radio_m17_msg_tx_result_t *out);
 #endif

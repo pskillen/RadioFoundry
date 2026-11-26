@@ -174,6 +174,41 @@ msgctxt "MSG_BANNER_NOT_DELIVERED"
 msgid "Not delivered: send again"
 msgstr "未送达：请重发"
 
+#: core/ui/ui_app.c core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "QUICK_VALUE_ALL"
+msgid "All"
+msgstr "全部"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c
+msgctxt "MSG_M17_RESULT_BUSY"
+msgid "Channel busy: try again"
+msgstr "信道忙：请重试"
+
+#: core/ui/ui_app.c
+msgctxt "MSG_M17_RESULT_REFUSED"
+msgid "Radio refused the message"
+msgstr "电台拒绝了该消息"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c
+msgctxt "M17_TOAST_CHANNEL_CHANGED"
+msgid "Channel changed"
+msgstr "信道已更改"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "M17_DENY_CALLSIGN"
+msgid "M17: set your callsign"
+msgstr "M17: 请先设置呼号"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "M17_DENY_RX_ONLY"
+msgid "M17: receive only"
+msgstr "M17: 仅接收"
+
+#: core/ui/ui_app.c
+msgctxt "MSG_M17_RESULT_FAILED"
+msgid "Message was not sent"
+msgstr "消息未发出"
+
 #: core/ui/ui_app.c
 msgctxt "ALERT_BANNER_FROM"
 msgid "Call alert from "
@@ -513,11 +548,6 @@ msgstr "VFO：本版本仅一种模式"
 msgctxt "WHY_VOX_NOT_ON_RADIO_YET"
 msgid "VOX: not on this radio yet"
 msgstr "VOX：本机尚未支持"
-
-#: core/ui/ui_app.c core/ui/ui_menus.c
-msgctxt "M17_TOAST_CHANNEL_CHANGED"
-msgid "Channel changed"
-msgstr "信道已更改"
 
 #: core/ui/ui_app.c
 msgctxt "QUICK_TOAST_BANDWIDTH_25_KHZ"
@@ -1790,6 +1820,11 @@ msgid "New APRS message"
 msgstr "新 APRS 消息"
 
 #: core/ui/ui_menus.c
+msgctxt "MSG_ROW_NEW_M17"
+msgid "New M17 message"
+msgstr "新 M17 消息"
+
+#: core/ui/ui_menus.c
 msgctxt "MSG_HINT_LIST"
 msgid "OK open  # reply  Back"
 msgstr "OK 打开  # 回复  返回"
@@ -2140,6 +2175,21 @@ msgid "Empty zone"
 msgstr "空区域"
 
 #: core/ui/ui_menus.c
+msgctxt "MSG_M17_TOAST_UNAVAILABLE"
+msgid "M17 message: not available"
+msgstr "M17 消息：不可用"
+
+#: core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "DENY_WHY_RX_ONLY"
+msgid "This channel is RX only"
+msgstr "本信道仅接收"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_DST"
+msgid "Not an M17 address"
+msgstr "不是 M17 地址"
+
+#: core/ui/ui_menus.c
 msgctxt "TOAST_SAVED"
 msgid "Saved"
 msgstr "已保存"
@@ -2213,11 +2263,6 @@ msgstr "{返回 删除  # ABC/123/abc  OK 保留|返回 删  # 模式  OK}"
 msgctxt "TEXT_HINT_SEND"
 msgid "{Back delete  # ABC/123/abc  OK send|Back del  # mode  OK}"
 msgstr "{返回 删除  # ABC/123/abc  OK 发送|返回 删  # 模式  OK}"
-
-#: core/ui/ui_menus.c
-msgctxt "M17_TOAST_DST"
-msgid "Not an M17 address"
-msgstr "不是 M17 地址"
 
 #: core/ui/ui_menus.c
 msgctxt "CHAN_ROW_NEW_FROM_CURRENT"
@@ -4875,11 +4920,6 @@ msgid "No TX frequency"
 msgstr "无发射频率"
 
 #: core/ui/ui_screens.c
-msgctxt "QUICK_VALUE_ALL"
-msgid "All"
-msgstr "全部"
-
-#: core/ui/ui_screens.c
 msgctxt "HOME_CHIP_BROADCAST_FM"
 msgid "Broadcast FM"
 msgstr "调频广播"
@@ -4903,11 +4943,6 @@ msgstr "请关机再开机"
 msgctxt "HW_FIX_SETTINGS_PATH"
 msgid "Settings>Advanced>Hardware"
 msgstr "设置>高级>Hardware"
-
-#: core/ui/ui_screens.c
-msgctxt "DENY_WHY_RX_ONLY"
-msgid "This channel is RX only"
-msgstr "本信道仅接收"
 
 #: core/ui/ui_screens.c
 msgctxt "DENY_WHY_BANDS"
@@ -4995,19 +5030,9 @@ msgid "Air bench: PTT off"
 msgstr "空口测试台：PTT 关闭"
 
 #: core/ui/ui_screens.c
-msgctxt "M17_DENY_RX_ONLY"
-msgid "M17: receive only"
-msgstr "M17: 仅接收"
-
-#: core/ui/ui_screens.c
 msgctxt "DENY_WHY_AIR_NO_TX"
 msgid "This mode: receive only"
 msgstr "此模式：仅接收"
-
-#: core/ui/ui_screens.c
-msgctxt "M17_DENY_CALLSIGN"
-msgid "M17: set your callsign"
-msgstr "M17: 请先设置呼号"
 
 #: core/ui/ui_screens.c
 msgctxt "DENY_WHY_P25T_NO_CC"

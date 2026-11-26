@@ -111,6 +111,8 @@ WEAK bool ui_svc_m17_msg_get_at(uint16_t i, uint32_t *id, ui_msg_t *out) { (void
 WEAK bool ui_svc_m17_msg_get(uint32_t id, ui_msg_t *out) { (void)id; (void)out; return false; }
 WEAK bool ui_svc_m17_msg_read(uint32_t id) { (void)id; return false; }
 WEAK bool ui_svc_m17_msg_delete(uint32_t id) { (void)id; return false; }
+WEAK bool ui_svc_m17_msg_send(const char *call, const char *text) { (void)call; (void)text; return false; }
+WEAK void ui_svc_m17_msg_poll(void) {}
 WEAK bool ui_svc_msg_send(uint32_t dst, bool group, const char *text) { (void)dst; (void)group; (void)text; return false; }
 WEAK bool ui_svc_msg_reply(uint16_t i, const char *text) { (void)i; (void)text; return false; }
 WEAK bool ui_svc_radio_check(uint32_t id) { (void)id; return false; }

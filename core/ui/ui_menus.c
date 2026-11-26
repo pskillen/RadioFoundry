@@ -399,10 +399,25 @@ static char aprs_to[AX25_CALL_LEN + 4];
 static char aprs_compose_to[AX25_CALL_LEN + 4];
 static uint8_t aprs_message_flags;
 static bool aprs_composing;
+#if CONFIG_M17_PACKET
+// Destination and generation captured when compose or reply opens. The reply id is the
+// inbox entry's stable id, so a newer arrival cannot retarget the send.
+static bool m17_composing;
+static bool m17_detail_reply;
+static char m17_to[RADIO_M17_CALL_LEN];
+static char m17_dest_edit[RADIO_M17_CALL_LEN];
+static uint32_t m17_generation;
+static uint32_t m17_reply_id;
+static void m17_submit(const char *text);
+static void m17_dest_open(void);
+static void m17_reply_open(uint32_t id);
+static bool m17_tx_ready(void);
+static bool m17_context(uint32_t *generation);
+#endif
 #if CONFIG_APRS_AFSK
 static void ui_text_open_to(char *target, uint8_t max);
 #endif
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 static void ui_text_open_message(bool aprs);
 #endif
 static bool compose_aprs(void) { return aprs_composing; }
@@ -444,9 +459,11 @@ static void compose_item(uint16_t i, ui_item_t *it)
 	}
 }
 
+// One toast for DMR, APRS and M17 sends. A translation plus a callsign fits; it is not on the stack.
+static char sending_toast[40];
+
 static void send_text(const char *text, bool aprs, int reply_index)
 {
-	static char msg[40];
 	char name[24];
 	if (aprs) {
 		str_copy(name, sizeof name, aprs_to);
@@ -470,11 +487,11 @@ static void send_text(const char *text, bool aprs, int reply_index)
 		return;
 	}
 	sbuf_t b;
-	sb_init(&b, msg, sizeof msg);
+	sb_init(&b, sending_toast, sizeof sending_toast);
 	sb_str(&b, TR(TOAST_SENDING_TO, "Sending to "));
 	sb_str(&b, name);
 	ui_go_home();
-	ui_toast(msg);
+	ui_toast(sending_toast);
 }
 
 static void compose_select(uint16_t i, bool hold)
@@ -490,11 +507,23 @@ static void compose_select(uint16_t i, bool hold)
 		i--;
 	}
 	if (i < CANNED_N) {
+#if CONFIG_M17_PACKET
+		if (m17_composing) {
+			m17_submit(tr(canned[i]));
+			return;
+		}
+#endif
 		bool aprs = compose_aprs();
 		send_text(tr(canned[i]), aprs, -1);
 	}
 	else if (i == CANNED_N) {
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_M17_PACKET
+		if (m17_composing) {
+			ui_text_open_message(false);
+			return;
+		}
+#endif
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 		ui_text_open_message(compose_aprs());
 	#endif
 	} else if (compose_aprs()) {
@@ -505,6 +534,10 @@ static void compose_select(uint16_t i, bool hold)
 static const char *compose_title(void)
 {
 	static char t[32];
+#if CONFIG_M17_PACKET
+	if (m17_composing)
+		return m17_to[0] != '\0' ? m17_to : TR(QUICK_VALUE_ALL, "All");
+#endif
 	if (compose_aprs())
 		str_copy(t, sizeof t, aprs_to[0] ? aprs_to : TR(TEXT_TITLE_CALLSIGN, "Callsign"));
 	else
@@ -515,6 +548,11 @@ static const char *compose_title(void)
 static void compose_enter(void)
 {
 	aprs_composing = ui_frame()->arg == 1u;
+#if CONFIG_M17_PACKET
+	m17_composing = ui_frame()->arg == 2u;
+	if (!m17_composing)
+		m17_reply_id = 0;
+#endif
 	str_copy(aprs_to, sizeof aprs_to, compose_aprs() ? aprs_compose_to : "");
 	aprs_compose_to[0] = 0;
 	aprs_message_flags = APRS_MSG_ACK;
@@ -770,9 +808,28 @@ static uint16_t m17_count(void)
 #endif
 }
 
+static bool m17_new_available(void)
+{
+#if CONFIG_M17_PACKET
+	return m17_tx_ready();
+#else
+	return false;
+#endif
+}
+
+static uint16_t msgs_received(void)
+{
+	return (uint16_t)(ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count());
+}
+
 static uint16_t msgs_count(void)
 {
-	return ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count() + (aprs_new_available() ? 1u : 0u);
+	return (uint16_t)(msgs_received() + (aprs_new_available() ? 1u : 0u) + (m17_new_available() ? 1u : 0u));
+}
+
+static bool msgs_new_m17(uint16_t i)
+{
+	return m17_new_available() && i == (uint16_t)(msgs_received() + (aprs_new_available() ? 1u : 0u));
 }
 
 // Strictly younger wins: DMR precedes APRS on a tie, then M17.
@@ -811,8 +868,12 @@ static bool msg_row(uint16_t row, uint8_t *via, uint16_t *index, uint32_t *id)
 
 static void msgs_item(uint16_t i, ui_item_t *it)
 {
-	if (aprs_new_available() && i == ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count()) {
+	if (aprs_new_available() && i == msgs_received()) {
 		str_copy(it->label, sizeof it->label, TR(MSG_ROW_NEW_APRS, "New APRS message"));
+		return;
+	}
+	if (msgs_new_m17(i)) {
+		str_copy(it->label, sizeof it->label, TR(MSG_ROW_NEW_M17, "New M17 message"));
 		return;
 	}
 	uint8_t via;
@@ -854,8 +915,14 @@ static void msgs_item(uint16_t i, ui_item_t *it)
 static void msgs_select(uint16_t i, bool hold)
 {
 	(void)hold;
-	if (aprs_new_available() && i == ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count()) {
+	if (aprs_new_available() && i == msgs_received()) {
 		ui_aprs_compose("");
+		return;
+	}
+	if (msgs_new_m17(i)) {
+#if CONFIG_M17_PACKET
+		m17_dest_open();
+#endif
 		return;
 	}
 	uint8_t via;
@@ -885,8 +952,14 @@ static void msgs_context(uint16_t i)
 	uint8_t via;
 	uint16_t index;
 	uint32_t id;
-	if (!msg_row(i, &via, &index, &id) || via == MSG_M17)
+	if (!msg_row(i, &via, &index, &id))
 		return;
+	if (via == MSG_M17) {
+#if CONFIG_M17_PACKET
+		m17_reply_open(id);
+#endif
+		return;
+	}
 	if (via == MSG_APRS) {
 		aprs_msg_t m;
 		if (ui_svc_aprs_msg((uint8_t)index, &m, false))
@@ -909,6 +982,7 @@ static const ui_scr_def_t messages_screen = {
 // first, which shows all of it on a page of its own
 
 enum { MV_READ, MV_REPLY_OK, MV_REPLY_WAY, MV_CALL, MV_DELETE, MV_COUNT };
+#define MV_WRITE	MV_COUNT	// M17 free-text reply; not one of the DMR rows
 
 static uint32_t message_m17_id(void)
 {
@@ -929,8 +1003,21 @@ static const char *msg_body(void);
 // decided at each draw, a row would appear or go when "9m ago" became "10m ago", and OK on Call could land on Delete
 static uint8_t msg_action(uint16_t i)
 {
+#if CONFIG_M17_PACKET
+	if (message_m17_id()) {
+		bool full = (ui_frame()->arg & MSG_LONG_ARG) != 0;
+		static const uint8_t reply[] = { MV_REPLY_OK, MV_REPLY_WAY, MV_WRITE, MV_DELETE };
+		if (!m17_detail_reply)
+			return full && i == 0 ? (uint8_t)MV_READ : (uint8_t)MV_DELETE;
+		if (full && i == 0)
+			return MV_READ;
+		i = (uint16_t)(i - (full ? 1u : 0u));
+		return i < 4 ? reply[i] : (uint8_t)MV_DELETE;
+	}
+#else
 	if (message_m17_id())
 		return (ui_frame()->arg & MSG_LONG_ARG) && i == 0 ? MV_READ : MV_DELETE;
+#endif
 	return (uint8_t)(i + ((ui_frame()->arg & MSG_LONG_ARG) ? MV_READ : MV_REPLY_OK));
 }
 
@@ -958,10 +1045,29 @@ static void msg_enter(void)
 #endif
 	if (full)
 		ui_frame()->arg |= MSG_LONG_ARG;
+#if CONFIG_M17_PACKET
+	m17_detail_reply = false;
+	if (message_m17_id())
+		m17_reply_id = 0;
+	if (message_m17_id() && m17_tx_ready()) {
+		m17_detail_reply = true;
+		m17_reply_id = message_m17_id();
+		(void)m17_context(&m17_generation);
+		if (ui_svc_m17_msg_get(m17_reply_id, &ui_message_scratch))
+			str_copy(m17_to, sizeof m17_to, ui_message_scratch.call);
+	}
+#endif
 }
 
-static uint16_t msg_count(void) { return message_m17_id() ? (uint16_t)(1 + !!(ui_frame()->arg & MSG_LONG_ARG)) :
-	(uint16_t)(MV_COUNT - msg_action(0)); }
+static uint16_t msg_count(void)
+{
+#if CONFIG_M17_PACKET
+	if (message_m17_id())
+		return (uint16_t)((m17_detail_reply ? 4u : 1u) + ((ui_frame()->arg & MSG_LONG_ARG) ? 1u : 0u));
+#endif
+	return message_m17_id() ? (uint16_t)(1 + !!(ui_frame()->arg & MSG_LONG_ARG)) :
+		(uint16_t)(MV_COUNT - msg_action(0));
+}
 
 static void msg_item(uint16_t i, ui_item_t *it)
 {
@@ -969,8 +1075,12 @@ static void msg_item(uint16_t i, ui_item_t *it)
 		TRN(MSG_ROW_REPLY_OK, "Reply \"OK\""), TRN(MSG_ROW_REPLY_ON_MY_WAY, "Reply \"On my way\""),
 		TRN(MSG_ROW_CALL, "Call"), TRN(MSG_ROW_DELETE, "Delete") };
 	uint8_t a = msg_action(i);
-	str_copy(it->label, sizeof it->label, tr(names[a]));
-	if ((a == MV_REPLY_OK || a == MV_REPLY_WAY) && !message_aprs() && !(feats() & UI_FEAT_SMS))
+	if (a == MV_WRITE)
+		str_copy(it->label, sizeof it->label, TR(MSG_ROW_WRITE, "Write..."));
+	else
+		str_copy(it->label, sizeof it->label, tr(names[a]));
+	if ((a == MV_REPLY_OK || a == MV_REPLY_WAY) && !message_aprs() && !message_m17_id() &&
+	    !(feats() & UI_FEAT_SMS))
 		it->flags |= UI_ITEM_DIM;
 	if (a == MV_CALL && message_aprs())
 		it->flags |= UI_ITEM_DIM;
@@ -990,6 +1100,17 @@ static void msg_select(uint16_t i, bool hold)
 		ui_push(SCR_MESSAGE_READ, ui_frame()->arg);
 		return;
 	}
+#if CONFIG_M17_PACKET
+	if (message_m17_id() && (a == MV_REPLY_OK || a == MV_REPLY_WAY || a == MV_WRITE)) {
+		if (a == MV_WRITE) {
+			m17_composing = true;
+			ui_text_open_message(false);
+		} else {
+			m17_submit(tr(a == MV_REPLY_OK ? canned[0] : canned[1]));
+		}
+		return;
+	}
+#endif
 	i = a;
 	if (!message_aprs() && !message_m17_id())
 		msg_target_of(message_index(), &ui_target);
@@ -1038,8 +1159,12 @@ static bool msg_target(uint16_t i, ui_target_t *t)
 static void msg_context(uint16_t i)
 {
 	(void)i;
-	if (message_m17_id())
+	if (message_m17_id()) {
+#if CONFIG_M17_PACKET
+		m17_reply_open(message_m17_id());
+#endif
 		return;
+	}
 	if (message_aprs()) {
 		aprs_msg_t m;
 		if (ui_svc_aprs_msg(message_aprs_index(), &m, false))
@@ -1118,7 +1243,11 @@ static const char *msg_body(void)
 
 static const char *msg_hint(void)
 {
-	return message_m17_id() ? TR(HINT_OK_CHOOSE_BACK, "OK choose  Back") :
+#if CONFIG_M17_PACKET
+	if (message_m17_id() && !m17_detail_reply)
+		return TR(HINT_OK_CHOOSE_BACK, "OK choose  Back");
+#endif
+	return message_m17_id() ? TR(HINT_OK_CHOOSE_MORE_BACK, "OK choose  # more  Back") :
 		TR(HINT_OK_CHOOSE_MORE_BACK, "OK choose  # more  Back");
 }
 
@@ -2218,6 +2347,9 @@ enum { TEXT_NAME, TEXT_MESSAGE, TEXT_CALLSIGN,
 #if CONFIG_M17
 	TEXT_M17,
 	TEXT_M17_DST,
+#if CONFIG_M17_PACKET
+	TEXT_M17_MSG,
+#endif
 #endif
 	TEXT_PREFIXES };
 static uint8_t text_prefix;
@@ -2266,15 +2398,173 @@ static void text_open(char *target, uint8_t max, uint8_t screen)
 		text_profile = TEXT_PROFILE_M17_DST;
 		text_max = max;
 	}
+#if CONFIG_M17_PACKET
+	if (screen == SCR_M17_MESSAGE_TO) {
+		text_prefix = TEXT_M17_MSG;
+		text_profile = TEXT_PROFILE_M17_DST;
+		text_max = max;
+	}
+#endif
 #endif
 	ui_push(screen, 0);
 }
 
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_M17_PACKET
+static bool m17_context(uint32_t *generation)
+{
+	const radio_view_t *v = ui_view();
+	const radio_m17_selected_t *sel = ui_m17_selected(v);
+	if (sel == NULL || (feats() & UI_FEAT_M17_PACKET) == 0)
+		return false;
+	if (generation != NULL)
+		*generation = sel->generation;
+	return true;
+}
+
+static bool m17_tx_ready(void)
+{
+	const radio_view_t *v = ui_view();
+	return m17_context(NULL) && !v->ch.rx_only && (v->m17.fit & AIR_FIT_TX) != 0;
+}
+
+static const char *m17_block_reason(void)
+{
+	const radio_view_t *v = ui_view();
+	char call[RADIO_M17_CALL_LEN];
+	if (!m17_context(NULL))
+		return TR(MSG_M17_TOAST_UNAVAILABLE, "M17 message: not available");
+	if (v->ch.rx_only)
+		return TR(DENY_WHY_RX_ONLY, "This channel is RX only");
+	if ((v->m17.fit & AIR_FIT_TX) == 0)
+		return TR(M17_DENY_RX_ONLY, "M17: receive only");
+	if (!ui_svc_m17_call_show(call, NULL))
+		return TR(M17_DENY_CALLSIGN, "M17: set your callsign");
+	return NULL;
+}
+
+static bool m17_generation_ok(void)
+{
+	uint32_t gen = 0;
+	if (!m17_context(&gen) || gen != m17_generation) {
+		ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed"));
+		return false;
+	}
+	return true;
+}
+
+static void m17_submit(const char *text)
+{
+	uint64_t dst = 0;
+	const char *why;
+	char dest[RADIO_M17_CALL_LEN];
+	sbuf_t b;
+
+	if (text == NULL || text[0] == '\0')
+		return;
+	if (m17_reply_id != 0) {
+		if (!ui_svc_m17_msg_get(m17_reply_id, &ui_message_scratch) || ui_message_scratch.call[0] == '\0') {
+			ui_toast(TR(MSG_TOAST_DELETED, "Message deleted"));
+			return;
+		}
+		str_copy(m17_to, sizeof m17_to, ui_message_scratch.call);
+	}
+	if (!m17_generation_ok())
+		return;
+	why = m17_block_reason();
+	if (why != NULL) {
+		ui_toast(why);
+		return;
+	}
+	str_copy(dest, sizeof dest, m17_to);
+	if (!m17_dst_parse(dest, &dst)) {
+		ui_toast(TR(M17_TOAST_DST, "Not an M17 address"));
+		return;
+	}
+	// A reply goes to the verified source, never to broadcast.
+	if (m17_reply_id != 0 && dst == M17_ADDR_BROADCAST) {
+		ui_toast(TR(MSG_M17_TOAST_UNAVAILABLE, "M17 message: not available"));
+		return;
+	}
+	if (!ui_svc_m17_msg_send(dst == M17_ADDR_BROADCAST ? "ALL" : dest, text)) {
+		ui_toast(TR(MSG_M17_RESULT_BUSY, "Channel busy: try again"));
+		return;
+	}
+	sb_init(&b, sending_toast, sizeof sending_toast);
+	sb_str(&b, TR(TOAST_SENDING_TO, "Sending to "));
+	sb_str(&b, dst == M17_ADDR_BROADCAST ? TR(QUICK_VALUE_ALL, "All") : dest);
+	ui_go_home();
+	ui_toast(sending_toast);
+}
+
+static void m17_compose_open(const char *dest, uint32_t generation, uint32_t reply_id)
+{
+	str_copy(m17_to, sizeof m17_to, dest != NULL ? dest : "");
+	m17_generation = generation;
+	m17_reply_id = reply_id;
+	ui_push(SCR_COMPOSE, 2);
+}
+
+static void m17_dest_kept(void)
+{
+	uint32_t gen = 0;
+	if (!m17_context(&gen) || gen != m17_generation) {
+		ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed"));
+		return;
+	}
+	m17_compose_open(m17_dest_edit, gen, 0);
+}
+
+static void m17_dest_open(void)
+{
+	const radio_m17_selected_t *sel;
+	char tmp[RADIO_M17_CALL_LEN];
+	const char *shown;
+	const char *why;
+
+	if (!m17_tx_ready()) {
+		why = m17_block_reason();
+		ui_toast(why != NULL ? why : TR(MSG_M17_TOAST_UNAVAILABLE, "M17 message: not available"));
+		return;
+	}
+	if (!m17_context(&m17_generation))
+		return;
+	sel = ui_m17_selected(ui_view());
+	shown = sel != NULL ? ui_m17_destination(sel->base_dst, tmp) : "";
+	str_copy(m17_dest_edit, sizeof m17_dest_edit, shown != NULL ? shown : "");
+	text_open(m17_dest_edit, M17_ADDR_CHARS_MAX, SCR_M17_MESSAGE_TO);
+	text_done = m17_dest_kept;
+}
+
+static void m17_reply_open(uint32_t id)
+{
+	uint32_t gen = 0;
+	const char *why;
+
+	if (!ui_svc_m17_msg_get(id, &ui_message_scratch) || ui_message_scratch.call[0] == '\0') {
+		ui_toast(TR(MSG_TOAST_DELETED, "Message deleted"));
+		return;
+	}
+	why = m17_block_reason();
+	if (why != NULL || !m17_context(&gen)) {
+		ui_toast(why != NULL ? why : TR(MSG_M17_TOAST_UNAVAILABLE, "M17 message: not available"));
+		return;
+	}
+	m17_compose_open(ui_message_scratch.call, gen, id);
+}
+#endif
+
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 static void message_text_kept(void)
 {
-	if (message_buffer[0] != '\0')
-		send_text(message_buffer, compose_aprs(), -1);
+	if (message_buffer[0] == '\0')
+		return;
+#if CONFIG_M17_PACKET
+	if (m17_composing) {
+		m17_submit(message_buffer);
+		return;
+	}
+#endif
+	send_text(message_buffer, compose_aprs(), -1);
 }
 
 static void ui_text_open_message(bool aprs)
@@ -2454,6 +2744,9 @@ static void text_draw(void)
 #if CONFIG_M17
 		TRN(M17_LABEL_CALLSIGN, TEXT_ALT_OPEN "M17 callsign" TEXT_ALT_NEXT "M17 call" TEXT_ALT_CLOSE),
 		TRN(M17_LABEL_TALK_TO, "Talk to"),
+#if CONFIG_M17_PACKET
+		TRN(MSG_TITLE_TO, "To"),
+#endif
 #endif
 	};
 	static const char *const modes[TEXT_MODES] = { "ABC", "123", "abc" };
@@ -2666,7 +2959,7 @@ static const ui_scr_def_t aprs_to_screen = {
 };
 #endif
 
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 static const ui_scr_def_t message_text_screen = {
 	.name = "message-text", .flags = 0, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
 };
@@ -8597,6 +8890,12 @@ static const ui_scr_def_t m17_talk_other_screen = {
 	.name = "m17-talk-to-other", .flags = SF_FIELD, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
 };
 
+#if CONFIG_M17_PACKET
+static const ui_scr_def_t m17_message_to_screen = {
+	.name = "m17-message-to", .flags = SF_FIELD, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
+};
+#endif
+
 static const ui_scr_def_t m17_talk_screen = {
 	.name = "m17-talk-to", .flags = SF_LIST | SF_FIELD, .prefix = TRN(M17_LABEL_TALK_TO, "Talk to"),
 	.hint = TRN(HINT_OK_CHOOSE_BACK_CANCELS, "OK choose  Back cancel"),
@@ -8781,7 +9080,7 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 #if CONFIG_APRS_AFSK
 	[SCR_APRS_TO] = &aprs_to_screen,
 #endif
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 	[SCR_MESSAGE_TEXT] = &message_text_screen,
 #endif
 #if CONFIG_CHANNEL_LIST
@@ -8817,6 +9116,9 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 #if CONFIG_M17
 	[SCR_M17_TALK_TO] = &m17_talk_screen,
 	[SCR_M17_TALK_TO_OTHER] = &m17_talk_other_screen,
+#if CONFIG_M17_PACKET
+	[SCR_M17_MESSAGE_TO] = &m17_message_to_screen,
+#endif
 #endif
 #if CONFIG_CRASH_SCREEN
 	[SCR_CRASH] = &crash_screen,
