@@ -208,6 +208,18 @@ TESTS   += mbeTest
 mbeTest: mbeTest.c $(MBE) $(wildcard $(CORE)/mbe/*.h) $(CORE)/dsp/fxp.h
 	$(CC) $(CFLAGS) -Wshadow -o $@ mbeTest.c $(MBE) -lm
 
+# The original FFT uses signed two's-complement wrapping. Keep that behavior in the reference.
+MBE_FFT := mbeFftTest.c $(CORE)/mbe/mbe_dsp.c $(CORE)/mbe/mbe_tab.c
+TESTS   += mbeFftTest mbeFftTestSplit16
+mbeFftTest mbeFftTestSplit16: $(MBE_FFT) $(CORE)/mbe/mbe_dsp.h $(CORE)/dsp/fxp.h
+	$(CC) $(CFLAGS) -Wshadow -fwrapv $(if $(filter mbeFftTestSplit16,$@),-DFXP_SPLIT16) -o $@ $(MBE_FFT)
+
+run: run-mbe-fft
+run-mbe-fft: mbeFftTest mbeFftTestSplit16
+	./mbeFftTest
+	./mbeFftTestSplit16
+.PHONY: run-mbe-fft
+
 # c2fx 0.2.0 decoder-only external-DSP sources, as in the firmware build.
 C2FX := $(firstword $(wildcard $(ROOT)/third_party/c2fx/include/c2fx.h) $(RFOUNDRY_THIRD_PARTY)/c2fx/include/c2fx.h)
 C2FX_DIR := $(patsubst %/include/c2fx.h,%,$(C2FX))
