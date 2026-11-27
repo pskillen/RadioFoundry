@@ -114,6 +114,11 @@ switch = "M17_VOICE"
 spec = "docs/spec/m17.md"
 source = ["core/m17", "core/m17/m17_bench.c", "core/debuglink/debuglink_m17_bench.c", "third_party/c2fx"]
 
+[feature.m17_static_codec]
+switch = "M17_STATIC_CODEC"
+spec = "docs/spec/m17.md"
+source = ["core/radio/radio_m17.c", "core/radio/radio_m17.h"]
+
 [feature.dmr_voice]
 switch = "DMR"
 spec = "docs/spec/dmr-voice.md"

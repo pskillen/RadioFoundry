@@ -20,6 +20,8 @@ CONFIG_P25_TRUNK ?= n
 BOARD_DEFAULT_OFF += P25_TRUNK	# Off by default on this radio to make room for M17. Conventional P25 stays. Turn it on in a custom build if you need it.
 # The maximal image needs third-party LTO to fit alongside M17 text. Keep the default build's recipe.
 MAXIMAL_VARS := LTO=1 LTO_3P=1
+# The decoder fits with the existing lend, split duplex off and conventional P25 retained.
+MAXIMAL_VOICE_VARS := CONFIG_M17_STATIC_CODEC=n CONFIG_HOTSPOT_SPLIT=n CONFIG_P25_TRUNK=n
 # Left out of tools/ci.sh's maximal configuration: PPP stands in for the USB network adapter on UART-only radios
 # (docs/spec/ppp.md), and this one has the adapter; the APRS iGate is off by default (above); French, off by
 # default, so that the maximal build keeps satellite tracking and still fits the app region; Italian, off by
