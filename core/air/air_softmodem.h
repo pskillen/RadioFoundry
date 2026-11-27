@@ -43,7 +43,7 @@ typedef struct {
 	uint8_t track_shift;			// their time constant: 2^shift samples
 	bool gain_known;			// the tap gave counts_per_khz: the level is not tracked, only fitted on syncs
 	bool running;				// samples have come since the open or the last reset
-	bool locked;				// a sync set the timing and levels not long ago: the averages hold
+	bool locked;				// a sync set the timing and level; a half or double magnitude step drops it
 	int16_t in[2 * AIR_SOFTMODEM_TAPS];	// the newest input samples, each written twice, TAPS apart: the last TAPS
 	uint8_t in_at;				// are always one run, in[in_at + 1] the oldest
 	uint16_t step, den;			// input samples per filtered sample, as a fraction

@@ -507,6 +507,91 @@ static void test_copy_half_gap(void)
 	CHECK(r.delivered == 0 && r.rx.pkt_stats.crc_ok == 0 && r.rx.pkt_stats.crc_fail == 0);
 }
 
+// Discriminator noise locks the soft modem and freezes the level it took. A carrier on that
+// frozen level used to miss the link setup: the 24-symbol word's step gate never opened, so the
+// framer was never offered one, while 8-symbol syncs still matched in the noise. The copy's
+// scale is unknown, as on a tap that does not publish counts per kHz.
+static uint32_t noise_rng;
+
+static double noise_uniform(void)
+{
+	noise_rng = noise_rng * 1664525u + 1013904223u;
+	return (noise_rng >> 8) * (1.0 / 16777216.0);
+}
+
+static double noise_gauss(void)
+{
+	double u = noise_uniform();
+	double v = noise_uniform();
+
+	if (u < 1e-12)
+		u = 1e-12;
+	return sqrt(-2.0 * log(u)) * cos(2.0 * M_PI * v);
+}
+
+static void noise_then_packet(double noise_ratio, double sig_scale)
+{
+	enum { BLOCK = 64, TAIL = 80, AMP = 1600, NOISE_MAX = 8000 * 2 };
+	receiver_t r;
+	packet_t p;
+	air_softmodem_t modem;
+	int16_t samples[BLOCK];
+	int nsyms, sig0, total, at = 0;
+
+	begin(&r);
+	make_packet(&p, 18, M17_ADDR_AB1CD);
+	nsyms = p.nframes * M17_FRAME_SYMS;
+	noise_rng = 1;
+	CHECK(air_softmodem_rx_open(&modem, &m17_air_mode.profile, 8000, 0, modem_chunk, &r.fr));
+	while (at < NOISE_MAX && !modem.locked) {
+		for (int i = 0; i < BLOCK; i++) {
+			double v = AMP * noise_ratio * noise_gauss();
+
+			if (v > 32767)
+				v = 32767;
+			if (v < -32768)
+				v = -32768;
+			samples[i] = (int16_t)lround(v);
+		}
+		air_softmodem_rx(&modem, samples, BLOCK, r.t_us + (uint32_t)at * 125u);
+		at += BLOCK;
+	}
+	CHECK(modem.locked);
+	sig0 = at;
+	total = sig0 + (int)((nsyms + TAIL) * 8000.0 / 4800.0);
+	for (; at < total;) {
+		int n = total - at < BLOCK ? total - at : BLOCK;
+
+		for (int i = 0; i < n; i++) {
+			double t = (at + i - sig0) * (4800.0 / 8000.0);
+			int mid = (int)t;
+			double v = 0;
+
+			for (int k = mid - 8; k <= mid + 8; k++) {
+				if (k < 0 || k >= nsyms)
+					continue;
+				v += air_sym_level(air_sym_get(p.air, (uint16_t)k)) * pulse(t - k);
+			}
+			v *= AMP * sig_scale;
+			if (v > 32767)
+				v = 32767;
+			if (v < -32768)
+				v = -32768;
+			samples[i] = (int16_t)lround(v);
+		}
+		air_softmodem_rx(&modem, samples, (uint16_t)n, r.t_us + (uint32_t)at * 125u);
+		at += n;
+	}
+	expect_packet(&r, &p, 18, M17_ADDR_AB1CD, 1);
+}
+
+static void test_noise_lock_releases_level(void)
+{
+	noise_then_packet(2.5, 1.0);
+	noise_then_packet(2.5, 3.0);
+	noise_then_packet(12.0, 0.2);
+}
+
 int main(void)
 {
 	test_delivery();
@@ -519,6 +604,7 @@ int main(void)
 	test_modeled_tap();
 	test_clock_slip();
 	test_copy_half_gap();
+	test_noise_lock_releases_level();
 	puts("# PASSED m17PacketRxTest");
 	return EXIT_SUCCESS;
 }

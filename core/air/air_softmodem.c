@@ -639,6 +639,20 @@ void air_softmodem_rx(air_softmodem_t *m, const int16_t *samples, uint16_t n, ui
 				m->track_shift++;
 				m->track_n = (uint16_t)(1u << m->track_shift);
 			}
+		} else if (!m->gain_known) {
+			// The lock's level is held, but a fast average still watches the magnitude. A chance sync in
+			// discriminator noise must not keep that level when the carrier comes: the line clips or
+			// starves, and a long sync whose gate needs real steps (an M17 link setup) is never fitted.
+			int32_t mag = v < 0 ? -v : v;
+
+			m->env_fast += (mag * 1024 - m->env_fast) >> TRACK_SHIFT_MIN;
+			if (m->env_fast > 2 * m->env || 2 * m->env_fast < m->env) {
+				m->env = m->env_fast < 1024 ? 1024 : m->env_fast;
+				m->track_shift = TRACK_SHIFT_MIN;
+				m->track_n = 1u << TRACK_SHIFT_MIN;
+				m->locked = false;
+				m->gain = (((uint32_t)target << 26) / (uint32_t)m->env) / box;
+			}
 		}
 		// Twice, TAPS apart: the last TAPS samples are in[at + 1 ..], oldest first, whatever at is
 		m->in[at] = m->in[at + TAPS] = fxp_sat16(v);

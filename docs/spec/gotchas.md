@@ -979,3 +979,12 @@ about 95% of filtered samples in Gaussian noise. That fit rate can starve the id
 soft modem. Require every symbol-spaced sample to have the expected sign relative to the tracked offset when an
 all-outer pattern has fewer than four large steps in the step gate. The sign check works before a reliable level
 is available. See [air-interface.md](air-interface.md#6-sample-taps-and-the-soft-modem).
+
+**18.2 A noise sync holds its level, and the link setup never matches.**
+Symptom: with no traffic the receiver counts short syncs, and a packet from a transmitter whose voice
+shows its callsign never counts a link setup. Cause: discriminator noise is a different magnitude from
+the carrier. A chance sync froze the soft modem's level at the noise, so the carrier clipped or starved
+on that line. The link-setup word needs its real steps to start a fit; the short syncs are gated on sign
+and still match. Rule: a fast average of the magnitude keeps running while locked, and a step of half or
+double drops the lock and starts the level averages again
+([air-interface.md](air-interface.md#6-sample-taps-and-the-soft-modem)).

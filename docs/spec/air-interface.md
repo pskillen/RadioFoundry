@@ -154,7 +154,7 @@ down to a hundredth of it).
 | Sync fit | the newest symbol-spaced samples are fitted to each pattern (level and offset, least squares). Where the error passes through a minimum under the limit, that sample is a symbol center; a parabola through the neighbors places it between samples |
 | Step gate | per sample phase the modem keeps one bit per symbol (this sample was above the one a symbol before). A pattern can start a fit when the steps of four levels or more among its last 17 symbols are all there but one |
 | Output | symbols leave from the far end of a delay line 26 symbols long, sampled on the latest sync's timing and scaled by its level and offset, so a sync is sampled on the timing it gave |
-| Level | a tap of known scale starts at the profile's deviation. A tap of unknown scale follows the input's average magnitude until the first sync gives the level. The averages start fast and slow down; when a 16-sample average of the magnitude is off the slow one by half or double (a signal after an unmodulated carrier, which leaves the discriminator quiet), both start fast again |
+| Level | a tap of known scale starts at the profile's deviation. A tap of unknown scale follows the input's average magnitude until a sync gives the level, and the averages hold while that lock stands. They start fast and slow down. When a 16-sample average of the magnitude is off the held one by half or double — a carrier after discriminator noise, or the carrier leaving — the lock is dropped and both averages start fast again. A chance sync must not keep the noise level across that step: the next sync would be fitted on a clipped or starved line |
 
 An all-outer sync pattern with fewer than four large steps in the step gate also needs a sign match to start a
 fit. The newest symbol-spaced samples must all have the sign of their corresponding pattern symbols, relative
@@ -172,7 +172,7 @@ The table gives host fits per second over 60 seconds of fixed-seed Gaussian nois
 | NXDN 9600 | 2,518 | 2,518 |
 | M17 | 22,860 | 1,225 |
 
-Between syncs the timing, level and offset hold. Two crystal clocks do not move a fifth of a symbol in a second, so
+Between syncs the timing and offset hold, and so does the level until the magnitude steps as the table says. Two crystal clocks do not move a fifth of a symbol in a second, so
 a mode whose syncs recur gets every frame on fresh timing. Chunks say `AIR_CHUNK_FREE_RUN` when no sync was seen
 within the profile's spacing, and `AIR_CHUNK_GAP` after a hole in the samples (the modem starts over).
 
