@@ -172,6 +172,41 @@ msgctxt "MSG_BANNER_NOT_DELIVERED"
 msgid "Not delivered: send again"
 msgstr "No entregado: reenviar"
 
+#: core/ui/ui_app.c core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "QUICK_VALUE_ALL"
+msgid "All"
+msgstr "Todos"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c
+msgctxt "MSG_M17_RESULT_BUSY"
+msgid "Channel busy: try again"
+msgstr "Canal ocupado: reintentar"
+
+#: core/ui/ui_app.c
+msgctxt "MSG_M17_RESULT_REFUSED"
+msgid "Radio refused the message"
+msgstr "La radio rechazó el mensaje"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c
+msgctxt "M17_TOAST_CHANNEL_CHANGED"
+msgid "Channel changed"
+msgstr "Canal cambiado"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "M17_DENY_CALLSIGN"
+msgid "M17: set your callsign"
+msgstr "M17: define tu indicativo"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "M17_DENY_RX_ONLY"
+msgid "M17: receive only"
+msgstr "M17: solo recepción"
+
+#: core/ui/ui_app.c
+msgctxt "MSG_M17_RESULT_FAILED"
+msgid "Message was not sent"
+msgstr "El mensaje no se envió"
+
 #: core/ui/ui_app.c
 msgctxt "ALERT_BANNER_FROM"
 msgid "Call alert from "
@@ -1077,7 +1112,7 @@ msgctxt "APRS_LABEL_PACKETS"
 msgid "Packets"
 msgstr "Paquetes"
 
-#: core/ui/ui_aprs.c
+#: core/ui/ui_aprs.c core/ui/ui_menus.c
 msgctxt "HINT_OK_CHOOSE_BACK"
 msgid "OK choose  Back"
 msgstr "OK elegir  Atrás"
@@ -1783,6 +1818,11 @@ msgid "New APRS message"
 msgstr "Nuevo mensaje APRS"
 
 #: core/ui/ui_menus.c
+msgctxt "MSG_ROW_NEW_M17"
+msgid "New M17 message"
+msgstr "Nuevo mensaje M17"
+
+#: core/ui/ui_menus.c
 msgctxt "MSG_HINT_LIST"
 msgid "OK open  # reply  Back"
 msgstr "OK abrir  # responder  Atrás"
@@ -1836,6 +1876,11 @@ msgstr "De "
 msgctxt "MSG_BODY_TO"
 msgid "To "
 msgstr "A "
+
+#: core/ui/ui_menus.c
+msgctxt "MSG_M17_BODY_STORED_CUT"
+msgid "[Stored text truncated]"
+msgstr "[Texto guardado truncado]"
 
 #: core/ui/ui_menus.c
 msgctxt "HINT_OK_CHOOSE_MORE_BACK"
@@ -2128,9 +2173,34 @@ msgid "Empty zone"
 msgstr "Zona vacía"
 
 #: core/ui/ui_menus.c
+msgctxt "MSG_M17_TOAST_UNAVAILABLE"
+msgid "M17 message: not available"
+msgstr "Mensaje M17: no disponible"
+
+#: core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "DENY_WHY_RX_ONLY"
+msgid "This channel is RX only"
+msgstr "Este canal es solo RX"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_DST"
+msgid "Not an M17 address"
+msgstr "No es una dirección M17"
+
+#: core/ui/ui_menus.c
+msgctxt "TOAST_SAVED"
+msgid "Saved"
+msgstr "Guardado"
+
+#: core/ui/ui_menus.c
 msgctxt "TEXT_TOAST_FULL"
 msgid "That's the most it can hold"
 msgstr "Máximo alcanzado"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_CHAR"
+msgid "Letters, digits and - / ."
+msgstr "Letras, dígitos y - / ."
 
 #: core/ui/ui_menus.c
 msgctxt "LABEL_NAME"
@@ -2141,6 +2211,16 @@ msgstr "Nombre"
 msgctxt "SATELLITE_2"
 msgid "Satellite"
 msgstr "Satélite"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_LABEL_CALLSIGN"
+msgid "{M17 callsign|M17 call}"
+msgstr "{Indicativo M17|M17}"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_LABEL_TALK_TO"
+msgid "Talk to"
+msgstr "Hablar a"
 
 #: core/ui/ui_menus.c
 msgctxt "SATELLITE_TLE_TITLE_LINE1_UPPER"
@@ -2241,6 +2321,16 @@ msgstr "Modo"
 msgctxt "CHAN_LABEL_RATE"
 msgid "Rate"
 msgstr "Velocidad"
+
+#: core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "M17_LABEL_CAN"
+msgid "CAN"
+msgstr "CAN"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_LABEL_CAN_SQUELCH"
+msgid "CAN squelch"
+msgstr "Squelch CAN"
 
 #: core/ui/ui_menus.c core/ui/ui_screens.c
 msgctxt "WORD_RX_ONLY"
@@ -2426,6 +2516,11 @@ msgstr "ID máximo es 16776415"
 msgctxt "CHAN_TOAST_DCS_DIGITS"
 msgid "DCS codes use digits 0-7"
 msgstr "Códigos DCS: dígitos 0-7"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_CAN"
+msgid "CAN is 0 to 15"
+msgstr "CAN es de 0 a 15"
 
 #: core/ui/ui_menus.c
 msgctxt "CHAN_TOAST_NAC_REPEATER"
@@ -3071,11 +3166,6 @@ msgstr "Guardado en el codeplug"
 msgctxt "BODY_RADIO"
 msgid "Radio: "
 msgstr "Radio: "
-
-#: core/ui/ui_menus.c
-msgctxt "TOAST_SAVED"
-msgid "Saved"
-msgstr "Guardado"
 
 #: core/ui/ui_menus.c
 msgctxt "MYID_TOAST_IDS_START_AT_1"
@@ -4343,6 +4433,11 @@ msgid " steps"
 msgstr " pasos"
 
 #: core/ui/ui_menus.c
+msgctxt "M17_WHY_NOT_ON_RADIO"
+msgid "M17: not on this radio"
+msgstr "M17: no en esta radio"
+
+#: core/ui/ui_menus.c
 msgctxt "WHY_PERMIT_TONE_NOT_IN_BUILD"
 msgid "Talk permit tone: not in this build"
 msgstr "Tono de permiso: no disponible"
@@ -4511,6 +4606,16 @@ msgstr "Hablar a"
 msgctxt "PICKER_HINT"
 msgid "{PTT once  OK use  Hold OK set|OK use  Hold OK set}"
 msgstr "{PTT una vez  OK usar  Mant OK fijar|OK usar  Mant OK fijar}"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_ROW_TALK_OTHER"
+msgid "Other…"
+msgstr "Otro…"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_TALK_TO_FAILED"
+msgid "Couldn't queue Talk to"
+msgstr "No se pudo aplicar el destino"
 
 #: core/ui/ui_menus.c
 msgctxt "SCAN_ROW_SKIP_FOR_NOW"
@@ -4836,11 +4941,6 @@ msgstr "Apaga y enciende la radio"
 msgctxt "HW_FIX_SETTINGS_PATH"
 msgid "Settings>Advanced>Hardware"
 msgstr "Ajustes>Avanzado>Hardware"
-
-#: core/ui/ui_screens.c
-msgctxt "DENY_WHY_RX_ONLY"
-msgid "This channel is RX only"
-msgstr "Este canal es solo RX"
 
 #: core/ui/ui_screens.c
 msgctxt "DENY_WHY_BANDS"
@@ -5308,6 +5408,36 @@ msgid "MON: digital monitor"
 msgstr "MON: monitor digital"
 
 #: core/ui/ui_screens.c
+msgctxt "M17_STATE_OTHER_CAN"
+msgid "Other CAN"
+msgstr "Otro CAN"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_ENCRYPTED"
+msgid "Encrypted"
+msgstr "Cifrado"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_VOICE_DATA"
+msgid "Voice + data"
+msgstr "Voz + datos"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_DATA"
+msgid "Data"
+msgstr "Datos"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_VOICE"
+msgid "Voice"
+msgstr "Voz"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_BODY_VIA"
+msgid "via "
+msgstr "vía "
+
+#: core/ui/ui_screens.c
 msgctxt "ACTIVITY_STATE_SQUELCH_OPEN"
 msgid "Squelch open"
 msgstr "Squelch abierto"
@@ -5598,6 +5728,11 @@ msgid "{Talk to|Talk}"
 msgstr "{Hablar a|Hablar}"
 
 #: core/ui/ui_screens.c
+msgctxt "QUICK_LABEL_CAN_SQUELCH"
+msgid "{CAN squelch|CAN sq}"
+msgstr "{Squelch CAN|Sq CAN}"
+
+#: core/ui/ui_screens.c
 msgctxt "QUICK_LABEL_COPY_TO_VFO"
 msgid "{Copy to VFO|To VFO}"
 msgstr "{Copiar a VFO|A VFO}"
@@ -5621,11 +5756,6 @@ msgstr "Tono RX"
 msgctxt "QUICK_VALUE_COPY"
 msgid "Copy"
 msgstr "Copiar"
-
-#: core/ui/ui_screens.c
-msgctxt "QUICK_VALUE_ALL"
-msgid "All"
-msgstr "Todos"
 
 #: core/ui/ui_screens.c
 msgctxt "QUICK_HINT_SPLIT"

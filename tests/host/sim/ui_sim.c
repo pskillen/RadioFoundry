@@ -35,6 +35,17 @@
 //                       1 finding the system, 2 on the control channel, 3 following talk group tg
 //   rx:<src>,<dst>,g|p[,name]   a DMR call starts (g = group, p = private to us); rxend ends it
 //   call:<src>,<dst>,g|p        a 2 s call, then 1 s of quiet
+//   m17messages         enable the M17 packet receive capability
+//   m17nopacket         turn that capability off again (a message can already be in the inbox)
+//   nosms               disable DMR SMS capability
+//   m17txfit            the selected M17 channel can transmit packets
+//   m17notx             that transmit fit is off (receive only)
+//   m17rxonly           the channel itself is receive-only
+//   m17nocall           no M17 callsign can be resolved
+//   m17slot             the next M17 send finds the transmitter busy and is not queued
+//   m17result:<reason>  complete a queued M17 send: sent, busy, refused, failed, context,
+//                       address, fit, guard or timeout. sent is on air, not delivered
+//   m17msg:<call>,<text>,<cut>  receive an M17 message (_ = space; cut = 0 or 1)
 //   msg:<src>,<text>    a text message arrives (_ = space); alert:<src>; emergency:<src>; privcall:<src>
 //                       (each also <src>,<name>: the station's name, _ = space, for one not in the contacts)
 //   zoneoffer:<src>[,c] another radio offers its zone "Club net" (,c: one channel); the import and sends always work
@@ -77,6 +88,7 @@
 #undef board
 #include "hal_time.h"
 #include "ui/gfx.h"
+#include "ui/fmt.h"
 #include "ui/ui_screens.h"
 #include "ui/ui_app.h"
 #include "ui/ui_svc.h"
@@ -192,6 +204,14 @@ bool sim_text_bounds(const char *text, int *x, int *y, int *w, int *h)
 		*h = live[i].y1 - live[i].y0;
 		return true;
 	}
+	return false;
+}
+
+bool sim_text_on_line(const char *text, int y)
+{
+	for (int i = 0; i < live_n; i++)
+		if (strcmp(live[i].s, text) == 0 && live[i].y0 == y)
+			return true;
 	return false;
 }
 
@@ -768,7 +788,7 @@ bool ui_svc_setting_set(uint8_t id, int32_t value)
 static struct {
 	uint16_t number;
 	channel_t ch;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 	bool air_set;		// saved with a block (ui_svc_write_channel_air)
 	ui_air_conv_t air;
 #endif
@@ -794,7 +814,7 @@ static int sim_write(uint16_t number, const channel_t *ch)
 		n_edits++;
 	sim_edits[i].number = number;
 	sim_edits[i].ch = *ch;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 	sim_edits[i].air_set = false;
 #endif
 	sim_rec.codeplug_writes++;
@@ -809,7 +829,7 @@ bool ui_svc_write_channel(uint16_t number, const channel_t *ch, uint16_t from)
 	return sim_write(number, ch) >= 0;
 }
 
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 // The block goes with the channel: a plain channel in P25 or NXDN becomes one of the kind, as the storage job makes it
 bool ui_svc_write_channel_air(uint16_t number, const channel_t *ch, uint16_t from, const ui_air_conv_t *conv)
 {
@@ -818,6 +838,11 @@ bool ui_svc_write_channel_air(uint16_t number, const channel_t *ch, uint16_t fro
 		return sim_held;
 	channel_t c = *ch;
 	if (c.kind == CODEPLUG_KIND_NONE) {
+#if CONFIG_M17
+		if (c.mode == RADIO_MODE_M17)
+			c.kind = CODEPLUG_KIND_M17;
+		else
+#endif
 		c.kind = c.mode == RADIO_MODE_P25 ? CODEPLUG_KIND_P25 : CODEPLUG_KIND_NXDN;
 		c.mode = RADIO_MODE_DMR;	// the stand-in record
 	}
@@ -967,6 +992,20 @@ static bool sim_cp_insert;		// cpwrite: zone 0 starts with channel 40, its other
 static uint16_t sim_cp_deleted;		// cpdel:N: channel N is in no zone
 static uint8_t sim_zone_size[3];	// zonesize:Z,N: zone Z has its first N channels only (0: all)
 uint32_t codeplug_serial(void) { return sim_cp_serial; }
+#if CONFIG_M17
+static char sim_m17_call[10];
+static char sim_m17_dst[8][10];
+static uint8_t sim_m17_dst_n;
+static bool sim_m17_fail;
+static bool sim_m17_model, sim_m17_queue_fail;
+static uint32_t sim_m17_generation, sim_m17_requests, sim_m17_queued;
+static uint64_t sim_m17_override, sim_m17_request_dst, sim_m17_vfo_dst[2];
+static uint32_t sim_m17_can_queued;
+static uint8_t sim_m17_can_value, sim_m17_vfo_can;
+static bool sim_m17_can_field_squelch, sim_m17_vfo_squelch;
+static uint8_t sim_kv_serial;
+uint8_t codeplug_kv_serial(void) { return (uint8_t)(sim_kv_serial + (uint8_t)sim_cp_serial); }
+#endif
 
 bool codeplug_zone(uint16_t index, zone_t *out)
 {
@@ -1413,6 +1452,10 @@ static void load_channel(void)
 	view.channel_number = z.channels[view.zone_pos];
 	codeplug_channel(view.channel_number, &ch_saved);
 	view.ch = ch_saved;
+#if CONFIG_M17
+	if (sim_m17_model && view.ch.kind == CODEPLUG_KIND_M17)
+		view.ch.mode = RADIO_MODE_M17;
+#endif
 	view.power = board.power_default;
 	view.temp = 0;
 	view.temporary = false;
@@ -1735,10 +1778,21 @@ static void rx_end(void)
 typedef struct { ui_msg_t m; uint32_t at; } sim_msg_t;
 static sim_msg_t inbox[8];
 static uint16_t n_inbox;
+#if CONFIG_M17 && CONFIG_M17_PACKET
+typedef struct { ui_msg_t m; uint32_t at, id; } sim_m17_msg_t;
+static sim_m17_msg_t m17_inbox[4];
+static uint8_t n_m17_inbox;
+static uint32_t m17_seq, m17_last_id;
+static bool m17_messages;
+static bool sim_m17_tx_fit, sim_m17_rx_only, sim_m17_nocall, sim_m17_slot;
+static bool sim_m17_pending;
+static uint8_t sim_m17_result;
+#endif
 
 // The volume feature (a radio without a knob: the VOL key, Settings > Sound > Volume) only with the "softvol" token, so
 // the other screens look as on the radios with a knob
 static bool soft_volume;
+static bool no_sms;
 // The broadcast receiver (Settings > Talk & listen > FM broadcast step) only with the "bcast" token, the same way
 static bool bcast_rx;
 // P25 on this radio (UI_FEAT_P25: the VFO's mode tile offers it) only with the "p25" token; NXDN with "nxdn";
@@ -1746,6 +1800,87 @@ static bool bcast_rx;
 static bool p25_radio;
 static bool nxdn_radio;
 static bool m17_radio;
+#if CONFIG_M17
+bool radio_m17_fits(void) { return m17_radio; }
+
+#include "m17/m17.h"
+#include "m17/m17_text.h"
+
+// The UI test does not link the codec. Empty and ALL are broadcast; any other legal address is remembered so a
+// saved channel shows the same text again. The wire encoding is m17CodeplugTest's.
+bool m17_dst_parse(const char *text, uint64_t *dst)
+{
+	char clean[10];
+	size_t n = 0;
+
+	if (text == NULL)
+		text = "";
+	while (text[n] != '\0' && n < 9) {
+		char c = text[n];
+		if (c >= 'a' && c <= 'z')
+			c = (char)(c - 'a' + 'A');
+		if (c != ' ' && !((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '/' || c == '.'))
+			return false;
+		if (c == ' ' && n == 0)
+			return false;
+		clean[n++] = c;
+	}
+	if (text[n] != '\0')
+		return false;
+	clean[n] = '\0';
+	if (n == 0 || strcmp(clean, "ALL") == 0) {
+		*dst = M17_ADDR_BROADCAST;
+		return true;
+	}
+	for (uint8_t i = 0; i < sim_m17_dst_n; i++) {
+		if (strcmp(sim_m17_dst[i], clean) == 0) {
+			*dst = (uint64_t)i + 1u;
+			return true;
+		}
+	}
+	if (sim_m17_dst_n >= 8)
+		return false;
+	memcpy(sim_m17_dst[sim_m17_dst_n], clean, n + 1u);
+	*dst = (uint64_t)sim_m17_dst_n + 1u;
+	sim_m17_dst_n++;
+	return true;
+}
+
+bool m17_addr_decode(const uint8_t in[M17_ADDR_BYTES], char *out, size_t outsz)
+{
+	uint64_t v = 0;
+
+	if (out == NULL || outsz < 4)
+		return false;
+	for (uint8_t i = 0; i < M17_ADDR_BYTES; i++)
+		v = (v << 8) | in[i];
+	if (v == M17_ADDR_BROADCAST) {
+		strcpy(out, "ALL");
+		return true;
+	}
+	if (v == 0 || v > sim_m17_dst_n)
+		return false;
+	if (strlen(sim_m17_dst[v - 1u]) + 1u > outsz)
+		return false;
+	strcpy(out, sim_m17_dst[v - 1u]);
+	return true;
+}
+
+bool m17_chan_load(uint16_t number, const channel_t *ch, m17_chan_t *out)
+{
+	const ui_air_conv_t *air;
+
+	if (ch->kind != CODEPLUG_KIND_M17)
+		return false;
+	out->can = 0;
+	out->can_squelch = true;
+	out->dst = M17_ADDR_BROADCAST;
+	air = sim_air(number);
+	if (air != NULL)
+		*out = air->m17;
+	return true;
+}
+#endif
 // Hardware options (Settings > Advanced > Hardware, hal_hwopt.h) only with the "hwopt" token: a revision that starts
 // unset and a plain option
 static int8_t hwopt_val[2];
@@ -1767,10 +1902,15 @@ static bool knob_radio;
 static bool vol_held;		// ui_svc_volume_hold: the radio ignores the volume knob
 uint32_t ui_svc_features(void)
 {
-	return 0xFFFFFFFFu & ~(soft_volume ? 0 : UI_FEAT_VOLUME) & ~(bcast_rx ? 0 : UI_FEAT_BCAST) &
+	return 0xFFFFFFFFu & ~(no_sms ? UI_FEAT_SMS : 0) & ~(soft_volume ? 0 : UI_FEAT_VOLUME) & ~(bcast_rx ? 0 : UI_FEAT_BCAST) &
 	       ~(ref_trim ? 0 : UI_FEAT_REF_TRIM) &
 	       ~(knob_radio ? 0 : UI_FEAT_VOLUME_KNOB) & ~(p25_radio ? 0 : UI_FEAT_P25) &
-	       ~(nxdn_radio ? 0 : UI_FEAT_NXDN) & ~(m17_radio ? 0 : UI_FEAT_M17);
+	       ~(nxdn_radio ? 0 : UI_FEAT_NXDN) & ~(m17_radio ? 0 : UI_FEAT_M17) &
+#if CONFIG_M17 && CONFIG_M17_PACKET
+	       ~(m17_messages ? 0 : UI_FEAT_M17_PACKET);
+#else
+	       ~UI_FEAT_M17_PACKET;
+#endif
 }
 // My radio's names (ui_svc_name_*): placeholders, as the user's own would be; a save writes at once
 static char sim_names[UI_NAME_COUNT][17];
@@ -1793,6 +1933,72 @@ bool ui_svc_name_set(uint8_t which, const char *text)
 	sim_rec.codeplug_writes++;
 	return true;
 }
+#if CONFIG_M17
+static bool sim_m17_char(char c)
+{
+	return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '/' || c == '.';
+}
+
+bool ui_svc_m17_call_show(char out[10], bool *stored)
+{
+	const char *name;
+	size_t n, i;
+
+	if (stored != NULL)
+		*stored = false;
+	out[0] = '\0';
+#if CONFIG_M17_PACKET
+	if (sim_m17_nocall)
+		return false;
+#endif
+	if (sim_m17_call[0] != '\0') {
+		strncpy(out, sim_m17_call, 9);
+		out[9] = '\0';
+		if (stored != NULL)
+			*stored = true;
+		return true;
+	}
+	name = sim_names[UI_NAME_RADIO];
+	while (*name == ' ')
+		name++;
+	n = strcspn(name, " -");
+	if (n == 0 || n > 9)
+		return false;
+	for (i = 0; i < n; i++) {
+		char c = name[i] >= 'a' && name[i] <= 'z' ? (char)(name[i] - 'a' + 'A') : name[i];
+		if (!sim_m17_char(c))
+			return false;
+		out[i] = c;
+	}
+	out[n] = '\0';
+	return true;
+}
+
+bool ui_svc_m17_call_set(const char *text)
+{
+	char folded[10];
+	size_t n = 0;
+
+	if (sim_m17_fail)
+		return false;
+	if (text == NULL)
+		text = "";
+	while (text[n] != '\0') {
+		char c;
+		if (n >= 9)
+			return false;
+		c = text[n] >= 'a' && text[n] <= 'z' ? (char)(text[n] - 'a' + 'A') : text[n];
+		if (!sim_m17_char(c))
+			return false;
+		folded[n++] = c;
+	}
+	folded[n] = '\0';
+	memcpy(sim_m17_call, folded, n + 1u);
+	sim_rec.codeplug_writes++;
+	sim_kv_serial++;
+	return true;
+}
+#endif
 void ui_svc_boot_text(char line1[17], char line2[17])
 {
 	strcpy(line1, sim_names[UI_NAME_BOOT1]);
@@ -2198,6 +2404,245 @@ bool ui_svc_vfo_get(uint8_t index, channel_t *out)
 	out->timeslot = o.ts;
 	return true;
 }
+
+#if CONFIG_M17
+static bool sim_m17_same(const radio_m17_context_t *a, const radio_m17_context_t *b)
+{
+	if (a->is_vfo != b->is_vfo)
+		return false;
+	return a->is_vfo ? a->vfo_index == b->vfo_index && a->vfo.rx_hz == b->vfo.rx_hz && a->vfo.tx_hz == b->vfo.tx_hz :
+		a->stored.zone == b->stored.zone && a->stored.pos == b->stored.pos && a->stored.number == b->stored.number;
+}
+
+static m17_chan_t sim_m17_base(const radio_m17_context_t *ctx, const channel_t *ch)
+{
+	m17_chan_t base = { .dst = M17_ADDR_BROADCAST };
+	if (ctx->is_vfo) {
+		base.can = sim_m17_vfo_can;
+		base.can_squelch = sim_m17_vfo_squelch;
+		uint64_t dst = sim_m17_vfo_dst[ctx->vfo_index];
+		if (dst != 0)
+			base.dst = dst;
+	} else {
+		m17_chan_load(ctx->stored.number, ch, &base);
+	}
+	return base;
+}
+
+static void sim_m17_text(uint64_t dst, char *out, size_t len)
+{
+	uint8_t raw[M17_ADDR_BYTES];
+	for (int i = M17_ADDR_BYTES - 1; i >= 0; i--) {
+		raw[i] = (uint8_t)dst;
+		dst >>= 8;
+	}
+	if (!m17_addr_decode(raw, out, len))
+		out[0] = '\0';
+}
+
+bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst)
+{
+	sim_m17_requests++;
+	if (sim_m17_queue_fail || sim_m17_queued != 0 || generation == 0)
+		return false;
+	sim_m17_queued = generation;
+	sim_m17_request_dst = dst;
+	return true;
+}
+
+bool radio_req_m17_vfo_can(uint32_t generation, bool squelch, uint8_t value)
+{
+	if (!generation || sim_m17_queue_fail || sim_m17_can_queued)
+		return false;
+	sim_m17_can_queued = generation;
+	sim_m17_can_field_squelch = squelch;
+	sim_m17_can_value = value;
+	return true;
+}
+
+static void sim_m17_update(void)
+{
+	if (!sim_m17_model)
+		return;
+	radio_m17_context_t tuned = { .is_vfo = view.vfo, .vfo_index = view.vfo_index };
+	if (view.vfo) {
+		tuned.vfo.rx_hz = view.ch.rx_hz;
+		tuned.vfo.tx_hz = view.ch.tx_hz;
+	} else {
+		tuned.stored.zone = view.zone_index;
+		tuned.stored.pos = view.zone_pos;
+		tuned.stored.number = view.channel_number;
+	}
+	radio_m17_context_t ctx = tuned;
+	channel_t ch = view.ch;
+	if (view.scan == 3 && sim_at != sim_sel) {
+		const ui_dual_ref_t *ref = &sim_dual[sim_sel];
+		ctx.is_vfo = ref->vfo;
+		if (ref->vfo) {
+			ctx.vfo_index = (uint8_t)ref->pos;
+			ui_svc_vfo_get(ctx.vfo_index, &ch);
+			ctx.vfo.rx_hz = ch.rx_hz;
+			ctx.vfo.tx_hz = ch.tx_hz;
+		} else {
+			zone_t z;
+			codeplug_zone(ref->zone, &z);
+			ctx.stored.zone = ref->zone;
+			ctx.stored.pos = ref->pos;
+			ctx.stored.number = z.channels[ref->pos];
+			codeplug_channel(ctx.stored.number, &ch);
+			if (ch.kind == CODEPLUG_KIND_M17)
+				ch.mode = RADIO_MODE_M17;
+		}
+	}
+	radio_m17_selected_t *sel = &view.m17_selected;
+	bool same = sel->generation != 0 && sim_m17_same(&ctx, &sel->context);
+	if (!same || ch.mode != RADIO_MODE_M17 || !m17_radio)
+		sim_m17_override = 0;
+	if (ch.mode == RADIO_MODE_M17 && m17_radio) {
+		m17_chan_t base = sim_m17_base(&ctx, &ch);
+		if (!same || sel->base_dst != base.dst) {
+			sel->generation = ++sim_m17_generation;
+			sel->context = ctx;
+			sel->base_dst = base.dst;
+			sel->can = base.can;
+			changed();
+		}
+		if (sim_m17_queued == sel->generation) {
+			sim_m17_override = sim_m17_request_dst;
+			changed();
+		}
+		if (ctx.is_vfo && sim_m17_can_queued == sel->generation) {
+			if (sim_m17_can_field_squelch)
+				base.can_squelch = sim_m17_vfo_squelch = sim_m17_can_value != 0;
+			else
+				base.can = sim_m17_vfo_can = sim_m17_can_value;
+		}
+		if (sel->can != base.can || sel->can_squelch != base.can_squelch) {
+			sel->can = base.can;
+			sel->can_squelch = base.can_squelch;
+			changed();
+		}
+		sel->effective_dst = sim_m17_override != 0 ? sim_m17_override : base.dst;
+	} else if (sel->generation != 0) {
+		*sel = (radio_m17_selected_t){ 0 };
+		changed();
+	}
+	sim_m17_can_queued = 0;
+	sim_m17_queued = 0;
+	if (view.ch.mode == RADIO_MODE_M17) {
+		m17_chan_t base = sim_m17_base(&tuned, &view.ch);
+		view.m17.can = base.can;
+		sim_m17_text(sel->generation != 0 && sim_m17_same(&tuned, &ctx) ? sel->effective_dst : base.dst,
+			view.m17.tx_dst, sizeof view.m17.tx_dst);
+	}
+}
+#endif
+
+#if CONFIG_M17 && CONFIG_M17_PACKET
+void ui_svc_m17_msg_summary(ui_m17_msg_summary_t *out)
+{
+	*out = (ui_m17_msg_summary_t){ .received_seq = m17_seq, .last_received_id = m17_last_id,
+		.count = n_m17_inbox };
+	for (uint8_t i = 0; i < n_m17_inbox; i++)
+		out->unread += m17_inbox[i].m.unread;
+}
+bool ui_svc_m17_msg_get_at(uint16_t i, uint32_t *id, ui_msg_t *out)
+{
+	if (i >= n_m17_inbox)
+		return false;
+	*id = m17_inbox[i].id;
+	*out = m17_inbox[i].m;
+	out->age_ms = now_ms - m17_inbox[i].at;
+	return true;
+}
+static int m17_msg_index(uint32_t id)
+{
+	for (uint8_t i = 0; i < n_m17_inbox; i++)
+		if (m17_inbox[i].id == id)
+			return i;
+	return -1;
+}
+bool ui_svc_m17_msg_get(uint32_t id, ui_msg_t *out)
+{
+	int i = m17_msg_index(id);
+	uint32_t copied_id;
+	return i >= 0 && ui_svc_m17_msg_get_at((uint16_t)i, &copied_id, out);
+}
+bool ui_svc_m17_msg_read(uint32_t id)
+{
+	int i = m17_msg_index(id);
+	if (i < 0)
+		return false;
+	m17_inbox[i].m.unread = false;
+	return true;
+}
+bool ui_svc_m17_msg_delete(uint32_t id)
+{
+	int i = m17_msg_index(id);
+	if (i < 0)
+		return false;
+	memmove(&m17_inbox[i], &m17_inbox[i + 1], (n_m17_inbox - (unsigned)i - 1u) * sizeof m17_inbox[0]);
+	n_m17_inbox--;
+	return true;
+}
+bool ui_svc_m17_msg_send(const char *call, const char *text)
+{
+	char utf8[sizeof sim_rec.m17_body];
+	size_t n;
+
+	if (sim_m17_slot) {
+		sim_m17_slot = false;
+		return false;
+	}
+	if (sim_m17_pending || text == NULL || text[0] == '\0')
+		return false;
+	n = m17_text_from_display(text, utf8, sizeof utf8);
+	if (n == 0)
+		return false;
+	sim_m17_pending = true;
+	sim_m17_result = 0;
+	sim_rec.m17_queued++;
+	sim_rec.m17_pending = 1;
+	snprintf(sim_rec.m17_dest, sizeof sim_rec.m17_dest, "%s", call != NULL ? call : "");
+	snprintf(sim_rec.m17_body, sizeof sim_rec.m17_body, "%s", utf8);
+	snprintf(sim_rec.m17_via, sizeof sim_rec.m17_via, "m17");
+	return true;
+}
+void ui_svc_m17_msg_poll(void)
+{
+	ui_event_t ev;
+
+	if (!sim_m17_pending || sim_m17_result == 0)
+		return;
+	memset(&ev, 0, sizeof ev);
+	ev.kind = UI_EV_M17_SENT;
+	ev.ok = sim_m17_result == RADIO_M17_MSG_TX_SENT;
+	ev.index = sim_m17_result;
+	snprintf(ev.name, sizeof ev.name, "%s", sim_rec.m17_dest);
+	sim_m17_pending = false;
+	sim_m17_result = 0;
+	sim_rec.m17_pending = 0;
+	sim_rec.m17_done++;
+	ui_notify(&ev);
+}
+static void add_m17_message(const char *call, const char *text, bool cut)
+{
+	if (n_m17_inbox == 4)
+		n_m17_inbox--;
+	memmove(&m17_inbox[1], &m17_inbox[0], n_m17_inbox * sizeof m17_inbox[0]);
+	n_m17_inbox++;
+	memset(&m17_inbox[0], 0, sizeof m17_inbox[0]);
+	m17_inbox[0].id = ++m17_last_id;
+	m17_seq++;
+	m17_inbox[0].at = now_ms;
+	m17_inbox[0].m.via = UI_MSG_VIA_M17;
+	m17_inbox[0].m.unread = true;
+	m17_inbox[0].m.cut = cut;
+	snprintf(m17_inbox[0].m.call, sizeof m17_inbox[0].m.call, "%s", call);
+	snprintf(m17_inbox[0].m.text, sizeof m17_inbox[0].m.text, "%s", text);
+}
+#endif
+
 uint16_t ui_svc_msg_count(void) { return n_inbox; }
 uint16_t ui_svc_msg_unread(void)
 {
@@ -2562,6 +3007,15 @@ void sim_set_tick_hook(void (*hook)(uint32_t now_ms)) { tick_hook = hook; }
 static void step(void)
 {
 	now_ms += TICK_MS;
+#if CONFIG_M17
+	sim_m17_update();
+#if CONFIG_M17_PACKET
+	if (sim_m17_tx_fit)
+		view.m17.fit = (uint16_t)(AIR_FIT_RX | AIR_FIT_TX);
+	if (sim_m17_rx_only)
+		view.ch.rx_only = true;
+#endif
+#endif
 	if (view.state == RS_TX)
 		view.tx_elapsed_ms += TICK_MS;
 	if (ptt_up_at && now_ms >= ptt_up_at) {
@@ -2704,6 +3158,15 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 	view.zone_index = 0;
 	view.zone_pos = 2;	// 3 COUNTY DMR
 	n_inbox = 0;
+#if CONFIG_M17 && CONFIG_M17_PACKET
+	n_m17_inbox = 0;
+	m17_seq = 0;
+	m17_last_id = 65536u;
+	m17_messages = false;
+	sim_m17_tx_fit = sim_m17_rx_only = sim_m17_nocall = sim_m17_slot = false;
+	sim_m17_pending = false;
+	sim_m17_result = 0;
+#endif
 	hotspot_on = rx_on = usb_net = usb_up = false;
 	board.netif = &sim_netif;
 	aprs_sim_reset();
@@ -2728,12 +3191,25 @@ void sim_reset(const sim_geom_t *g, sim_map_t map)
 	now_ms = 1000;
 	load_channel();
 	soft_volume = false;
+	no_sms = false;
 	view.volume = -1;	// no level passed on yet (power-up)
 	view.volume_src = RVOL_KNOB;
 	bcast_rx = false;
 	p25_radio = false;
 	nxdn_radio = false;
 	m17_radio = false;
+#if CONFIG_M17
+	sim_m17_call[0] = '\0';
+	sim_m17_fail = false;
+	sim_m17_model = sim_m17_queue_fail = false;
+	sim_m17_can_queued = 0;
+	sim_m17_vfo_can = 0;
+	sim_m17_vfo_squelch = false;
+	sim_m17_queued = sim_m17_generation = sim_m17_requests = 0;
+	sim_m17_override = sim_m17_vfo_dst[0] = sim_m17_vfo_dst[1] = 0;
+	sim_kv_serial = 0;
+	sim_m17_dst_n = 0;
+#endif
 #if CONFIG_NXDN
 	memset(&view.nxdn, 0, sizeof view.nxdn);
 	view.nxdn.flags = RADIO_NXDN_9600;	// the NXDN settings' defaults (radio_nxdn.c): 9600 bit/s, RAN 1, group 1
@@ -2938,6 +3414,31 @@ static bool check(const char *kv, char *err, size_t len)
 	bool prefix = false;
 	if (strcmp(key, "screen") == 0) snprintf(got, sizeof got, "%s", s.screen);
 	else if (strcmp(key, "focus") == 0) { snprintf(got, sizeof got, "%s", ui_app_focus_label()); prefix = true; }
+#if CONFIG_M17
+	else if (strcmp(key, "focusvalue") == 0) {
+		const ui_scr_def_t *def = ui_scr[ui_frame()->scr];
+		ui_item_t it = { 0 };
+		if (def->item != NULL && s.focus < s.count)
+			def->item(s.focus, &it);
+		snprintf(got, sizeof got, "%s", it.value);
+	}
+	else if (strcmp(key, "quick8") == 0) {
+		char label[24];
+		if (!ui_quick_tile(7, ui_view(), &ui_st, label, sizeof label, got, sizeof got))
+			got[0] = '\0';
+	}
+	else if (strcmp(key, "m17can") == 0) snprintf(got, sizeof got, "%u", view.m17.can);
+	else if (strcmp(key, "m17squelch") == 0) snprintf(got, sizeof got, "%u", view.m17_selected.can_squelch);
+	else if (strcmp(key, "m17tx") == 0) snprintf(got, sizeof got, "%s", view.m17.tx_dst);
+	else if (strcmp(key, "m17base") == 0) sim_m17_text(view.m17_selected.base_dst, got, sizeof got);
+	else if (strcmp(key, "m17selected") == 0) sim_m17_text(view.m17_selected.effective_dst, got, sizeof got);
+	else if (strcmp(key, "m17programmed") == 0) {
+		const ui_air_conv_t *air = sim_air(view.channel_number);
+		sim_m17_text(air != NULL ? air->m17.dst : 0, got, sizeof got);
+	}
+	else if (strcmp(key, "m17gen") == 0) snprintf(got, sizeof got, "%u", (unsigned)view.m17_selected.generation);
+	else if (strcmp(key, "m17requests") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_m17_requests);
+#endif
 	else if (strcmp(key, "zone") == 0) snprintf(got, sizeof got, "%u", view.zone_index);
 	else if (strcmp(key, "pos") == 0) snprintf(got, sizeof got, "%u", view.zone_pos + 1u);
 	else if (strcmp(key, "vfo") == 0) snprintf(got, sizeof got, "%u", view.vfo);
@@ -3004,10 +3505,10 @@ static bool check(const char *kv, char *err, size_t len)
 	else if (strcmp(key, "beep") == 0) snprintf(got, sizeof got, "%u", sim_rec.last_beep);	// ui_beep_t
 	else if (strcmp(key, "vibes") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.vibes);
 	else if (strcmp(key, "vibe") == 0) snprintf(got, sizeof got, "%u", sim_rec.last_vibe);	// ui_vibe_t
-	else if (strcmp(key, "shows") == 0 || strcmp(key, "showsraw") == 0) {	// drawn text contains the value
+	else if (strcmp(key, "shows") == 0 || strcmp(key, "showsraw") == 0 || strcmp(key, "draws") == 0) {
 		got[0] = 0;
 		for (int i = 0; i < live_n; i++) {
-			if (strstr(live[i].s, want) != NULL) {
+			if (strcmp(key, "draws") == 0 ? strcmp(live[i].s, want) == 0 : strstr(live[i].s, want) != NULL) {
 				snprintf(got, sizeof got, "%s", want);
 				break;
 			}
@@ -3061,6 +3562,20 @@ static bool check(const char *kv, char *err, size_t len)
 		snprintf(got, sizeof got, "%d", (int)ui_svc_setting_get((uint8_t)atoi(key + 3)));
 	else if (strcmp(key, "radio_tot") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.tot_s);
 	else if (strcmp(key, "radio_backlight") == 0) snprintf(got, sizeof got, "%ld", (long)sim_rec.backlight_s);
+#if CONFIG_M17 && CONFIG_M17_PACKET
+	else if (strcmp(key, "m17count") == 0) snprintf(got, sizeof got, "%u", n_m17_inbox);
+	else if (strcmp(key, "m17unread") == 0) {
+		ui_m17_msg_summary_t summary;
+		ui_svc_m17_msg_summary(&summary);
+		snprintf(got, sizeof got, "%u", summary.unread);
+	}
+	else if (strcmp(key, "m17q") == 0) snprintf(got, sizeof got, "%u", sim_rec.m17_pending);
+	else if (strcmp(key, "m17queued") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.m17_queued);
+	else if (strcmp(key, "m17done") == 0) snprintf(got, sizeof got, "%u", (unsigned)sim_rec.m17_done);
+	else if (strcmp(key, "m17dest") == 0) snprintf(got, sizeof got, "%s", sim_rec.m17_dest);
+	else if (strcmp(key, "m17body") == 0) snprintf(got, sizeof got, "%s", sim_rec.m17_body);
+	else if (strcmp(key, "m17via") == 0) snprintf(got, sizeof got, "%s", sim_rec.m17_via);
+#endif
 	else if (strcmp(key, "count") == 0) snprintf(got, sizeof got, "%u", s.count);
 	else if (strcmp(key, "depth") == 0) snprintf(got, sizeof got, "%u", s.depth);
 	else if (strcmp(key, "hotspot") == 0) snprintf(got, sizeof got, "%u", hotspot_on);
@@ -3440,6 +3955,167 @@ static bool run_token(char *t, char *err, size_t len)
 		advance(100);
 		return true;
 	}
+#if CONFIG_M17
+	if (strcmp(t, "m17rx") == 0 && arg != NULL) {
+		char src[10], dst[10], flags[16];
+		unsigned can;
+		static const struct { const char *name; uint8_t state; } cases[] = {
+			{ "voice", RADIO_M17_RX_VOICE }, { "other", RADIO_M17_RX_OTHER_CAN },
+			{ "encrypted", RADIO_M17_RX_ENCRYPTED }, { "voice-data", RADIO_M17_RX_VOICE_DATA },
+			{ "data", RADIO_M17_RX_DATA }, { "late", RADIO_M17_RX_UNKNOWN }, { "bert", RADIO_M17_RX_NONE },
+		};
+		if (sscanf(arg, "%9[^,],%9[^,],%u,%15s", src, dst, &can, flags) != 4 || can > RADIO_M17_CAN_MAX) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		size_t i = 0;
+		while (i < sizeof cases / sizeof cases[0] && strcmp(flags, cases[i].name) != 0)
+			i++;
+		if (i == sizeof cases / sizeof cases[0] || view.ch.mode != RADIO_MODE_M17) {
+			snprintf(err, len, "bad %s mode or flags", t);
+			return false;
+		}
+		view.state = RS_RX;
+		view.m17.flags = RADIO_M17_ON | RADIO_M17_RX;
+		view.m17.rx_state = cases[i].state;
+		view.m17.rx_can = (uint8_t)can;
+		str_copy(view.m17.caller, sizeof view.m17.caller, src);
+		str_copy(view.m17.dest, sizeof view.m17.dest, dst);
+		view.m17.via[0] = view.m17.meta[0] = '\0';
+		if (view.m17.rx_state == RADIO_M17_RX_UNKNOWN) {
+			view.m17.flags |= RADIO_M17_LATE;
+			view.m17.rx_can = UINT8_MAX;
+		}
+		if (view.m17.rx_state == RADIO_M17_RX_UNKNOWN || view.m17.rx_state == RADIO_M17_RX_NONE)
+			view.m17.caller[0] = view.m17.dest[0] = '\0';
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17type") == 0 && arg != NULL) {	// late LICH chunk 2, voice
+		view.m17.rx_state = RADIO_M17_RX_VOICE;
+		view.m17.rx_can = (uint8_t)atoi(arg);
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17link") == 0 && arg != NULL) {	// CRC-valid addresses from the full LICH
+		if (sscanf(arg, "%9[^,],%9s", view.m17.caller, view.m17.dest) != 2) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17meta") == 0 && arg != NULL) {
+		str_copy(view.m17.meta, sizeof view.m17.meta, arg);
+		for (char *p = view.m17.meta; *p; p++)
+			if (*p == '_')
+				*p = ' ';
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17via") == 0 && arg != NULL) {
+		str_copy(view.m17.via, sizeof view.m17.via, arg);
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17end") == 0) {
+		view.state = RS_IDLE;
+		view.m17.flags = RADIO_M17_ON;
+		view.m17.rx_state = RADIO_M17_RX_NONE;
+		view.m17.caller[0] = view.m17.dest[0] = view.m17.via[0] = view.m17.meta[0] = '\0';
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17stored") == 0 && arg != NULL) {	// channel number and programmed destination
+		unsigned number;
+		char dst[RADIO_M17_CALL_LEN];
+		channel_t ch;
+		ui_air_conv_t air = { .m17.can = 3 };
+		if (sscanf(arg, "%u,%9s", &number, dst) != 2) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		for (char *p = dst; *p != '\0'; p++)
+			if (*p == '_')
+				*p = ' ';
+		if (!m17_dst_parse(dst, &air.m17.dst)) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		// The layout check replays gallery scripts with the built-in channels renumbered.
+		if (worst && number >= 1 && number <= sizeof chans / sizeof chans[0])
+			number += WORST_FIRST - 1u;
+		if (!codeplug_channel((uint16_t)number, &ch)) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		ch.kind = CODEPLUG_KIND_M17;
+		ch.mode = RADIO_MODE_DMR;	// the tag goes over the stand-in record
+		if (!ui_svc_write_channel_air((uint16_t)number, &ch, 0, &air)) {
+			snprintf(err, len, "no room for %s", t);
+			return false;
+		}
+		sim_rec.codeplug_writes--;
+		sim_m17_model = true;
+		if (!view.vfo && view.channel_number == number)
+			load_channel();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17vfo") == 0 && arg != NULL && view.vfo) {
+		char dst[RADIO_M17_CALL_LEN];
+		snprintf(dst, sizeof dst, "%s", arg);
+		for (char *p = dst; *p != '\0'; p++)
+			if (*p == '_')
+				*p = ' ';
+		if (!m17_dst_parse(dst, &sim_m17_vfo_dst[view.vfo_index])) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		sim_m17_model = true;
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17queuefail") == 0) {
+		sim_m17_queue_fail = true;
+		return true;
+	}
+	if (strcmp(t, "m17rxaddr") == 0 && arg != NULL) {
+		snprintf(view.m17.dest, sizeof view.m17.dest, "%s", arg);
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17tx") == 0 && arg != NULL) {	// the destination PTT calls: can,text (a _ is a space)
+		unsigned can = 0;
+		char dst[10];
+		if (sscanf(arg, "%u,%9s", &can, dst) != 2) {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		for (char *p = dst; *p != '\0'; p++)
+			if (*p == '_')
+				*p = ' ';
+		view.m17.can = (uint8_t)can;
+		snprintf(view.m17.tx_dst, sizeof view.m17.tx_dst, "%s", dst);
+		changed();
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17deny") == 0 && arg != NULL) {	// call: no callsign. rx: the provider is receive-only
+		view.state = RS_TX_DENIED;
+		view.tx_deny = strcmp(arg, "rx") == 0 ? TXDENY_AIR_NO_TX : TXDENY_M17_CALL;
+		changed();
+		advance(100);
+		return true;
+	}
+#endif
 	if (strcmp(t, "dlvfo") == 0) {	// the debug link tunes the VFO
 		char *end = NULL;
 		unsigned long hz = arg != NULL ? strtoul(arg, &end, 10) : 0;
@@ -3468,8 +4144,8 @@ static bool run_token(char *t, char *err, size_t len)
 		sim_rec.codeplug_writes--;	// the codeplug as found, not a write of the UI's
 		return true;
 	}
-#if CONFIG_P25 || CONFIG_NXDN
-	if (strcmp(t, "chkind") == 0) {		// stored channel n is a P25 or NXDN channel: its tag, over a stand-in record
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
+	if (strcmp(t, "chkind") == 0) {		// stored channel n is a P25, NXDN or M17 channel: its tag, over a stand-in record
 		unsigned n = 0;
 		char k[8] = "";
 		channel_t c;
@@ -3485,7 +4161,8 @@ static bool run_token(char *t, char *err, size_t len)
 				if (*ch == '_')
 					*ch = ' ';
 		}
-		c.kind = strcmp(k, "nxdn") == 0 ? CODEPLUG_KIND_NXDN : CODEPLUG_KIND_P25;
+		c.kind = strcmp(k, "nxdn") == 0 ? CODEPLUG_KIND_NXDN :
+			 strcmp(k, "m17") == 0 ? CODEPLUG_KIND_M17 : CODEPLUG_KIND_P25;
 		c.mode = RADIO_MODE_DMR;
 		if (sim_write((uint16_t)n, &c) < 0) {
 			snprintf(err, len, "no room for %s", t);
@@ -3580,6 +4257,75 @@ static bool run_token(char *t, char *err, size_t len)
 		advance(200);
 		return true;
 	}
+#if CONFIG_M17 && CONFIG_M17_PACKET
+	if (strcmp(t, "m17messages") == 0) {
+		m17_messages = true;
+		return true;
+	}
+	if (strcmp(t, "m17nopacket") == 0) {
+		m17_messages = false;
+		return true;
+	}
+	if (strcmp(t, "m17txfit") == 0) {
+		sim_m17_tx_fit = true;
+		m17_messages = true;
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17notx") == 0) {
+		sim_m17_tx_fit = false;
+		view.m17.fit = (uint16_t)AIR_FIT_RX;
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17rxonly") == 0) {
+		sim_m17_rx_only = true;
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17nocall") == 0) {
+		sim_m17_nocall = true;
+		return true;
+	}
+	if (strcmp(t, "m17slot") == 0) {
+		sim_m17_slot = true;
+		return true;
+	}
+	if (strcmp(t, "m17result") == 0 && arg != NULL) {
+		static const struct { const char *name; uint8_t reason; } reasons[] = {
+			{ "sent", RADIO_M17_MSG_TX_SENT }, { "busy", RADIO_M17_MSG_TX_BUSY },
+			{ "refused", RADIO_M17_MSG_TX_REFUSED }, { "failed", RADIO_M17_MSG_TX_FAILED },
+			{ "context", RADIO_M17_MSG_TX_CONTEXT }, { "address", RADIO_M17_MSG_TX_ADDRESS },
+			{ "fit", RADIO_M17_MSG_TX_FIT }, { "guard", RADIO_M17_MSG_TX_GUARD },
+			{ "timeout", RADIO_M17_MSG_TX_TIMEOUT },
+		};
+		size_t i = 0;
+		while (i < sizeof reasons / sizeof reasons[0] && strcmp(arg, reasons[i].name) != 0)
+			i++;
+		if (i == sizeof reasons / sizeof reasons[0] || !sim_m17_pending) {
+			snprintf(err, len, "bad m17result");
+			return false;
+		}
+		sim_m17_result = reasons[i].reason;
+		advance(100);
+		return true;
+	}
+	if (strcmp(t, "m17msg") == 0 && arg != NULL) {
+		char call[10], text[UI_MSG_TEXT_MAX + 1], extra;
+		int cut;
+		if (sscanf(arg, "%9[^,],%143[^,],%d%c", call, text, &cut, &extra) != 3 || (cut != 0 && cut != 1)) {
+			snprintf(err, len, "bad m17msg");
+			return false;
+		}
+		for (char *p = text; *p; p++)
+			if (*p == '_')
+				*p = ' ';
+		m17_messages = true;
+		add_m17_message(call, text, cut != 0);
+		advance(200);
+		return true;
+	}
+#endif
 	if (strcmp(t, "msg") == 0 && arg != NULL) {
 		char text[UI_MSG_TEXT_MAX + 1];
 		unsigned src = 0;
@@ -3809,6 +4555,10 @@ static bool run_token(char *t, char *err, size_t len)
 		board.radio = &am_radio;
 		return true;
 	}
+	if (strcmp(t, "nosms") == 0) {
+		no_sms = true;
+		return true;
+	}
 	if (strcmp(t, "bcast") == 0) {		// this radio has a broadcast FM receiver
 		bcast_rx = true;
 		return true;
@@ -3825,6 +4575,12 @@ static bool run_token(char *t, char *err, size_t len)
 		m17_radio = true;
 		return true;
 	}
+#if CONFIG_M17
+	if (strcmp(t, "m17fail") == 0) {	// the next M17 callsign save fails
+		sim_m17_fail = true;
+		return true;
+	}
+#endif
 	if (strcmp(t, "hwopt") == 0) {		// this radio has hardware options (sim_hwopts)
 		board.hwopts = sim_hwopts;
 		board.hwopt_count = 2;

@@ -2,10 +2,13 @@
 
 # Messages, Call Alert and Radio Check
 
-DMR text messages, call alert and radio check work on DMR channels. APRS text messages can also be sent over FM on
-builds with an AFSK transmit path. The [Radio reference](23-radios.md) says which radios have each path verified.
-None of them needs the codec. DMR sending needs a DMR channel you may transmit on and your DMR ID; APRS sending
-needs a valid callsign in **Settings > My radio**, an amateur APRS frequency and a board with AFSK transmit.
+DMR text messages, call alert and radio check work on DMR channels. M17 text messages can be sent and received on
+supported M17 channels. APRS text messages can also be sent over FM on builds with an AFSK transmit path. The
+[Radio reference](23-radios.md) says which radios have each path verified; the [feature matrix](../feature-matrix.md)
+says which builds include M17 packet messaging (`CONFIG_M17_PACKET`). None of them needs the codec. DMR sending
+needs a DMR channel you may transmit on and your DMR ID; M17 sending needs a valid M17 callsign and a
+transmit-capable M17 channel or VFO ([M17](24-m17.md#set-your-callsign)); APRS sending needs a valid callsign in
+**Settings > My radio**, an amateur APRS frequency and a board with AFSK transmit.
 
 ## Receiving a message
 
@@ -28,7 +31,7 @@ Messages.
 
    | Row | Does |
    |---|---|
-   | Full message | Shows the whole text on its own page. **Up** and **Down** scroll it, **Back** returns. Only when the text is too long for the screen, which ends it with "…" |
+   | Full message | Shows the whole text on its own page. **Up** and **Down** scroll it, **Back** returns. When the text is too long for the screen, which ends it with "…", or stored M17 text was truncated |
    | Reply "OK" | Sends "OK" to the sender |
    | Reply "On my way" | Sends "On my way" to the sender |
    | Call | Makes the sender the talk target for now |
@@ -36,14 +39,17 @@ Messages.
 
 **#** on a DMR message opens the actions for its sender. **PTT** in an open DMR message calls the sender. The Call
 action is unavailable for APRS messages, whose sender is a callsign. **#** on an APRS message opens a composer addressed
-to that callsign.
+to that callsign. An M17 message shows the sender callsign. When the selected M17 channel can transmit, the open
+message offers Reply "OK", Reply "On my way", **Write...** and Delete, and **#** replies to that sender. Otherwise
+it offers Full message and Delete; Call and sender PTT stay unavailable. A **[Stored text truncated]** marker means the received text exceeded storage, independently of the screen preview.
 
 <img src="../ux/screens/160x120i5/messages.png" width="200" alt="Messages">
 <img src="../ux/screens/160x120i5/message_view.png" width="200" alt="A message">
 <img src="../ux/screens/160x120i5/message_long.png" width="200" alt="A long message: the Full message row, and its whole text">
 <img src="../ux/screens/160x120i5/message_read.png" width="200" alt="">
+<img src="../ux/screens/160x120i5/m17_message_view.png" width="200" alt="An M17 message with truncated stored text">
 
-The radio keeps DMR and APRS messages in memory. They are lost when the radio turns off.
+The radio keeps DMR, APRS and M17 messages in memory. They are lost when the radio turns off.
 
 ## Sending a message
 
@@ -88,6 +94,42 @@ text plus coordinates exceeds 67 characters. The position is part of the message
 The APRS destination is a callsign, not a DMR ID. A new outgoing message replaces one still awaiting an acknowledgment.
 Sending is refused if the callsign or text is invalid or the APRS RF path is unavailable. **Tools > APRS** shows the
 configured frequency and any blocking reason. Received APRS messages appear in Messages; replies go over APRS.
+
+### Sending and replying over M17
+
+Sending needs a valid M17 callsign ([Set your callsign](24-m17.md#set-your-callsign)) and the selected M17 channel
+or VFO able to transmit, not receive-only. A build without `CONFIG_M17_PACKET` ([feature matrix](../feature-matrix.md))
+has no M17 text messaging at all, sending or receiving; **New M17 message** doesn't appear without a selected M17
+channel either.
+
+1. Select an M17 channel or VFO that can transmit, then open **Messages > New M17 message**. The destination field
+   opens on that channel's programmed address; a temporary **Talk to** choice from Quick settings is not used.
+   Clear the field, or enter `ALL`, to send to everyone; the radio shows that as **All**. Addresses use the
+   callsign alphabet (A-Z, 0-9, `-`, `/`, `.`, and spaces inside the address, as in `M17-M17 A`); one it can't use
+   shows **Not an M17 address** and stays in the editor.
+2. Pick a preset or **Write...** (up to 143 characters) and press **OK**. The radio sends what you typed as up to
+   821 bytes of text on the air; a received message that exceeds the 143 characters the radio stores gets the
+   **[Stored text truncated]** marker described above.
+3. To reply, open the M17 message and choose a reply, or press **#** on its row in the list. The reply addresses
+   the sender's verified callsign privately, even when the original message was broadcast to **All**.
+
+<img src="../ux/screens/160x120i5/m17_message_to.png" width="200" alt="Destination for a new M17 message">
+<img src="../ux/screens/160x120i5/m17_message_reply.png" width="200" alt="Replying to an M17 message">
+
+The radio shows "Sending to ..." and returns to Home. "Sent to ..." means the message went out on the air: M17
+defines no delivery receipt, so the radio never says "Delivered" for one. A blank message is not sent. None of
+the failures below falls through to sending over DMR or APRS instead:
+
+| Banner | Meaning |
+|---|---|
+| "Channel busy: try again" | The channel was busy when the radio checked for a clear slot before keying up (CSMA). The composer stays open; **OK** tries again |
+| "Radio refused the message" | The transmitter refused to key up |
+| "Channel changed" | The channel or its destination changed between opening the composer and pressing **OK** |
+| "M17: set your callsign" | No valid M17 callsign is set |
+| "M17: receive only" | The radio's M17 hardware path can't transmit |
+| "Message was not sent" | The transmission failed, timed out, or was cut off |
+
+A receive-only channel refuses sooner, with the shared **This channel is RX only**.
 
 ## Message formats
 

@@ -1436,6 +1436,19 @@ class DebugLink:
         cmd = {"rx": 1, "tx": 2, "stop": 3}[which]
         self.radio(OP_M17, bytes([cmd]))
 
+    def m17_message(self, dst, text):
+        """Queue an M17 text message (RADIO op 44, cmd 4): dst is a callsign or ALL, text is UTF-8 up to 56 bytes.
+        OK means the radio accepted the request; read m17.packet.tx_seq on the m17 view for the request serial."""
+        if not text:
+            raise ValueError("m17_message: text required")
+        raw = text.encode("utf-8")
+        if len(raw) > 56:
+            raise ValueError("m17_message: text is at most 56 UTF-8 bytes")
+        payload = bytearray([4])
+        payload += self._m17_addr(dst) if isinstance(dst, str) else bytes(dst)
+        payload += raw
+        self.radio(OP_M17, bytes(payload))
+
     def vfo_sfr(self, role, inbound_ts=1, framing=0, hang=0):
         """The VFO's SFR role (RADIO op 38; sfr.md 4), saved with the VFO: role a SFR_ROLES name or 0..4, the inbound
         slot 1 / 2, framing 0..3, hang 0..3: a codeplug channel's SFR byte A. The outbound color code is the VFO's own.
@@ -2071,12 +2084,17 @@ def cmd_radio(link, a):
             else:
                 raise SystemExit(usage)
         link.nxdn_settings_update(**kw)
-    elif op == "m17":                 # m17 [can=N] [squelch=0|1] [dst=CALL] [call=CALL] | m17 bert rx|tx|stop
-        usage = "m17 [can=N] [squelch=0|1] [dst=CALL] [call=CALL] | m17 bert rx|tx|stop"
+    elif op == "m17":                 # m17 ... | m17 bert rx|tx|stop | m17 message DST TEXT...
+        usage = ("m17 [can=N] [squelch=0|1] [dst=CALL] [call=CALL] | m17 bert rx|tx|stop | "
+                 "m17 message DST TEXT...")
         if args[:1] == ["bert"]:
             if len(args) != 2 or args[1] not in ("rx", "tx", "stop"):
                 raise SystemExit(usage)
             link.m17_bert(args[1])
+        elif args[:1] == ["message"]:
+            if len(args) < 3:
+                raise SystemExit(usage)
+            link.m17_message(args[1], " ".join(args[2:]))
         else:
             kw = {}
             for a in args:

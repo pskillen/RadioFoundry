@@ -9,6 +9,9 @@
 #include <stdbool.h>
 #include "codeplug/codeplug.h"
 #include "config.h"
+#if CONFIG_M17_PACKET
+#include "radio/radio_m17_msg_tx.h"
+#endif
 #if CONFIG_SATELLITE_TLE
 #include "satellite/path.h"
 #include "satellite/store.h"
@@ -67,6 +70,7 @@ typedef enum {
 	TXDENY_CEASED,	// the system stopped the over (DMR reverse channel)
 	TXDENY_BENCH, TXDENY_TRUNK, TXDENY_AIR_NO_TX, TXDENY_AES_KEY,
 	TXDENY_AES_WAIT,	// AES: the MI reservation is not saved yet (dmrAesSeq_t)
+	TXDENY_M17_CALL,	// M17 voice or packet with no callsign (BERT is exempt)
 } tx_deny_t;
 
 // Busy channel lockout (FM): CARRIER refuses PTT while anything is heard on the channel; WRONG_TONE only while a
@@ -527,7 +531,8 @@ typedef struct {
 	radio_nxdn_view_t nxdn;	// NXDN conventional (docs/spec/nxdn.md 6): the same
 #endif
 #if CONFIG_M17
-	radio_m17_view_t m17;	// M17 conventional (docs/spec/m17.md 10): the same
+	radio_m17_view_t m17;	// M17 conventional (docs/spec/m17.md 10): running engine
+	radio_m17_selected_t m17_selected;	// selected channel, even while dual watch samples the other pane
 #endif
 #if CONFIG_DMR_TRUNK
 	radio_t3_brief_t t3;
@@ -645,6 +650,17 @@ void radio_req_nxdn_settings(const radio_nxdn_settings_t *s);
 // The M17 settings (RAM only, radio_m17.h): the same. BERT is 1 count, 2 transmit, 3 stop
 void radio_req_m17_settings(const radio_m17_settings_t *s);
 void radio_req_m17_bert(uint8_t cmd);
+// Queue a 48-bit destination for the selected generation. Zero selects Default.
+bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst);
+bool radio_req_m17_vfo_can(uint32_t generation, bool squelch, uint8_t value);
+#endif
+#if CONFIG_M17_PACKET
+// Returns a serial for a copied request, or zero if it could not be queued.
+uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const char *text, size_t length);
+// text is handset display encoding. The UTF-8 copy uses the request slot, not a second buffer.
+uint64_t radio_req_m17_msg_send_display(uint32_t generation, uint64_t destination, const char *text);
+// Copies the latest terminal result; false until a request has completed.
+bool radio_get_m17_msg_tx_result(radio_m17_msg_tx_result_t *out);
 #endif
 #if CONFIG_DMR
 void radio_req_reply_cancel(void);		// BACK on Home: end the DMR reply window

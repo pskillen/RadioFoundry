@@ -115,10 +115,17 @@ typedef enum {
 	AIR_EV_RX,		// chunk
 	AIR_EV_TX_STARTED,	// t_us = the first queued symbol on air
 	AIR_EV_TX_UNDERRUN,	// the queue ran dry before an AIR_TX_LAST chunk: idle symbols went out
-	AIR_EV_TX_DONE,		// the AIR_TX_LAST chunk has left the air (or tx_abort is through); receiving again
+	AIR_EV_TX_DONE,		// transmit stopped, arg = air_tx_end_reason_t
 	AIR_EV_TX_SPACE,	// a chunk left the queue for the air: tx_space grew
 	AIR_EV_SLOT,		// TDMA: a slot boundary, arg = its counter, t_us = its time
 } air_event_kind_t;
+
+typedef enum {
+	AIR_TX_END_UNKNOWN = 0,	// provider supplied no reason
+	AIR_TX_END_DRAINED = 1,	// the provider confirmed the tail after the last chunk
+	AIR_TX_END_ABORTED = 2,	// stopped by the owner (abort, suspend, or close)
+	AIR_TX_END_STALLED = 3,	// stopped by a watchdog or a missed key
+} air_tx_end_reason_t;
 
 typedef struct {
 	uint8_t kind;			// air_event_kind_t
@@ -194,7 +201,7 @@ typedef struct {
 	// Transmit: queue at least one chunk, hal_radio_t.tx(), then tx_begin. Modulation starts with the oldest queued chunk
 	// (AIR_EV_TX_STARTED) and runs until the AIR_TX_LAST one. tx_queue is false when the queue is full; tx_space is the
 	// number of chunks it takes now. tx_end: no more will come: as AIR_TX_LAST on the newest queued chunk. tx_abort:
-	// stop at once, drop the queue; AIR_EV_TX_DONE follows
+	// stop at once and drop the queue. An active transmission reports AIR_EV_TX_DONE
 	bool (*tx_begin)(void);
 	bool (*tx_queue)(const air_tx_chunk_t *c);
 	uint8_t (*tx_space)(void);

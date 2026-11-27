@@ -32,6 +32,12 @@ An absent, empty or invalid record uses the fallback in 1.2. Readers ignore byte
 | Alphabet | `A`–`Z`, `0`–`9`, `-`, `/` and `.`. Readers fold `a`–`z` to upper case. A leading or internal space or any other character makes the record invalid. |
 | Write | Upper case, padded with 0x00 to 10 bytes. |
 
+On the radio, **Settings > My radio > M17 callsign** edits this field. The editor accepts the alphabet above, folds
+lower case, and refuses any other character without writing. An empty field clears the record. The write is a
+10-byte prefix (`CODEPLUG_KV_HEAD`): bytes after the first 10 stay. A callsign set through debug link operation 44
+is left in RAM until restart. After a successful write the radio applies its settings again, so an empty session
+callsign picks up the record or the fallback while the radio is idle. A failed write leaves the record as it was.
+
 ### 1.2 Without a valid callsign
 
 Use the radio name from **Settings > My radio**, or the codeplug's radio name if that setting is absent. Skip
@@ -104,7 +110,13 @@ The radio runs the channel at 12.5 kHz regardless of the base record's bandwidth
 
 ### 2.3 Writing from the radio
 
-The Codeplug Editor writes kind 6 channels. A writer for kind 6 on the radio is still pending.
+The Codeplug Editor writes kind 6 channels. On the radio, the channel editor's CAN, CAN squelch and Talk to rows
+write the same block for a channel whose mode is M17. CAN is 0–15. CAN squelch starts on. Talk to accepts the
+destination alphabet, including a space inside, and a blank or `ALL` is broadcast. OK on an address the alphabet
+rejects does not leave the editor. The save writes the safe base record (DMR, receive only, 12.5 kHz, no subtone)
+and then the live kind-6 tag with system `0xFF`. A tag already live for that channel is rewritten in place, so
+flag bits the editor does not use and any bytes after the 7-byte block stay. A rewrite that fails leaves the save
+failed. Copying the channel takes the source tag along, then rewrites the block.
 
 ## 3. On the radio
 
@@ -113,8 +125,8 @@ The Codeplug Editor writes kind 6 channels. A writer for kind 6 on the radio is 
 | Stored kind 6 | The channel's parameter block (2) | The radio-wide callsign (1) |
 | VFO in M17 | The M17 settings ([m17.md](m17.md) 10) | The radio-wide callsign (1) |
 
-The radio gives the CAN and squelch to the engine. Sending the CAN in the link setup frame and applying CAN
-squelch on receive are pending. [m17.md](m17.md) 3.5 lists the TYPE fields without their bit positions.
+The engine sends the channel's CAN in the link setup frame and uses the CAN squelch setting for receive
+delivery. See [M17 CAN behavior](m17.md#83-channel-access-number-can).
 
 ## 4. Sharing
 

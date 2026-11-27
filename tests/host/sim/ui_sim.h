@@ -10,6 +10,9 @@
 #include <stdbool.h>
 #include "radio/radio.h"
 
+#define SIM_M17_STORED_ECHO "m17 m17stored:3,ECHO"
+#define SIM_M17_MSG_SETUP "aprs:off m17 m17stored:3,ECHO m17txfit"
+
 // Display classes (information-architecture.md, wireframes) and key maps (7.1 - 7.5)
 typedef struct {
 	const char *name;	// "160x120i5", "160x128", "240x320i10x5", "128x64", "240x320"
@@ -73,6 +76,7 @@ void sim_worst(bool on);
 int sim_layout_issues(char out[][160], int max);
 bool sim_text_has_color(const char *text, uint16_t color);
 bool sim_text_bounds(const char *text, int *x, int *y, int *w, int *h);
+bool sim_text_on_line(const char *text, int y);
 
 // State for checks
 typedef struct {
@@ -92,6 +96,12 @@ typedef struct {
 	int32_t backlight_s;	// < 0: dims, never off
 	uint32_t long_press_ms;		// handed to the input layer (ui_svc_apply)
 	uint32_t shortened;		// texts gfx_text_fit shortened with an ellipsis
+	uint32_t m17_queued;		// M17 message sends accepted, not yet finished
+	uint32_t m17_done;		// M17 message sends that reached a result
+	uint8_t m17_pending;		// 1 while one is queued and not complete
+	char m17_dest[16];		// destination of the last queued M17 message
+	char m17_body[64];		// its body after display-to-UTF-8 conversion
+	char m17_via[8];		// "m17" once a message has been queued
 } sim_record_t;
 extern sim_record_t sim_rec;
 const radio_view_t *sim_view(void);

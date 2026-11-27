@@ -14,10 +14,15 @@
 #include "fmt.h"
 #include "text_edit.h"
 #include "codeplug/codeplug.h"
+#include "codeplug/codeplug_kv.h"
 #include "codeplug/codeplug_modes.h"
 #include "codeplug/codeplug_tag.h"
 #if CONFIG_P25
 #include "p25/p25_codeplug.h"
+#endif
+#if CONFIG_M17
+#include "m17/m17.h"
+#include "m17/m17_codeplug.h"
 #endif
 #include "dmr/dmrDataService.h"
 #include "config.h"
@@ -384,15 +389,35 @@ static const tr_id_t canned[] = { TRN(MSG_BODY_CANNED_OK, "OK"), TRN(MSG_BODY_CA
 	TRN(MSG_BODY_CANNED_CALL_ME, "Call me"), TRN(MSG_BODY_CANNED_CANT_TALK, "Can't talk now") };
 #define CANNED_N	(sizeof canned / sizeof canned[0])
 // The inbox body and composer cannot be on screen at the same time.
+#if CONFIG_M17_PACKET
+// Prefix fits the longest current translations, nine-byte call, maximum age and cut marker, plus NUL.
+static char message_buffer[UI_MSG_TEXT_MAX + 64];
+#else
 static char message_buffer[UI_MSG_TEXT_MAX + 48];
+#endif
 static char aprs_to[AX25_CALL_LEN + 4];
 static char aprs_compose_to[AX25_CALL_LEN + 4];
 static uint8_t aprs_message_flags;
 static bool aprs_composing;
+#if CONFIG_M17_PACKET
+// Destination and generation captured when compose or reply opens. The reply id is the
+// inbox entry's stable id, so a newer arrival cannot retarget the send.
+static bool m17_composing;
+static bool m17_detail_reply;
+static char m17_to[RADIO_M17_CALL_LEN];
+static char m17_dest_edit[RADIO_M17_CALL_LEN];
+static uint32_t m17_generation;
+static uint32_t m17_reply_id;
+static void m17_submit(const char *text);
+static void m17_dest_open(void);
+static void m17_reply_open(uint32_t id);
+static bool m17_tx_ready(void);
+static bool m17_context(uint32_t *generation);
+#endif
 #if CONFIG_APRS_AFSK
 static void ui_text_open_to(char *target, uint8_t max);
 #endif
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 static void ui_text_open_message(bool aprs);
 #endif
 static bool compose_aprs(void) { return aprs_composing; }
@@ -434,9 +459,11 @@ static void compose_item(uint16_t i, ui_item_t *it)
 	}
 }
 
+// One toast for DMR, APRS and M17 sends. A translation plus a callsign fits; it is not on the stack.
+static char sending_toast[40];
+
 static void send_text(const char *text, bool aprs, int reply_index)
 {
-	static char msg[40];
 	char name[24];
 	if (aprs) {
 		str_copy(name, sizeof name, aprs_to);
@@ -460,11 +487,11 @@ static void send_text(const char *text, bool aprs, int reply_index)
 		return;
 	}
 	sbuf_t b;
-	sb_init(&b, msg, sizeof msg);
+	sb_init(&b, sending_toast, sizeof sending_toast);
 	sb_str(&b, TR(TOAST_SENDING_TO, "Sending to "));
 	sb_str(&b, name);
 	ui_go_home();
-	ui_toast(msg);
+	ui_toast(sending_toast);
 }
 
 static void compose_select(uint16_t i, bool hold)
@@ -480,11 +507,23 @@ static void compose_select(uint16_t i, bool hold)
 		i--;
 	}
 	if (i < CANNED_N) {
+#if CONFIG_M17_PACKET
+		if (m17_composing) {
+			m17_submit(tr(canned[i]));
+			return;
+		}
+#endif
 		bool aprs = compose_aprs();
 		send_text(tr(canned[i]), aprs, -1);
 	}
 	else if (i == CANNED_N) {
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_M17_PACKET
+		if (m17_composing) {
+			ui_text_open_message(false);
+			return;
+		}
+#endif
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 		ui_text_open_message(compose_aprs());
 	#endif
 	} else if (compose_aprs()) {
@@ -495,6 +534,10 @@ static void compose_select(uint16_t i, bool hold)
 static const char *compose_title(void)
 {
 	static char t[32];
+#if CONFIG_M17_PACKET
+	if (m17_composing)
+		return m17_to[0] != '\0' ? m17_to : TR(QUICK_VALUE_ALL, "All");
+#endif
 	if (compose_aprs())
 		str_copy(t, sizeof t, aprs_to[0] ? aprs_to : TR(TEXT_TITLE_CALLSIGN, "Callsign"));
 	else
@@ -505,6 +548,11 @@ static const char *compose_title(void)
 static void compose_enter(void)
 {
 	aprs_composing = ui_frame()->arg == 1u;
+#if CONFIG_M17_PACKET
+	m17_composing = ui_frame()->arg == 2u;
+	if (!m17_composing)
+		m17_reply_id = 0;
+#endif
 	str_copy(aprs_to, sizeof aprs_to, compose_aprs() ? aprs_compose_to : "");
 	aprs_compose_to[0] = 0;
 	aprs_message_flags = APRS_MSG_ACK;
@@ -741,117 +789,178 @@ static bool aprs_new_available(void)
 #endif
 }
 
-static uint16_t msgs_count(void)
+#if CONFIG_M17_PACKET
+#define MSG_SCRATCH_DECL ui_msg_t *scratch = &ui_message_scratch
+#else
+#define MSG_SCRATCH_DECL ui_msg_t local_message; ui_msg_t *scratch = &local_message
+#endif
+
+enum { MSG_DMR, MSG_APRS, MSG_M17 };
+
+static uint16_t m17_count(void)
 {
-	return ui_svc_msg_count() + ui_svc_aprs_msg_count() + (aprs_new_available() ? 1u : 0u);
+#if CONFIG_M17_PACKET
+	ui_m17_msg_summary_t summary;
+	ui_svc_m17_msg_summary(&summary);
+	return summary.count;
+#else
+	return 0;
+#endif
 }
 
-// Both inboxes are newest first. Merge their small RAM lists by age for the shared Messages screen.
-static bool msg_row(uint16_t row, bool *aprs, uint16_t *index)
+static bool m17_new_available(void)
 {
-	uint16_t d = 0, a = 0;
-	uint16_t nd = ui_svc_msg_count(), na = ui_svc_aprs_msg_count();
-	if (row >= nd + na)
+#if CONFIG_M17_PACKET
+	return m17_tx_ready();
+#else
+	return false;
+#endif
+}
+
+static uint16_t msgs_received(void)
+{
+	return (uint16_t)(ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count());
+}
+
+static uint16_t msgs_count(void)
+{
+	return (uint16_t)(msgs_received() + (aprs_new_available() ? 1u : 0u) + (m17_new_available() ? 1u : 0u));
+}
+
+static bool msgs_new_m17(uint16_t i)
+{
+	return m17_new_available() && i == (uint16_t)(msgs_received() + (aprs_new_available() ? 1u : 0u));
+}
+
+// Strictly younger wins: DMR precedes APRS on a tie, then M17.
+static bool msg_row(uint16_t row, uint8_t *via, uint16_t *index, uint32_t *id)
+{
+	MSG_SCRATCH_DECL;
+	uint16_t d = 0, a = 0, m = 0;
+	uint16_t nd = ui_svc_msg_count(), na = ui_svc_aprs_msg_count(), nm = m17_count();
+	if (row >= nd + na + nm)
 		return false;
 	for (uint16_t n = 0; n <= row; n++) {
-		bool take_aprs = d == nd;
-		if (!take_aprs && a < na) {
-			// One message at a time: both copies at once put this list on the UI task's deepest chain
-			uint32_t dmr_age;
-			{
-				ui_msg_t dm;
-				if (!ui_svc_msg_get(d, &dm))
-					return false;
-				dmr_age = dm.age_ms;
-			}
-			aprs_msg_t am;
-			if (!ui_svc_aprs_msg((uint8_t)a, &am, false))
-				return false;
-			take_aprs = ui_st.now_ms - am.ms < dmr_age;
+		uint32_t age = UINT32_MAX, mid = 0;
+		uint8_t choice = MSG_DMR;
+		bool found = false;
+		if (d < nd) {
+			if (!ui_svc_msg_get(d, scratch)) return false;
+			age = scratch->age_ms;
+			found = true;
 		}
-		*aprs = take_aprs;
-		*index = take_aprs ? a++ : d++;
+		if (a < na) {
+			aprs_msg_t am;
+			if (!ui_svc_aprs_msg((uint8_t)a, &am, false)) return false;
+			uint32_t aa = ui_st.now_ms - am.ms;
+			if (!found || aa < age) { choice = MSG_APRS; age = aa; found = true; }
+		}
+		if (m < nm) {
+			if (!ui_svc_m17_msg_get_at(m, &mid, scratch)) return false;
+			if (!found || scratch->age_ms < age) choice = MSG_M17;
+		}
+		*via = choice;
+		*id = choice == MSG_M17 ? mid : 0;
+		*index = choice == MSG_DMR ? d++ : choice == MSG_APRS ? a++ : m++;
 	}
 	return true;
 }
 
 static void msgs_item(uint16_t i, ui_item_t *it)
 {
-	uint16_t dmr_count = ui_svc_msg_count();
-	uint16_t aprs_count = ui_svc_aprs_msg_count();
-	if (aprs_new_available() && i == dmr_count + aprs_count) {
+	if (aprs_new_available() && i == msgs_received()) {
 		str_copy(it->label, sizeof it->label, TR(MSG_ROW_NEW_APRS, "New APRS message"));
 		return;
 	}
-	bool aprs;
-	uint16_t index;
-	if (!msg_row(i, &aprs, &index))
-		return;
-	if (aprs) {
-		aprs_msg_t m;
-		if (!ui_svc_aprs_msg((uint8_t)index, &m, false))
-			return;
-		sbuf_t b;
-		sb_init(&b, it->label, sizeof it->label);
-		sb_str(&b, m.from);
-		sb_str(&b, ": ");
-		sb_str(&b, m.text);
-		ui_sb_age(it->value, sizeof it->value, ui_st.now_ms - m.ms);
-		it->flags |= UI_ITEM_PREVIEW;
-		if (!m.read)
-			it->flags |= UI_ITEM_WARN;
+	if (msgs_new_m17(i)) {
+		str_copy(it->label, sizeof it->label, TR(MSG_ROW_NEW_M17, "New M17 message"));
 		return;
 	}
-	ui_msg_t m;
-	if (!ui_svc_msg_get(index, &m))
+	uint8_t via;
+	uint16_t index;
+	uint32_t id;
+	if (!msg_row(i, &via, &index, &id)) return;
+	if (via == MSG_APRS) {
+		aprs_msg_t m;
+		if (!ui_svc_aprs_msg((uint8_t)index, &m, false)) return;
+		sbuf_t b;
+		sb_init(&b, it->label, sizeof it->label);
+		sb_str(&b, m.from); sb_str(&b, ": "); sb_str(&b, m.text);
+		ui_sb_age(it->value, sizeof it->value, ui_st.now_ms - m.ms);
+		it->flags |= UI_ITEM_PREVIEW;
+		if (!m.read) it->flags |= UI_ITEM_WARN;
 		return;
+	}
+	MSG_SCRATCH_DECL;
+	ui_msg_t *m = scratch;
+	if (!(via == MSG_M17 ? ui_svc_m17_msg_get(id, m) : ui_svc_msg_get(index, m))) return;
 	sbuf_t b;
 	sb_init(&b, it->label, sizeof it->label);
-	if (m.sent)
-		sb_str(&b, GLYPH_ARROW);
-	if (m.name[0])
-		sb_str(&b, m.name);
+	if (m->sent) sb_str(&b, GLYPH_ARROW);
+#if CONFIG_M17_PACKET
+	if (via == MSG_M17)
+		sb_str(&b, m->call);
 	else
-		sb_u32(&b, m.src, 1);
-	sb_str(&b, ": ");
-	sb_str(&b, m.text);
-	ui_sb_age(it->value, sizeof it->value, m.age_ms);
-	it->flags |= UI_ITEM_PREVIEW;	// the start of the message: cut at its end
-	if (m.unread)
-		it->flags |= UI_ITEM_WARN;
+#endif
+	if (m->name[0])
+		sb_str(&b, m->name);
+	else
+		sb_u32(&b, m->src, 1);
+	sb_str(&b, ": "); sb_str(&b, m->text);
+	ui_sb_age(it->value, sizeof it->value, m->age_ms);
+	it->flags |= UI_ITEM_PREVIEW;
+	if (m->unread) it->flags |= UI_ITEM_WARN;
 }
 
 static void msgs_select(uint16_t i, bool hold)
 {
 	(void)hold;
-	if (aprs_new_available() && i == ui_svc_msg_count() + ui_svc_aprs_msg_count())
+	if (aprs_new_available() && i == msgs_received()) {
 		ui_aprs_compose("");
-	else {
-		bool aprs;
-		uint16_t index;
-		if (msg_row(i, &aprs, &index))
-			ui_push(SCR_MESSAGE, aprs ? (uint16_t)(MSG_APRS_ARG | index) : index);
+		return;
 	}
+	if (msgs_new_m17(i)) {
+#if CONFIG_M17_PACKET
+		m17_dest_open();
+#endif
+		return;
+	}
+	uint8_t via;
+	uint16_t index;
+	uint32_t id;
+	if (!msg_row(i, &via, &index, &id)) return;
+#if CONFIG_M17_PACKET
+	if (via == MSG_M17) { ui_push_m17_message(SCR_MESSAGE, 0, id); return; }
+#endif
+	ui_push(SCR_MESSAGE, via == MSG_APRS ? (uint16_t)(MSG_APRS_ARG | index) : index);
 }
 
 static void msg_target_of(uint16_t i, ui_target_t *t)
 {
-	ui_msg_t m;
+	MSG_SCRATCH_DECL;
+	ui_msg_t *m = scratch;
 	memset(t, 0, sizeof *t);
-	if (ui_svc_msg_get(i, &m)) {
-		t->id = m.src;
-		strcpy(t->name, m.name);
-		t->saved = m.name[0] != 0;
+	if (ui_svc_msg_get(i, m)) {
+		t->id = m->src;
+		strcpy(t->name, m->name);
+		t->saved = m->name[0] != 0;
 	}
 }
 
 static void msgs_context(uint16_t i)
 {
-	bool aprs;
+	uint8_t via;
 	uint16_t index;
-	if (!msg_row(i, &aprs, &index))
+	uint32_t id;
+	if (!msg_row(i, &via, &index, &id))
 		return;
-	if (aprs) {
+	if (via == MSG_M17) {
+#if CONFIG_M17_PACKET
+		m17_reply_open(id);
+#endif
+		return;
+	}
+	if (via == MSG_APRS) {
 		aprs_msg_t m;
 		if (ui_svc_aprs_msg((uint8_t)index, &m, false))
 			ui_aprs_compose(m.from);
@@ -873,7 +982,16 @@ static const ui_scr_def_t messages_screen = {
 // first, which shows all of it on a page of its own
 
 enum { MV_READ, MV_REPLY_OK, MV_REPLY_WAY, MV_CALL, MV_DELETE, MV_COUNT };
+#define MV_WRITE	MV_COUNT	// M17 free-text reply; not one of the DMR rows
 
+static uint32_t message_m17_id(void)
+{
+#if CONFIG_M17_PACKET
+	return ui_frame()->m17_msg_id;
+#else
+	return 0;
+#endif
+}
 static bool message_aprs(void) { return (ui_frame()->arg & MSG_APRS_ARG) != 0; }
 static uint16_t message_index(void) { return MSG_INDEX(ui_frame()->arg); }
 static uint8_t message_aprs_index(void) { return (uint8_t)message_index(); }
@@ -885,12 +1003,29 @@ static const char *msg_body(void);
 // decided at each draw, a row would appear or go when "9m ago" became "10m ago", and OK on Call could land on Delete
 static uint8_t msg_action(uint16_t i)
 {
+#if CONFIG_M17_PACKET
+	if (message_m17_id()) {
+		bool full = (ui_frame()->arg & MSG_LONG_ARG) != 0;
+		static const uint8_t reply[] = { MV_REPLY_OK, MV_REPLY_WAY, MV_WRITE, MV_DELETE };
+		if (!m17_detail_reply)
+			return full && i == 0 ? (uint8_t)MV_READ : (uint8_t)MV_DELETE;
+		if (full && i == 0)
+			return MV_READ;
+		i = (uint16_t)(i - (full ? 1u : 0u));
+		return i < 4 ? reply[i] : (uint8_t)MV_DELETE;
+	}
+#else
+	if (message_m17_id())
+		return (ui_frame()->arg & MSG_LONG_ARG) && i == 0 ? MV_READ : MV_DELETE;
+#endif
 	return (uint8_t)(i + ((ui_frame()->arg & MSG_LONG_ARG) ? MV_READ : MV_REPLY_OK));
 }
 
 static void msg_enter(void)
 {
-	if (message_aprs()) {
+	if (message_m17_id()) {
+		(void)ui_svc_m17_msg_read(message_m17_id());
+	} else if (message_aprs()) {
 		aprs_msg_t m;
 		(void)ui_svc_aprs_msg(message_aprs_index(), &m, true);
 	} else {
@@ -902,11 +1037,37 @@ static void msg_enter(void)
 	l.name = msg_title();
 	l.body = msg_body();
 	l.count = MV_COUNT;
-	if (!ui_list_body_fits(&ui_st, &l))
+	bool full = !ui_list_body_fits(&ui_st, &l);
+#if CONFIG_M17_PACKET
+	if (message_m17_id() && ui_svc_m17_msg_get(message_m17_id(), &ui_message_scratch) &&
+	    ui_message_scratch.cut)
+		full = true;
+#endif
+	if (full)
 		ui_frame()->arg |= MSG_LONG_ARG;
+#if CONFIG_M17_PACKET
+	m17_detail_reply = false;
+	if (message_m17_id())
+		m17_reply_id = 0;
+	if (message_m17_id() && m17_tx_ready()) {
+		m17_detail_reply = true;
+		m17_reply_id = message_m17_id();
+		(void)m17_context(&m17_generation);
+		if (ui_svc_m17_msg_get(m17_reply_id, &ui_message_scratch))
+			str_copy(m17_to, sizeof m17_to, ui_message_scratch.call);
+	}
+#endif
 }
 
-static uint16_t msg_count(void) { return (uint16_t)(MV_COUNT - msg_action(0)); }
+static uint16_t msg_count(void)
+{
+#if CONFIG_M17_PACKET
+	if (message_m17_id())
+		return (uint16_t)((m17_detail_reply ? 4u : 1u) + ((ui_frame()->arg & MSG_LONG_ARG) ? 1u : 0u));
+#endif
+	return message_m17_id() ? (uint16_t)(1 + !!(ui_frame()->arg & MSG_LONG_ARG)) :
+		(uint16_t)(MV_COUNT - msg_action(0));
+}
 
 static void msg_item(uint16_t i, ui_item_t *it)
 {
@@ -914,8 +1075,12 @@ static void msg_item(uint16_t i, ui_item_t *it)
 		TRN(MSG_ROW_REPLY_OK, "Reply \"OK\""), TRN(MSG_ROW_REPLY_ON_MY_WAY, "Reply \"On my way\""),
 		TRN(MSG_ROW_CALL, "Call"), TRN(MSG_ROW_DELETE, "Delete") };
 	uint8_t a = msg_action(i);
-	str_copy(it->label, sizeof it->label, tr(names[a]));
-	if ((a == MV_REPLY_OK || a == MV_REPLY_WAY) && !message_aprs() && !(feats() & UI_FEAT_SMS))
+	if (a == MV_WRITE)
+		str_copy(it->label, sizeof it->label, TR(MSG_ROW_WRITE, "Write..."));
+	else
+		str_copy(it->label, sizeof it->label, tr(names[a]));
+	if ((a == MV_REPLY_OK || a == MV_REPLY_WAY) && !message_aprs() && !message_m17_id() &&
+	    !(feats() & UI_FEAT_SMS))
 		it->flags |= UI_ITEM_DIM;
 	if (a == MV_CALL && message_aprs())
 		it->flags |= UI_ITEM_DIM;
@@ -926,11 +1091,28 @@ static void msg_select(uint16_t i, bool hold)
 	(void)hold;
 	uint8_t a = msg_action(i);
 	if (a == MV_READ) {
+		#if CONFIG_M17_PACKET
+		if (message_m17_id()) {
+			ui_push_m17_message(SCR_MESSAGE_READ, ui_frame()->arg, message_m17_id());
+			return;
+		}
+#endif
 		ui_push(SCR_MESSAGE_READ, ui_frame()->arg);
 		return;
 	}
+#if CONFIG_M17_PACKET
+	if (message_m17_id() && (a == MV_REPLY_OK || a == MV_REPLY_WAY || a == MV_WRITE)) {
+		if (a == MV_WRITE) {
+			m17_composing = true;
+			ui_text_open_message(false);
+		} else {
+			m17_submit(tr(a == MV_REPLY_OK ? canned[0] : canned[1]));
+		}
+		return;
+	}
+#endif
 	i = a;
-	if (!message_aprs())
+	if (!message_aprs() && !message_m17_id())
 		msg_target_of(message_index(), &ui_target);
 	switch (i) {
 	case MV_REPLY_OK:
@@ -951,7 +1133,8 @@ static void msg_select(uint16_t i, bool hold)
 			ui_talk(&ui_target, false);
 		break;
 	case MV_DELETE:
-		if (message_aprs() ? ui_svc_aprs_msg_delete(message_aprs_index()) :
+		if (message_m17_id() ? ui_svc_m17_msg_delete(message_m17_id()) :
+		    message_aprs() ? ui_svc_aprs_msg_delete(message_aprs_index()) :
 		    ui_svc_msg_delete(message_index())) {
 			ui_pop();
 			ui_toast(TR(MSG_TOAST_DELETED, "Message deleted"));
@@ -967,7 +1150,7 @@ static void msg_select(uint16_t i, bool hold)
 static bool msg_target(uint16_t i, ui_target_t *t)
 {
 	(void)i;
-	if (message_aprs())
+	if (message_aprs() || message_m17_id())
 		return false;
 	msg_target_of(message_index(), t);
 	return t->id != 0;
@@ -976,6 +1159,12 @@ static bool msg_target(uint16_t i, ui_target_t *t)
 static void msg_context(uint16_t i)
 {
 	(void)i;
+	if (message_m17_id()) {
+#if CONFIG_M17_PACKET
+		m17_reply_open(message_m17_id());
+#endif
+		return;
+	}
 	if (message_aprs()) {
 		aprs_msg_t m;
 		if (ui_svc_aprs_msg(message_aprs_index(), &m, false))
@@ -993,13 +1182,17 @@ static const char *msg_title(void)
 	sbuf_t b;
 	sb_init(&b, t, sizeof t);
 	uint16_t row = 0, index;
-	bool aprs;
-	while (msg_row(row, &aprs, &index) &&
-	       (aprs != message_aprs() || index != message_index()))
+	uint8_t via;
+	uint32_t id;
+	while (msg_row(row, &via, &index, &id) &&
+	       (message_m17_id() ? via != MSG_M17 || id != message_m17_id() :
+	        via != (message_aprs() ? MSG_APRS : MSG_DMR) || index != message_index()))
 		row++;
+	uint16_t total = ui_svc_msg_count() + ui_svc_aprs_msg_count() + m17_count();
+	if (row >= total) return TR(MSG_TOAST_DELETED, "Message deleted");
 	sb_u32(&b, row + 1u, 1);
 	sb_str(&b, TR(PART_OF, " of "));
-	sb_u32(&b, ui_svc_msg_count() + ui_svc_aprs_msg_count(), 1);
+	sb_u32(&b, total, 1);
 	return t;
 }
 
@@ -1019,27 +1212,48 @@ static const char *msg_body(void)
 		sb_str(&b, m.text);
 		return message_buffer;
 	}
-	ui_msg_t m;
-	if (!ui_svc_msg_get(message_index(), &m))
+	MSG_SCRATCH_DECL;
+	ui_msg_t *m = scratch;
+	if (!(message_m17_id() ? ui_svc_m17_msg_get(message_m17_id(), m) : ui_svc_msg_get(message_index(), m)))
 		return TR(MSG_TOAST_DELETED, "Message deleted");
-	// "From Joe Smith, 2m ago" (the ID where there is no name; # gives the station's actions), then the text
 	sbuf_t b;
 	sb_init(&b, message_buffer, sizeof message_buffer);
-	sb_str(&b, m.sent ? TR(MSG_BODY_TO, "To ") : TR(MSG_BODY_FROM, "From "));
-	if (m.name[0])
-		sb_str(&b, m.name);
+	sb_str(&b, m->sent ? TR(MSG_BODY_TO, "To ") : TR(MSG_BODY_FROM, "From "));
+#if CONFIG_M17_PACKET
+	if (message_m17_id())
+		sb_str(&b, m->call);
 	else
-		sb_u32(&b, m.src, 1);
+#endif
+	if (m->name[0])
+		sb_str(&b, m->name);
+	else
+		sb_u32(&b, m->src, 1);
 	sb_str(&b, ", ");
-	sb_age_long(&b, m.age_ms);
+	sb_age_long(&b, m->age_ms);
 	sb_chr(&b, '\n');
-	sb_str(&b, m.text);
+#if CONFIG_M17_PACKET
+	if (message_m17_id() && m->cut) {
+		sb_str(&b, TR(MSG_M17_BODY_STORED_CUT, "[Stored text truncated]"));
+		sb_chr(&b, '\n');
+	}
+#endif
+	sb_str(&b, m->text);
 	return message_buffer;
 }
 
+static const char *msg_hint(void)
+{
+#if CONFIG_M17_PACKET
+	if (message_m17_id() && !m17_detail_reply)
+		return TR(HINT_OK_CHOOSE_BACK, "OK choose  Back");
+#endif
+	return message_m17_id() ? TR(HINT_OK_CHOOSE_MORE_BACK, "OK choose  # more  Back") :
+		TR(HINT_OK_CHOOSE_MORE_BACK, "OK choose  # more  Back");
+}
+
 static const ui_scr_def_t message_screen = {
-	.name = "message", .flags = SF_LIST | SF_FIELD, .prefix = TRN(WORD_MESSAGE, "Message"),
-	.hint = TRN(HINT_OK_CHOOSE_MORE_BACK, "OK choose  # more  Back"),
+	.name = "message", .flags = SF_LIST | SF_FIELD | SF_HINT_FN, .prefix = TRN(WORD_MESSAGE, "Message"),
+	.hint_fn = msg_hint,
 	.count = msg_count, .item = msg_item, .select = msg_select, .context = msg_context, .target = msg_target,
 	.title = msg_title, .body = msg_body, .enter = msg_enter,
 };
@@ -1306,6 +1520,12 @@ static bool ced_is_p25(const channel_t *ch)
 }
 
 #if CONFIG_CHANNEL_LIST
+// Whether ch is a stored M17 channel (the channel editor's only callers are under the channel list)
+static bool ced_is_m17(const channel_t *ch)
+{
+	return CONFIG_M17 && ch->kind == CODEPLUG_KIND_M17;
+}
+
 // The same for NXDN
 static bool ced_is_nxdn(const channel_t *ch)
 {
@@ -2095,7 +2315,7 @@ uint8_t ui_menus_zones_moved(ui_frame_t *stack, uint8_t sp, uint32_t from, uint3
 }
 #endif
 
-#if CONFIG_CHANNEL_EDIT || CONFIG_APRS_AFSK || CONFIG_DMR_SMS || CONFIG_SATELLITE_TLE
+#if CONFIG_CHANNEL_EDIT || CONFIG_APRS_AFSK || CONFIG_DMR_SMS || CONFIG_SATELLITE_TLE || CONFIG_M17
 // ======================= Text entry: keypad letters (ui.md 2.1) =======================
 // Phone keypad: in ABC / abc, 2-9 cycle their letters, the digit, then the letters in the other case (ABC: A B C 2 a b
 // c); 1 cycles punctuation and 0 a space, 0 and a few signs. The same key within 1 s takes the next one, another key
@@ -2124,8 +2344,25 @@ enum { TEXT_NAME, TEXT_MESSAGE, TEXT_CALLSIGN,
 #if CONFIG_SATELLITE_TLE
 	TEXT_SATELLITE,
 #endif
+#if CONFIG_M17
+	TEXT_M17,
+	TEXT_M17_DST,
+#if CONFIG_M17_PACKET
+	TEXT_M17_MSG,
+#endif
+#endif
 	TEXT_PREFIXES };
 static uint8_t text_prefix;
+#if CONFIG_M17
+enum { TEXT_PROFILE_FREE, TEXT_PROFILE_M17_CALL, TEXT_PROFILE_M17_DST };
+static uint8_t text_profile;
+#endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+static char m17_edit[10];
+static char m17_shown[10];
+static uint8_t m17_kv_at;
+static bool m17_pending;
+#endif
 
 static void text_open(char *target, uint8_t max, uint8_t screen)
 {
@@ -2147,14 +2384,187 @@ static void text_open(char *target, uint8_t max, uint8_t screen)
 	if (screen == SCR_SATELLITE_TEXT)
 		text_prefix = TEXT_SATELLITE;
 #endif
+#if CONFIG_M17
+	text_profile = TEXT_PROFILE_FREE;
+#if CONFIG_UI_SETTINGS
+	if (screen == SCR_M17_CALL) {
+		text_prefix = TEXT_M17;
+		text_profile = TEXT_PROFILE_M17_CALL;
+		text_max = max;
+	}
+#endif
+	if (screen == SCR_M17_CHAN_DST || screen == SCR_M17_TALK_TO_OTHER) {
+		text_prefix = TEXT_M17_DST;
+		text_profile = TEXT_PROFILE_M17_DST;
+		text_max = max;
+	}
+#if CONFIG_M17_PACKET
+	if (screen == SCR_M17_MESSAGE_TO) {
+		text_prefix = TEXT_M17_MSG;
+		text_profile = TEXT_PROFILE_M17_DST;
+		text_max = max;
+	}
+#endif
+#endif
 	ui_push(screen, 0);
 }
 
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_M17_PACKET
+static bool m17_context(uint32_t *generation)
+{
+	const radio_view_t *v = ui_view();
+	const radio_m17_selected_t *sel = ui_m17_selected(v);
+	if (sel == NULL || (feats() & UI_FEAT_M17_PACKET) == 0)
+		return false;
+	if (generation != NULL)
+		*generation = sel->generation;
+	return true;
+}
+
+static bool m17_tx_ready(void)
+{
+	const radio_view_t *v = ui_view();
+	return m17_context(NULL) && !v->ch.rx_only && (v->m17.fit & AIR_FIT_TX) != 0;
+}
+
+static const char *m17_block_reason(void)
+{
+	const radio_view_t *v = ui_view();
+	char call[RADIO_M17_CALL_LEN];
+	if (!m17_context(NULL))
+		return TR(MSG_M17_TOAST_UNAVAILABLE, "M17 message: not available");
+	if (v->ch.rx_only)
+		return TR(DENY_WHY_RX_ONLY, "This channel is RX only");
+	if ((v->m17.fit & AIR_FIT_TX) == 0)
+		return TR(M17_DENY_RX_ONLY, "M17: receive only");
+	if (!ui_svc_m17_call_show(call, NULL))
+		return TR(M17_DENY_CALLSIGN, "M17: set your callsign");
+	return NULL;
+}
+
+static bool m17_generation_ok(void)
+{
+	uint32_t gen = 0;
+	if (!m17_context(&gen) || gen != m17_generation) {
+		ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed"));
+		return false;
+	}
+	return true;
+}
+
+static void m17_submit(const char *text)
+{
+	uint64_t dst = 0;
+	const char *why;
+	char dest[RADIO_M17_CALL_LEN];
+	sbuf_t b;
+
+	if (text == NULL || text[0] == '\0')
+		return;
+	if (m17_reply_id != 0) {
+		if (!ui_svc_m17_msg_get(m17_reply_id, &ui_message_scratch) || ui_message_scratch.call[0] == '\0') {
+			ui_toast(TR(MSG_TOAST_DELETED, "Message deleted"));
+			return;
+		}
+		str_copy(m17_to, sizeof m17_to, ui_message_scratch.call);
+	}
+	if (!m17_generation_ok())
+		return;
+	why = m17_block_reason();
+	if (why != NULL) {
+		ui_toast(why);
+		return;
+	}
+	str_copy(dest, sizeof dest, m17_to);
+	if (!m17_dst_parse(dest, &dst)) {
+		ui_toast(TR(M17_TOAST_DST, "Not an M17 address"));
+		return;
+	}
+	// A reply goes to the verified source, never to broadcast.
+	if (m17_reply_id != 0 && dst == M17_ADDR_BROADCAST) {
+		ui_toast(TR(MSG_M17_TOAST_UNAVAILABLE, "M17 message: not available"));
+		return;
+	}
+	if (!ui_svc_m17_msg_send(dst == M17_ADDR_BROADCAST ? "ALL" : dest, text)) {
+		ui_toast(TR(MSG_M17_RESULT_BUSY, "Channel busy: try again"));
+		return;
+	}
+	sb_init(&b, sending_toast, sizeof sending_toast);
+	sb_str(&b, TR(TOAST_SENDING_TO, "Sending to "));
+	sb_str(&b, dst == M17_ADDR_BROADCAST ? TR(QUICK_VALUE_ALL, "All") : dest);
+	ui_go_home();
+	ui_toast(sending_toast);
+}
+
+static void m17_compose_open(const char *dest, uint32_t generation, uint32_t reply_id)
+{
+	str_copy(m17_to, sizeof m17_to, dest != NULL ? dest : "");
+	m17_generation = generation;
+	m17_reply_id = reply_id;
+	ui_push(SCR_COMPOSE, 2);
+}
+
+static void m17_dest_kept(void)
+{
+	uint32_t gen = 0;
+	if (!m17_context(&gen) || gen != m17_generation) {
+		ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed"));
+		return;
+	}
+	m17_compose_open(m17_dest_edit, gen, 0);
+}
+
+static void m17_dest_open(void)
+{
+	const radio_m17_selected_t *sel;
+	char tmp[RADIO_M17_CALL_LEN];
+	const char *shown;
+	const char *why;
+
+	if (!m17_tx_ready()) {
+		why = m17_block_reason();
+		ui_toast(why != NULL ? why : TR(MSG_M17_TOAST_UNAVAILABLE, "M17 message: not available"));
+		return;
+	}
+	if (!m17_context(&m17_generation))
+		return;
+	sel = ui_m17_selected(ui_view());
+	shown = sel != NULL ? ui_m17_destination(sel->base_dst, tmp) : "";
+	str_copy(m17_dest_edit, sizeof m17_dest_edit, shown != NULL ? shown : "");
+	text_open(m17_dest_edit, M17_ADDR_CHARS_MAX, SCR_M17_MESSAGE_TO);
+	text_done = m17_dest_kept;
+}
+
+static void m17_reply_open(uint32_t id)
+{
+	uint32_t gen = 0;
+	const char *why;
+
+	if (!ui_svc_m17_msg_get(id, &ui_message_scratch) || ui_message_scratch.call[0] == '\0') {
+		ui_toast(TR(MSG_TOAST_DELETED, "Message deleted"));
+		return;
+	}
+	why = m17_block_reason();
+	if (why != NULL || !m17_context(&gen)) {
+		ui_toast(why != NULL ? why : TR(MSG_M17_TOAST_UNAVAILABLE, "M17 message: not available"));
+		return;
+	}
+	m17_compose_open(ui_message_scratch.call, gen, id);
+}
+#endif
+
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 static void message_text_kept(void)
 {
-	if (message_buffer[0] != '\0')
-		send_text(message_buffer, compose_aprs(), -1);
+	if (message_buffer[0] == '\0')
+		return;
+#if CONFIG_M17_PACKET
+	if (m17_composing) {
+		m17_submit(message_buffer);
+		return;
+	}
+#endif
+	send_text(message_buffer, compose_aprs(), -1);
 }
 
 static void ui_text_open_message(bool aprs)
@@ -2178,6 +2588,35 @@ void ui_menus_satellite_text(char *target, uint8_t line, void (*done)(void))
 #endif
 #if CONFIG_APRS_AFSK
 static void ui_text_open_to(char *target, uint8_t max) { text_open(target, max, SCR_APRS_TO); }
+#endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+static void m17_call_kept(void)
+{
+	m17_kv_at = codeplug_kv_serial();
+	strncpy(m17_shown, m17_edit, sizeof m17_shown - 1u);
+	m17_shown[sizeof m17_shown - 1u] = '\0';
+	m17_pending = true;
+	if (!ui_svc_m17_call_set(m17_edit)) {
+		m17_pending = false;
+		ui_toast(TR(TOAST_SAVE_FAILED, "Couldn't save: try again"));
+		return;
+	}
+	ui_toast(TR(TOAST_SAVED, "Saved"));
+}
+
+static void m17_call_open(void)
+{
+	char shown[10];
+	bool stored = false;
+
+	m17_edit[0] = '\0';
+	if (ui_svc_m17_call_show(shown, &stored) && stored) {
+		strncpy(m17_edit, shown, sizeof m17_edit - 1u);
+		m17_edit[sizeof m17_edit - 1u] = '\0';
+	}
+	text_open(m17_edit, 9, SCR_M17_CALL);
+	text_done = m17_call_kept;
+}
 #endif
 
 static void text_enter(void)
@@ -2223,14 +2662,93 @@ static void text_append(char c)
 	text_buf[text_len] = 0;
 }
 
+#if CONFIG_M17
+// Callsign: A-Z, 0-9, - / . Fold a-z. A destination also allows a space inside.
+static bool text_m17_ok(char c)
+{
+	if (c >= 'a' && c <= 'z')
+		c = (char)(c - 'a' + 'A');
+	if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '/' || c == '.')
+		return true;
+	return text_profile == TEXT_PROFILE_M17_DST && c == ' ';
+}
+
+static char text_m17_fold(char c)
+{
+	return c >= 'a' && c <= 'z' ? (char)(c - 'a' + 'A') : c;
+}
+
+static bool text_m17_commit(void)
+{
+	for (uint8_t i = 0; i < text_len; i++) {
+		char c = text_m17_fold(text_buf[i]);
+		if (!text_m17_ok(c))
+			return false;
+		text_buf[i] = c;
+	}
+	return true;
+}
+
+static void text_m17_step(int dir)
+{
+	static const char alpha_call[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/.";
+	static const char alpha_dst[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/. ";
+	const char *alpha = text_profile == TEXT_PROFILE_M17_DST ? alpha_dst : alpha_call;
+	size_t n = strlen(alpha);
+
+	if (text_len == 0) {
+		text_append(alpha[0]);
+		return;
+	}
+	char c = text_m17_fold(text_buf[text_len - 1]);
+	const char *p = strchr(alpha, c);
+	if (p == NULL) {
+		text_buf[text_len - 1] = alpha[0];
+		return;
+	}
+	size_t i = (size_t)(p - alpha);
+	if (dir < 0 && i == 0) {
+		text_buf[--text_len] = 0;
+		return;
+	}
+	i = (i + (dir > 0 ? 1u : n - 1u)) % n;
+	text_buf[text_len - 1] = alpha[i];
+}
+
+// Insert c, or replace the last character. A character the profile refuses is left out and said so.
+static bool text_m17_take(char c, bool replace)
+{
+	c = text_m17_fold(c);
+	if (!text_m17_ok(c)) {
+		ui_toast(TR(M17_TOAST_CHAR, "Letters, digits and - / ."));
+		return false;
+	}
+	if (replace) {
+		if (text_len == 0)
+			return false;
+		text_buf[text_len - 1] = c;
+		return true;
+	}
+	text_append(c);
+	return true;
+}
+#endif
+
 static void text_draw(void)
 {
 	static const tr_id_t prefixes[TEXT_PREFIXES] = { TRN(LABEL_NAME, "Name"), TRN(WORD_MESSAGE, "Message"),
+		TRN(TEXT_TITLE_CALLSIGN, "Callsign"),
 #if CONFIG_SATELLITE_TLE
-		TRN(TEXT_TITLE_CALLSIGN, "Callsign"), TRN(SATELLITE_2, "Satellite") };
-#else
-		TRN(TEXT_TITLE_CALLSIGN, "Callsign") };
+		TRN(SATELLITE_2, "Satellite"),
 #endif
+#if CONFIG_M17
+		TRN(M17_LABEL_CALLSIGN, TEXT_ALT_OPEN "M17 callsign" TEXT_ALT_NEXT "M17 call" TEXT_ALT_CLOSE),
+		TRN(M17_LABEL_TALK_TO, "Talk to"),
+#if CONFIG_M17_PACKET
+		TRN(MSG_TITLE_TO, "To"),
+#endif
+#endif
+	};
 	static const char *const modes[TEXT_MODES] = { "ABC", "123", "abc" };
 #if CONFIG_SATELLITE_TLE
 	static const tr_id_t satellite_titles[2][TEXT_MODES] = {
@@ -2306,6 +2824,24 @@ static bool text_key_fn(const input_event_t *ev)
 	if (ev->action >= ACT_DIGIT_0 && ev->action <= ACT_DIGIT_9 && press) {
 		int8_t k = (int8_t)(ev->action - ACT_DIGIT_0);
 		const char *set = keys[k];
+#if CONFIG_M17
+		if (text_profile != TEXT_PROFILE_FREE) {
+			if (text_mode == TEXT_DIGITS || ev->gesture == GESTURE_LONG) {
+				text_m17_take((char)('0' + k), false);
+				text_key = -1;
+			} else if (k == text_key && text_len > 0 && now - text_ms < TEXT_MULTI_MS) {
+				text_idx = (uint8_t)((text_idx + 1u) % text_cycle_len(set));
+				text_m17_take(text_char(set, text_idx), true);
+				text_key = k;
+			} else {
+				text_idx = 0;
+				text_key = text_m17_take(text_char(set, 0), false) ? k : -1;
+			}
+			text_ms = now;
+			ui_dirty();
+			return true;
+		}
+#endif
 		if (text_mode == TEXT_DIGITS || ev->gesture == GESTURE_LONG) {
 			text_append((char)('0' + k));	// 123, or a held digit: the digit itself
 			text_key = -1;
@@ -2325,6 +2861,14 @@ static bool text_key_fn(const input_event_t *ev)
 	int dir = ev->action == ACT_NAV_UP ? 1 : ev->action == ACT_NAV_DOWN ? -1 :
 		ev->action == ACT_ENC_STEP ? (ev->value > 0 ? 1 : -1) : 0;
 	if (dir != 0 && ev->gesture != GESTURE_UP) {
+#if CONFIG_M17
+		if (text_profile != TEXT_PROFILE_FREE) {
+			text_m17_step(dir);	// the allowed alphabet only; down from its first character deletes
+			text_key = -1;
+			ui_dirty();
+			return true;
+		}
+#endif
 		// Step the last character through the printable ones (the way in without a keypad); down past the space
 		// deletes it
 		if (text_len == 0) {
@@ -2364,8 +2908,28 @@ static bool text_key_fn(const input_event_t *ev)
 	}
 	if (ev->action == ACT_SELECT && press) {
 		if (!(board.caps & CAP_KEYPAD) && ev->gesture == GESTURE_PRESS) {
-			text_append(text_len > 0 ? text_buf[text_len - 1] : 'A');	// the next character, started as this one
+#if CONFIG_M17
+			if (text_profile != TEXT_PROFILE_FREE)
+				text_m17_take(text_len > 0 ? text_buf[text_len - 1] : 'A', false);
+			else
+#endif
+				text_append(text_len > 0 ? text_buf[text_len - 1] : 'A');	// the next character, started as this one
 		} else {
+#if CONFIG_M17
+			if (text_profile != TEXT_PROFILE_FREE && !text_m17_commit()) {
+				ui_toast(TR(M17_TOAST_CHAR, "Letters, digits and - / ."));
+				ui_dirty();
+				return true;
+			}
+			if (text_profile == TEXT_PROFILE_M17_DST) {
+				uint64_t dst;
+				if (!m17_dst_parse(text_buf, &dst)) {
+					ui_toast(TR(M17_TOAST_DST, "Not an M17 address"));
+					ui_dirty();
+					return true;
+				}
+			}
+#endif
 			if (text_target != text_buf)
 				strcpy(text_target, text_buf);
 			ui_pop();
@@ -2395,12 +2959,24 @@ static const ui_scr_def_t aprs_to_screen = {
 };
 #endif
 
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 static const ui_scr_def_t message_text_screen = {
 	.name = "message-text", .flags = 0, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
 };
 #endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+static const ui_scr_def_t m17_call_screen = {
+	.name = "m17-callsign", .flags = 0, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
+};
+#endif
 
+#endif
+
+#if CONFIG_CHANNEL_LIST || CONFIG_M17
+static void sb_onoff(sbuf_t *b, bool on)
+{
+	sb_str(b, on ? TR(VALUE_ON, "On") : TR(VALUE_OFF, "Off"));
+}
 #endif
 
 #if CONFIG_CHANNEL_LIST
@@ -2592,7 +3168,7 @@ static const ui_scr_def_t chlist_screen = {
 // ======================= One channel's settings, edited in place (ui.md 2.1) =======================
 // Without CONFIG_CHANNEL_EDIT the rows are read only and OK goes to the channel
 
-enum { CE_NAME, CE_NUMBER, CE_MODE, CE_CODE, CE_RATE, CE_RX, CE_TX, CE_POWER, CE_RX_ONLY, CE_BW, CE_RX_TONE, CE_TX_TONE, CE_VOX,
+enum { CE_NAME, CE_NUMBER, CE_MODE, CE_CODE, CE_RATE, CE_M17_CAN, CE_M17_SQ, CE_M17_DST, CE_RX, CE_TX, CE_POWER, CE_RX_ONLY, CE_BW, CE_RX_TONE, CE_TX_TONE, CE_VOX,
        CE_BURST, CE_AES, CE_CC, CE_TS, CE_CONTACT, CE_LIST, CE_ID, CE_DMO, CE_BEEP, CE_ALIAS1, CE_ALIAS2, CE_TOT, CE_SCAN, CE_ECO,
        CE_ZONES, CE_GO, CE_SHARE, CE_SAVE, CE_SAVE_NEW, CE_COUNT, CE_NONE = 0xFF };
 
@@ -2601,12 +3177,19 @@ static uint16_t ced_num;		// its number, 0 = no such channel
 #if CONFIG_CHANNEL_EDIT
 static uint16_t ced_src;		// the stored channel it was read from (a copy's source), 0 = none (the VFO)
 #endif
-#if CONFIG_P25 || CONFIG_NXDN
-static ui_air_conv_t ced_air;		// a P25 or NXDN channel's own settings, read once on entry (the list redraws often)
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
+static ui_air_conv_t ced_air;		// a P25, NXDN or M17 channel's own settings, read once on entry (the list redraws often)
 #if CONFIG_CHANNEL_EDIT
 static ui_air_conv_t ced_air_orig;	// as stored
 #endif
+#if CONFIG_M17
+static char ced_m17_text[M17_ADDR_CHARS_MAX + 1];	// Talk to, as text
+#if CONFIG_CHANNEL_EDIT
+static char ced_m17_text_orig[M17_ADDR_CHARS_MAX + 1];
+#endif
+#endif
 
+#if CONFIG_P25 || CONFIG_NXDN
 // A P25 or NXDN channel's settings where none are stored: the default NAC both ways; NXDN at 9600 bit/s on RAN 1
 static void ced_air_default(uint8_t mode)
 {
@@ -2626,6 +3209,7 @@ static void ced_air_default(uint8_t mode)
 #endif
 	(void)mode;
 }
+#endif
 #endif
 static bool ced_keys_available;
 static uint8_t ced_rows[CE_COUNT];
@@ -2678,7 +3262,7 @@ static const struct { uint8_t off, len, bit; } ced_fields[CE_ZONES] = {
 // The Mode row's steps, in the order OK goes through them (channel-modes.md 2.4): the plain modes, the air modes, then
 // a kind of its own (a trunked channel). Each is offered where it can run; the step back to the one the channel was
 // opened with restores it as stored (its system, its NAC or RAN), so a slip never costs a channel its mode
-enum { CED_FM, CED_DMR, CED_P25, CED_NXDN, CED_KIND, CED_STEPS };
+enum { CED_FM, CED_DMR, CED_P25, CED_NXDN, CED_M17, CED_KIND, CED_STEPS };
 
 static uint8_t ced_step_of(const channel_t *ch)
 {
@@ -2686,6 +3270,8 @@ static uint8_t ced_step_of(const channel_t *ch)
 		return CED_P25;
 	if (ced_is_nxdn(ch))
 		return CED_NXDN;
+	if (ced_is_m17(ch))
+		return CED_M17;
 	if (ch->kind != CODEPLUG_KIND_NONE)
 		return CED_KIND;
 	return CONFIG_DMR && ch->mode == RADIO_MODE_DMR ? CED_DMR : CED_FM;
@@ -2709,6 +3295,8 @@ static bool ced_step_ok(uint8_t s, bool listen)
 		return !listen && (orig || (!into && (feats() & UI_FEAT_P25) != 0));
 	case CED_NXDN:
 		return !listen && (orig || (!into && (feats() & UI_FEAT_NXDN) != 0));
+	case CED_M17:
+		return CONFIG_M17 && !listen && (orig || (!into && (feats() & UI_FEAT_M17) != 0));
 	default:
 		return !listen && orig;
 	}
@@ -2722,8 +3310,11 @@ static void ced_step_set(channel_t *c, uint8_t s)
 		c->kind = ced_orig.kind;
 		c->system = ced_orig.system;
 		c->mode = ced_orig.mode;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 		ced_air = ced_air_orig;
+#endif
+#if CONFIG_M17
+		strcpy(ced_m17_text, ced_m17_text_orig);
 #endif
 		return;
 	}
@@ -2742,6 +3333,18 @@ static void ced_step_set(channel_t *c, uint8_t s)
 		c->kind = CODEPLUG_KIND_NXDN;
 		c->mode = RADIO_MODE_NXDN;
 		ced_air_default(RADIO_MODE_NXDN);
+	}
+#endif
+#if CONFIG_M17
+	if (s == CED_M17) {
+		c->kind = CODEPLUG_KIND_M17;
+		c->mode = RADIO_MODE_DMR;
+		c->system = 0xFFu;
+		c->bw = RADIO_BW_12K5;
+		ced_air.m17.can = 0;
+		ced_air.m17.can_squelch = true;
+		ced_air.m17.dst = M17_ADDR_BROADCAST;
+		strcpy(ced_m17_text, "ALL");
 	}
 #endif
 }
@@ -2791,6 +3394,20 @@ static bool ced_changed(uint8_t r)
 	if (r == CE_CODE || r == CE_RATE)
 		return ced_air_changed(r);
 #endif
+#if CONFIG_M17
+	if (r == CE_M17_CAN || r == CE_M17_SQ || r == CE_M17_DST) {
+		if (ced_step_of(&ced_ch) != ced_step_of(&ced_orig))
+			return true;
+		// CE_COUNT checks hidden rows too. The union holds M17 fields only for an M17 channel.
+		if (!ced_is_m17(&ced_ch))
+			return false;
+		if (r == CE_M17_CAN)
+			return ced_air.m17.can != ced_air_orig.m17.can;
+		if (r == CE_M17_SQ)
+			return ced_air.m17.can_squelch != ced_air_orig.m17.can_squelch;
+		return strcmp(ced_m17_text, ced_m17_text_orig) != 0;
+	}
+#endif
 	const uint8_t *a = (const uint8_t *)&ced_ch + ced_fields[r].off, *b = (const uint8_t *)&ced_orig + ced_fields[r].off;
 	// The Mode row shows the kind: a kind's channel made plain is a change also where the record's mode is the same
 	if (r == CE_MODE && (ced_ch.kind != ced_orig.kind || ced_ch.system != ced_orig.system))
@@ -2814,7 +3431,7 @@ static void ced_rx_band(channel_t *c)
 	c->rx_only = true;
 	c->tx_hz = c->rx_hz;
 	if (radio_listen_band(c->rx_hz)) {
-		if (ced_is_p25(c) || ced_is_nxdn(c)) {
+		if (ced_is_p25(c) || ced_is_nxdn(c) || ced_is_m17(c)) {
 			c->kind = CODEPLUG_KIND_NONE;
 			c->system = CODEPLUG_SYSTEM_NONE;
 		}
@@ -2843,6 +3460,10 @@ static void ced_from_view(void)
 }
 #endif
 
+#if CONFIG_M17
+static void ced_m17_show(const m17_chan_t *m);
+#endif
+
 // ced_air for ch: a stored channel's block, read at number (before a copy's rename: the tag is the source's name's); a
 // plain channel in P25 or NXDN, the radio's settings from its view
 static void ced_air_read(uint16_t number, const channel_t *ch)
@@ -2852,9 +3473,11 @@ static void ced_air_read(uint16_t number, const channel_t *ch)
 	ui_svc_next_aes_key(&first);
 	ced_keys_available = first.kind == CODEPLUG_KIND_DMR_AES;
 #endif
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 #if CONFIG_P25 || CONFIG_NXDN
 	const radio_view_t *v = ui_view();
 	bool here = ch->kind == CODEPLUG_KIND_NONE && (v->vfo ? number == 0 : v->channel_number == number);
+#endif
 	memset(&ced_air, 0, sizeof ced_air);
 #if CONFIG_P25
 	if (ced_is_p25(ch)) {
@@ -2883,8 +3506,22 @@ static void ced_air_read(uint16_t number, const channel_t *ch)
 		}
 	}
 #endif
+#if CONFIG_M17
+	strcpy(ced_m17_text, "ALL");
+	if (ced_is_m17(ch)) {
+		if (!m17_chan_load(number, ch, &ced_air.m17)) {
+			ced_air.m17.can = 0;
+			ced_air.m17.can_squelch = true;
+			ced_air.m17.dst = M17_ADDR_BROADCAST;
+		}
+		ced_m17_show(&ced_air.m17);
+	}
+#endif
 #if CONFIG_CHANNEL_EDIT
 	ced_air_orig = ced_air;
+#if CONFIG_M17
+	strcpy(ced_m17_text_orig, ced_m17_text);
+#endif
 #endif
 #else
 	(void)number;
@@ -2892,10 +3529,26 @@ static void ced_air_read(uint16_t number, const channel_t *ch)
 #endif
 }
 
+#if CONFIG_M17
+static void ced_m17_show(const m17_chan_t *m)
+{
+	uint8_t b[M17_ADDR_BYTES];
+	uint64_t v = m->dst;
+
+	for (int i = (int)M17_ADDR_BYTES - 1; i >= 0; i--) {
+		b[i] = (uint8_t)v;
+		v >>= 8;
+	}
+	if (!m17_addr_decode(b, ced_m17_text, sizeof ced_m17_text))
+		strcpy(ced_m17_text, "ALL");
+}
+#endif
+
 static void ced_build(void)
 {
 	bool listen = radio_listen_band(ced_ch.rx_hz);
-	bool p25 = ced_is_p25(&ced_ch), nxdn = ced_is_nxdn(&ced_ch), air = p25 || nxdn;
+	bool p25 = ced_is_p25(&ced_ch), nxdn = ced_is_nxdn(&ced_ch), m17 = ced_is_m17(&ced_ch);
+	bool air = p25 || nxdn || m17;
 	bool dmr = CONFIG_DMR && ced_ch.mode == RADIO_MODE_DMR && !listen && !air;
 	bool edit = CONFIG_CHANNEL_EDIT;
 	bool fresh = false, changed = false, into = false;
@@ -2915,8 +3568,11 @@ static void ced_build(void)
 		bool tone = r == CE_RX_TONE || r == CE_TX_TONE;
 		// P25 and NXDN: no sub-audio tones or width; of the digital rows the talk target and unit ID, P25's
 		// talkaround; the NAC or RAN, NXDN's rate
-		bool air_row = air && ((r == CE_CONTACT && CONFIG_DMR) || r == CE_ID || (r == CE_DMO && p25) ||
+		bool m17_row = m17 && !into && (r == CE_M17_CAN || r == CE_M17_SQ || r == CE_M17_DST);
+		bool air_row = (p25 || nxdn) && ((r == CE_CONTACT && CONFIG_DMR) || r == CE_ID || (r == CE_DMO && p25) ||
 				       (r == CE_CODE && !into) || (r == CE_RATE && nxdn && !into));
+		if ((r == CE_M17_CAN || r == CE_M17_SQ || r == CE_M17_DST) && !m17_row)
+			continue;
 		if (r == CE_CODE || r == CE_RATE ? !air_row : air && (fm_only || (dmr_only && !air_row)))
 			continue;
 		if (!air_row && ((fm_only && dmr) || (tone && listen) || (dmr_only && !dmr) || (r == CE_MODE && !CONFIG_DMR)))
@@ -3035,11 +3691,6 @@ static void sb_chinfo_zones(sbuf_t *b, uint16_t num)
 	sb_str(b, TEXT_ALT_CLOSE);
 }
 
-static void sb_onoff(sbuf_t *b, bool on)
-{
-	sb_str(b, on ? TR(VALUE_ON, "On") : TR(VALUE_OFF, "Off"));
-}
-
 static void sb_ced_power(sbuf_t *b, int32_t level, uint32_t tx_hz)
 {
 	sb_str(b, level < 0 || level >= board.power_count ? TR(CHAN_VALUE_RADIO_DEFAULT, "Radio's") :
@@ -3107,8 +3758,10 @@ static void sb_ced_code(sbuf_t *b, const channel_t *ch, bool editing)
 
 static void chinfo_item(uint16_t i, ui_item_t *it)
 {
-	static const tr_id_t labels[CE_COUNT] = { TRN(LABEL_NAME, "Name"), TRN(CHAN_LABEL_NUMBER, "Number"),
-		TRN(LABEL_MODE, "Mode"), TRX(CHAN_LABEL_NAC, "NAC"), TRN(CHAN_LABEL_RATE, "Rate"), TRX(CHAN_LABEL_RX, "RX"), TRX(CHAN_LABEL_TX, "TX"), TRN(LABEL_POWER, "Power"),
+	static const tr_id_t labels[CE_COUNT] = { 		TRN(LABEL_NAME, "Name"), TRN(CHAN_LABEL_NUMBER, "Number"),
+		TRN(LABEL_MODE, "Mode"), TRX(CHAN_LABEL_NAC, "NAC"), TRN(CHAN_LABEL_RATE, "Rate"),
+		TRN(M17_LABEL_CAN, "CAN"), TRN(M17_LABEL_CAN_SQUELCH, "CAN squelch"), TRN(M17_LABEL_TALK_TO, "Talk to"),
+		TRX(CHAN_LABEL_RX, "RX"), TRX(CHAN_LABEL_TX, "TX"), TRN(LABEL_POWER, "Power"),
 		TRN(WORD_RX_ONLY, "RX only"), TRN(CHAN_LABEL_BANDWIDTH, "Bandwidth"),
 		TRN(CHAN_LABEL_RX_TONE, "RX CTCSS/DCS"), TRN(CHAN_LABEL_TX_TONE, "TX CTCSS/DCS"), TRX(WORD_VOX, "VOX"),
 		TRN(WORD_TONE_BURST, "Tone burst"), TRN(CHAN_AES_KEY, "AES key"), TRN(CHAN_LABEL_COLOR_CODE, "Color code"),
@@ -3180,6 +3833,21 @@ static void chinfo_item(uint16_t i, ui_item_t *it)
 #if CONFIG_NXDN
 		sb_str(&b, ced_air.nxdn.rate9600 ? "9600 bit/s" : "4800 bit/s");
 #endif
+		break;
+#endif
+#if CONFIG_M17
+	case CE_M17_CAN:
+#if CONFIG_CHANNEL_EDIT
+		sb_u32(&b, editing && ced_edit == CE_M17_CAN ? (uint32_t)ced_val : ced_air.m17.can, 1);
+#else
+		sb_u32(&b, ced_air.m17.can, 1);
+#endif
+		break;
+	case CE_M17_SQ:
+		sb_onoff(&b, ced_air.m17.can_squelch);
+		break;
+	case CE_M17_DST:
+		sb_str(&b, ced_m17_text[0] != '\0' ? ced_m17_text : "ALL");
 		break;
 #endif
 	case CE_RX:
@@ -3330,7 +3998,8 @@ static const char *ced_problem(void)
 		return TR(CHAN_WHY_RX_ONLY_BAND_SET_FM, "Receive only band: set FM");
 	// The contact is whom PTT calls, so a channel that never transmits needs none
 	// (P25 and NXDN: none is talk group 1)
-	if (CONFIG_DMR && c->mode == RADIO_MODE_DMR && !c->rx_only && c->contact == 0 && !ced_is_p25(c) && !ced_is_nxdn(c))
+	if (CONFIG_DMR && c->mode == RADIO_MODE_DMR && !c->rx_only && c->contact == 0 && !ced_is_p25(c) &&
+	    !ced_is_nxdn(c) && !ced_is_m17(c))
 		return TR(CHAN_WHY_PICK_TX_CONTACT, "Pick a TX contact first");
 #if CONFIG_NXDN
 	// A DMR channel's own ID kept when the Mode row made it NXDN: past NXDN's range, as the ID row refuses it
@@ -3361,6 +4030,10 @@ static bool ced_write(uint16_t num, bool as_new)
 	// NXDN; unchanged, the tag is written as without the editor (a plain channel in P25 or NXDN takes the radio's
 	// settings, a copy its source's tag)
 	if ((ced_is_p25(&ced_ch) || ced_is_nxdn(&ced_ch)) && (ced_air_changed(CE_CODE) || ced_air_changed(CE_RATE)))
+		return ui_svc_write_channel_air(num, &ced_ch, ced_src, &ced_air);
+#endif
+#if CONFIG_M17
+	if (ced_is_m17(&ced_ch))
 		return ui_svc_write_channel_air(num, &ced_ch, ced_src, &ced_air);
 #endif
 	return ui_svc_write_channel(num, &ced_ch, ced_src);
@@ -3399,8 +4072,11 @@ static void ced_save(bool as_new)
 	ced_src = num;
 	ui_frame()->arg = num;
 	ced_orig = ced_ch;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 	ced_air_orig = ced_air;
+#endif
+#if CONFIG_M17
+	strcpy(ced_m17_text_orig, ced_m17_text);
 #endif
 	sbuf_t b;
 	sb_init(&b, msg, sizeof msg);
@@ -3464,6 +4140,15 @@ static void ced_spin(int dir)
 		ced_len = 0;
 		ced_tone = tones_step(&ced_tone, dir);
 		break;
+#if CONFIG_M17
+	case CE_M17_CAN:
+		ced_val += dir;
+		if (ced_val < 0)
+			ced_val = 0;
+		if (ced_val > (int32_t)M17_CP_CAN_MAX)
+			ced_val = (int32_t)M17_CP_CAN_MAX;
+		break;
+#endif
 	default:
 		break;
 	}
@@ -3520,6 +4205,18 @@ static void ced_digit(char d)
 		ced_typed = true;
 		break;
 	}
+#if CONFIG_M17
+	case CE_M17_CAN:
+		if (!ced_typed)
+			v = d - '0';
+		if (v > (int32_t)M17_CP_CAN_MAX) {
+			ui_toast(TR(M17_TOAST_CAN, "CAN is 0 to 15"));
+			break;
+		}
+		ced_val = v;
+		ced_typed = true;
+		break;
+#endif
 	default:
 		break;
 	}
@@ -3604,6 +4301,15 @@ static void ced_commit(void)
 	case CE_CC:
 		c->color_code = (uint8_t)ced_val;
 		break;
+#if CONFIG_M17
+	case CE_M17_CAN:
+		if (ced_val > (int32_t)M17_CP_CAN_MAX) {
+			ui_toast(TR(M17_TOAST_CAN, "CAN is 0 to 15"));
+			return;
+		}
+		ced_air.m17.can = (uint8_t)ced_val;
+		break;
+#endif
 	case CE_TOT:
 		if (ced_val % CE_TOT_STEP != 0) {
 			ui_toast(TR(CHAN_TOAST_TIMEOUT_RANGE, "Not changed: 0 to 495, steps of 15"));
@@ -3628,6 +4334,26 @@ static void ced_commit(void)
 	}
 	ced_edit = CE_NONE;
 }
+
+#if CONFIG_M17 && CONFIG_CHANNEL_EDIT
+static void m17_dst_kept(void)
+{
+	uint64_t dst;
+
+	if (m17_dst_parse(ced_m17_text, &dst))
+		ced_air.m17.dst = dst;
+}
+
+static void m17_dst_open(void)
+{
+	text_open(ced_m17_text, M17_ADDR_CHARS_MAX, SCR_M17_CHAN_DST);
+	text_done = m17_dst_kept;
+}
+
+static const ui_scr_def_t m17_dst_screen = {
+	.name = "m17-channel-destination", .flags = 0, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
+};
+#endif
 
 static bool chinfo_key(const input_event_t *ev)
 {
@@ -3730,6 +4456,19 @@ static void chinfo_select(uint16_t i, bool hold)
 		ced_val = c->power < board.power_count ? c->power : board.power_count;
 		break;
 	case CE_RX_ONLY: c->rx_only = !c->rx_only; break;
+#if CONFIG_M17
+	case CE_M17_CAN:
+		ced_edit = r;
+		ced_val = ced_air.m17.can;
+		ced_typed = false;
+		break;
+	case CE_M17_SQ:
+		ced_air.m17.can_squelch = !ced_air.m17.can_squelch;
+		break;
+	case CE_M17_DST:
+		m17_dst_open();
+		break;
+#endif
 	case CE_BW: c->bw = c->bw == RADIO_BW_25K ? RADIO_BW_12K5 : RADIO_BW_25K; break;
 	case CE_RX_TONE:
 	case CE_TX_TONE:
@@ -4903,6 +5642,9 @@ void ui_menus_save_failed(void)
 	zones_new_pending = false;	// nothing to focus
 #endif
 	my_text_row = MY_COUNT;		// the stored name shows again
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+	m17_pending = false;
+#endif
 #if CONFIG_DMR
 	dmr_id_saved = 0;
 #endif
@@ -6540,7 +7282,8 @@ static const ui_scr_def_t tools_screen = {
 
 typedef enum { ST_TOGGLE, ST_LIST, ST_NUMBER, ST_ACTION } set_type_t;
 enum { SA_DIAG, SA_FIRMWARE, SA_CODEPLUG, SA_RESET, SA_MY_RADIO, SA_CRASH, SA_LANGUAGE, SA_HARDWARE, SA_FIXED_POS,
-	SA_SAVE_GPS_POS, SA_DATA_SERVICES, SA_BL_TEST, SA_SIG_BEGIN, SA_SIG_END, SA_SIG_IDLE };	// signaling tone steps, by sig_event_t
+	SA_SAVE_GPS_POS, SA_DATA_SERVICES, SA_BL_TEST, SA_SIG_BEGIN, SA_SIG_END, SA_SIG_IDLE,	// signaling tone steps, by sig_event_t
+	SA_M17_CALL };
 
 typedef struct {
 	tr_id_t name;			// TRN; TR_NONE for a key's row (set_name)
@@ -6972,8 +7715,12 @@ static const set_item_t s_keys[] = {
 };
 static const set_item_t s_my_radio[] = {
 	ACTION(TRN(SET_ROW_DMR_ID_AND_NAME, "DMR ID and name"), "callsign", SA_MY_RADIO),
-	// Also in Advanced, where users didn't look for it
+	// Also in Advanced, where users didn't look for it. The M17 row is after it so "down ok" still opens About
 	ACTION(TRN(TITLE_ABOUT, "About"), "firmware version release build date", SA_FIRMWARE),
+#if CONFIG_M17
+	ACTION(TRN(M17_LABEL_CALLSIGN, TEXT_ALT_OPEN "M17 callsign" TEXT_ALT_NEXT "M17 call" TEXT_ALT_CLOSE),
+		"m17 callsign", SA_M17_CALL),
+#endif
 };
 static const set_item_t s_advanced[] = {
 	ACTION(TRN(TITLE_ABOUT, "About"), "firmware version license authors", SA_FIRMWARE),
@@ -7453,9 +8200,14 @@ static bool mic_agc_on(void)
 // Why a setting can't be used on this radio or in this build (the row is dimmed and OK says it), NULL if it can
 static const char *set_why_not(const set_item_t *s)
 {
-	if (s->type == ST_ACTION)
+	if (s->type == ST_ACTION) {
+#if CONFIG_M17
+		if (s->id == SA_M17_CALL && !(feats() & UI_FEAT_M17))
+			return TR(M17_WHY_NOT_ON_RADIO, "M17: not on this radio");
+#endif
 		return s->id >= SA_SIG_BEGIN && s->id <= SA_SIG_IDLE && !(CONFIG_BEEP && CONFIG_SIG_TONES) ?
 			TR(WHY_TONES_NOT_IN_BUILD, "Tones: not in this build") : NULL;
+	}
 	switch (s->id) {
 	case UI_SET_VOICE_PROMPTS:
 		return TR(WHY_VOICE_PROMPTS_NOT_IN_BUILD, "Voice prompts: not in this build");
@@ -7483,7 +8235,7 @@ static const char *set_why_not(const set_item_t *s)
 			feats() & UI_FEAT_EMERGENCY ? NULL :
 				TR(WHY_EMERGENCY_NOT_IN_BUILD, "Emergency: not in this build");
 	case UI_SET_MESSAGE_TONE:
-		return (feats() & UI_FEAT_SMS) || CONFIG_APRS_AFSK ? NULL :
+		return (feats() & (UI_FEAT_SMS | UI_FEAT_M17_PACKET)) || CONFIG_APRS_AFSK ? NULL :
 			TR(WHY_MESSAGES_NOT_IN_BUILD, "Messages: not in this build");
 	case UI_SET_VIBRATE:
 		return feats() & UI_FEAT_VIBRATE ? NULL :
@@ -7557,6 +8309,22 @@ static void group_item(uint16_t i, ui_item_t *it)
 #if CONFIG_SIG_TONES
 	else if (s->id >= SA_SIG_BEGIN && s->id <= SA_SIG_IDLE)
 		sc_summary(it->value, sizeof it->value, (uint8_t)(s->id - SA_SIG_BEGIN));
+#endif
+#if CONFIG_M17
+	else if (s->id == SA_M17_CALL) {
+		char call[10];
+		bool stored = false;
+		if (m17_pending && codeplug_kv_serial() == m17_kv_at) {
+			str_copy(it->value, sizeof it->value, m17_shown);
+			stored = true;	// what was just kept, including a clear, until the write lands
+		} else {
+			m17_pending = false;
+			if (ui_svc_m17_call_show(call, &stored))
+				str_copy(it->value, sizeof it->value, call);
+		}
+		if (!stored)
+			it->flags |= UI_ITEM_DIM;	// the radio-name fallback, still editable
+	}
 #endif
 	if (s->id == UI_SET_PRIVACY_KEY && s->type == ST_NUMBER && !edit && ui_svc_setting_get(UI_SET_PRIVACY_TYPE) == 0)
 		strcpy(it->value, "-");
@@ -7636,6 +8404,9 @@ static void group_select(uint16_t i, bool hold)
 		case SA_FIRMWARE: ui_push(SCR_ABOUT, 0); break;
 		case SA_CODEPLUG: ui_push(SCR_INFO, INFO_CODEPLUG); break;
 		case SA_MY_RADIO: ui_push(SCR_DMR_ID, 0); break;
+#if CONFIG_M17
+		case SA_M17_CALL: m17_call_open(); break;
+#endif
 		case SA_RESET: ui_push(SCR_CONFIRM, 0); break;
 		case SA_LANGUAGE: ui_push(SCR_LANGUAGE, 0); break;
 #if CONFIG_SIG_TONES
@@ -8045,6 +8816,149 @@ static const ui_scr_def_t picker_screen = {
 	.target = picker_target, .enter = picker_enter, .title = picker_title,
 };
 
+#if CONFIG_M17
+static const char *const m17_presets[] = { "ALL", "ECHO", "INFO", "UNLINK" };
+enum { M17_TALK_OTHER = 1 + sizeof m17_presets / sizeof m17_presets[0] };
+static uint32_t m17_talk_generation;
+static uint64_t m17_talk_base;
+static char m17_talk_text[M17_ADDR_CHARS_MAX + 1];
+
+static void m17_talk_enter(void)
+{
+	const radio_m17_selected_t *sel = ui_m17_selected(ui_view());
+	m17_talk_generation = sel != NULL ? sel->generation : 0;
+	m17_talk_base = sel != NULL ? sel->base_dst : 0;
+}
+
+static uint16_t m17_talk_count(void) { return M17_TALK_OTHER + 1; }
+
+static void m17_talk_item(uint16_t i, ui_item_t *it)
+{
+	if (i == 0) {
+		char dst[RADIO_M17_CALL_LEN];
+		str_copy(it->label, sizeof it->label, TR(VALUE_DEFAULT, "Default"));
+		str_copy(it->value, sizeof it->value, ui_m17_destination(m17_talk_base, dst));
+	} else if (i == M17_TALK_OTHER) {
+		str_copy(it->label, sizeof it->label, TR(M17_ROW_TALK_OTHER, "Other" GLYPH_ELLIPSIS));
+	} else {
+		str_copy(it->label, sizeof it->label, m17_presets[i - 1]);
+	}
+}
+
+static const radio_m17_selected_t *m17_talk_current(void)
+{
+	const radio_m17_selected_t *sel = ui_m17_selected(ui_view());
+	if (sel == NULL || sel->generation != m17_talk_generation) {
+		ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed"));
+		return NULL;
+	}
+	return sel;
+}
+
+// CAN and its squelch use the same selection generation as Talk to. These screens cannot nest.
+static bool m17_can_is_squelch(void)
+{
+	return ui_frame()->scr == SCR_M17_CAN_SQUELCH;
+}
+
+static void m17_can_enter(void)
+{
+	const radio_m17_selected_t *sel = ui_m17_selected(ui_view());
+	m17_talk_generation = sel != NULL ? sel->generation : 0;
+	if (sel != NULL)
+		ui_frame()->focus = m17_can_is_squelch() ? sel->can_squelch : sel->can;
+}
+
+static uint16_t m17_can_count(void)
+{
+	return m17_can_is_squelch() ? 2 : RADIO_M17_CAN_MAX + 1;
+}
+
+static void m17_can_item(uint16_t i, ui_item_t *it)
+{
+	sbuf_t b;
+	sb_init(&b, it->label, sizeof it->label);
+	if (m17_can_is_squelch())
+		sb_onoff(&b, i != 0);
+	else
+		sb_u32(&b, i, 1);
+}
+
+static void m17_can_select(uint16_t i, bool hold)
+{
+	if (hold || m17_talk_current() == NULL)
+		return;
+	if (radio_req_m17_vfo_can(m17_talk_generation, m17_can_is_squelch(), (uint8_t)i))
+		ui_pop();
+	else
+		ui_toast(TR(MSG_M17_RESULT_BUSY, "Channel busy: try again"));
+}
+
+static const ui_scr_def_t m17_can_screen = {
+	.name = "m17-can", .flags = SF_LIST | SF_FIELD, .prefix = TRN(M17_LABEL_CAN, "CAN"),
+	.hint = TRN(HINT_OK_CHOOSE_BACK_CANCELS, "OK choose  Back cancel"),
+	.count = m17_can_count, .item = m17_can_item, .select = m17_can_select, .enter = m17_can_enter,
+};
+
+static const ui_scr_def_t m17_can_squelch_screen = {
+	.name = "m17-can-squelch", .flags = SF_LIST | SF_FIELD, .prefix = TRN(M17_LABEL_CAN_SQUELCH, "CAN squelch"),
+	.hint = TRN(HINT_OK_CHOOSE_BACK_CANCELS, "OK choose  Back cancel"),
+	.count = m17_can_count, .item = m17_can_item, .select = m17_can_select, .enter = m17_can_enter,
+};
+
+static void m17_talk_submit(const char *dest)
+{
+	if (m17_talk_current() == NULL)
+		return;
+	uint64_t dst = 0;
+	if ((dest != NULL && !m17_dst_parse(dest, &dst)) || !radio_req_m17_talk_to(m17_talk_generation, dst)) {
+		ui_toast(TR(M17_TOAST_TALK_TO_FAILED, "Couldn't queue Talk to"));
+		return;
+	}
+	ui_pop();
+}
+
+static void m17_talk_other_kept(void)
+{
+	m17_talk_submit(m17_talk_text);
+}
+
+static void m17_talk_select(uint16_t i, bool hold)
+{
+	if (hold)
+		return;
+	if (i != M17_TALK_OTHER) {
+		m17_talk_submit(i == 0 ? NULL : m17_presets[i - 1]);
+		return;
+	}
+	const radio_m17_selected_t *sel = m17_talk_current();
+	if (sel == NULL)
+		return;
+	if (sel->effective_dst == M17_ADDR_BROADCAST)
+		m17_talk_text[0] = '\0';
+	else
+		ui_m17_destination(sel->effective_dst, m17_talk_text);
+	text_open(m17_talk_text, M17_ADDR_CHARS_MAX, SCR_M17_TALK_TO_OTHER);
+	text_done = m17_talk_other_kept;
+}
+
+static const ui_scr_def_t m17_talk_other_screen = {
+	.name = "m17-talk-to-other", .flags = SF_FIELD, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
+};
+
+#if CONFIG_M17_PACKET
+static const ui_scr_def_t m17_message_to_screen = {
+	.name = "m17-message-to", .flags = SF_FIELD, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
+};
+#endif
+
+static const ui_scr_def_t m17_talk_screen = {
+	.name = "m17-talk-to", .flags = SF_LIST | SF_FIELD, .prefix = TRN(M17_LABEL_TALK_TO, "Talk to"),
+	.hint = TRN(HINT_OK_CHOOSE_BACK_CANCELS, "OK choose  Back cancel"),
+	.count = m17_talk_count, .item = m17_talk_item, .select = m17_talk_select, .enter = m17_talk_enter,
+};
+#endif
+
 // ======================= Scan: what to do with the channel that stopped it =======================
 
 static uint16_t scan_count(void) { return 3; }
@@ -8222,7 +9136,7 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 #if CONFIG_APRS_AFSK
 	[SCR_APRS_TO] = &aprs_to_screen,
 #endif
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_M17_PACKET
 	[SCR_MESSAGE_TEXT] = &message_text_screen,
 #endif
 #if CONFIG_CHANNEL_LIST
@@ -8248,6 +9162,21 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 	[SCR_SATELLITE_PASSES] = &ui_satellite_passes_screen,
 	[SCR_SATELLITE] = &ui_satellite_screen,
 	[SCR_SATELLITE_TEXT] = &satellite_text_screen,
+#endif
+#if CONFIG_M17 && CONFIG_UI_SETTINGS
+	[SCR_M17_CALL] = &m17_call_screen,
+#endif
+#if CONFIG_M17 && CONFIG_CHANNEL_EDIT
+	[SCR_M17_CHAN_DST] = &m17_dst_screen,
+#endif
+#if CONFIG_M17
+	[SCR_M17_TALK_TO] = &m17_talk_screen,
+	[SCR_M17_TALK_TO_OTHER] = &m17_talk_other_screen,
+	[SCR_M17_CAN] = &m17_can_screen,
+	[SCR_M17_CAN_SQUELCH] = &m17_can_squelch_screen,
+#if CONFIG_M17_PACKET
+	[SCR_M17_MESSAGE_TO] = &m17_message_to_screen,
+#endif
 #endif
 #if CONFIG_CRASH_SCREEN
 	[SCR_CRASH] = &crash_screen,

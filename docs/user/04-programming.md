@@ -228,13 +228,11 @@ Pick **M17** in the channel form's **Mode**. **Talk to** sets the destination in
 | Field | Meaning |
 |---|---|
 | CAN | Channel access number to send, 0–15. Blank uses 0. |
-| Play only this CAN | Play calls on the channel's CAN. Clear the setting to hear every CAN. |
+| Play only this CAN | Filter received speech and packet data by the channel's CAN. Clear the setting to accept every CAN. |
 | Talk to | A callsign or reflector, up to 9 characters from A–Z, 0–9, `-`, `/` and `.`, with spaces allowed inside. Blank or `ALL` calls everyone. |
 
-Set your **M17 callsign** on the **Radio** tab. If it is blank, the radio uses the first word of the radio name,
-up to a space or `-`. M17 voice transmission requires a valid callsign from one of these sources.
-
-This version stores the CAN and its squelch setting. Sending the CAN and checking it on receive are pending.
+A new M17 channel starts at CAN 0, with squelch on and a broadcast destination. Set your **M17 callsign** on the
+**Radio** tab. For on-radio editing, callsign fallback, and temporary destinations, see [M17](24-m17.md).
 
 ### Files
 

@@ -11,6 +11,7 @@
 // each pattern is looked for where it belongs and nowhere else, unless the last one was missed.
 
 #include "air_framer.h"
+#include "air_rx_work.h"
 
 #include <string.h>
 
@@ -66,7 +67,11 @@ static int16_t sync_need(const air_sync_t *s)
 
 static uint32_t syms_us(const air_framer_t *fr, uint16_t n)
 {
-	return (uint32_t)(((uint64_t)n * 1000000u) / fr->mode->profile.sym_rate);
+	uint32_t rate = fr->mode->profile.sym_rate;
+
+	if (n <= UINT32_MAX / 1000000u)
+		return (n * 1000000u) / rate;
+	return (uint32_t)(((uint64_t)n * 1000000u) / rate);
 }
 
 static uint8_t slice(const air_framer_t *fr, int8_t s)
@@ -103,9 +108,13 @@ static bool sync_fit(const air_framer_t *fr, const air_sync_t *s, int16_t *lvl, 
 {
 	int32_t se = 0, see = 0, ss = 0, sse = 0, n = s->nsyms, det, num, l, o, resid = 0;
 
-	for (uint8_t k = 0; k < s->nsyms; k++) {
-		int8_t e = air_sym_level(air_sym_get(s->syms, k));
-		int8_t v = hist_get(fr, (uint8_t)(s->nsyms - 1 - k));
+	AIR_RX_ADD(sync_fits, 1);
+	unsigned at = fr->hist_at;
+
+	for (unsigned k = s->nsyms; k-- > 0;) {
+		at = at ? at - 1 : AIR_SYNC_SYMS_MAX - 1;
+		int8_t e = air_sym_level(air_sym_get(s->syms, (uint16_t)k));
+		int8_t v = fr->hist[at];
 
 		se += e;
 		see += e * e;
@@ -121,8 +130,10 @@ static bool sync_fit(const air_framer_t *fr, const air_sync_t *s, int16_t *lvl, 
 	if (l < LVL_MIN || l > LVL_MAX || o < -OFF_MAX || o > OFF_MAX)
 		return false;
 	// Noise passes the signs now and then, at a level of its own; it does not lie on a line
-	for (uint8_t k = 0; k < s->nsyms; k++) {
-		int32_t d = hist_get(fr, (uint8_t)(s->nsyms - 1 - k)) - o - (l * air_sym_level(air_sym_get(s->syms, k))) / 3;
+	at = fr->hist_at;
+	for (unsigned k = s->nsyms; k-- > 0;) {
+		at = at ? at - 1 : AIR_SYNC_SYMS_MAX - 1;
+		int32_t d = fr->hist[at] - o - (l * air_sym_level(air_sym_get(s->syms, (uint16_t)k))) / 3;
 
 		resid += d < 0 ? -d : d;
 	}
@@ -149,16 +160,48 @@ static uint8_t sync_soft_errs(const air_framer_t *fr, const air_sync_t *s)
 // sync where one was due) instead of taking the new ones whole. Without soft values: the dibits as given
 static bool sync_match(air_framer_t *fr, const air_sync_t *s, bool track, uint8_t *errs)
 {
-	uint64_t x = (fr->reg ^ sync_pat(s)) & sync_mask(s);
 	int16_t lvl, off, lvl0 = fr->lvl, off0 = fr->off;
+	uint8_t errors;
 
+	AIR_RX_ADD(sync_tries, 1);
 	if (fr->run < s->nsyms)
 		return false;
-	if (!fr->soft_in) {
-		*errs = pop64((x | (x >> 1)) & REG_LOW);
-		return *errs <= s->max_errs;
+	if (s->nsyms == 8 || s->nsyms == AIR_SYNC_SYMS_MAX) {
+		// Check the newest eight symbols first. Most 24-symbol candidates fail already on that suffix.
+		unsigned i = s->nsyms / 4 - 2;
+		unsigned pattern = (unsigned)s->syms[i] << 8 | s->syms[i + 1];
+		unsigned x = (uint16_t)fr->reg ^ pattern;
+
+		x = fr->soft_in ? x & 0xAAAAu : (x | (x >> 1)) & 0x5555u;
+		if (s->max_errs == 1) {
+			if (x & (x - 1))
+				return false;
+			errors = x != 0;
+		} else {
+			errors = pop32(x);
+			if (errors > s->max_errs)
+				return false;
+		}
+		if (i) {
+			uint32_t prefix = (uint32_t)s->syms[0] << 24 | (uint32_t)s->syms[1] << 16
+					| (uint32_t)s->syms[2] << 8 | s->syms[3];
+			uint32_t y = (uint32_t)(fr->reg >> 16) ^ prefix;
+
+			errors = (uint8_t)(errors + (fr->soft_in ? pop32(y & (uint32_t)REG_SIGN)
+							       : pop32((y | (y >> 1)) & (uint32_t)REG_LOW)));
+		}
+	} else {
+		uint64_t x = (fr->reg ^ sync_pat(s)) & sync_mask(s);
+
+		errors = fr->soft_in ? pop64(x & REG_SIGN) : pop64((x | (x >> 1)) & REG_LOW);
 	}
-	if (pop64(x & REG_SIGN) > s->max_errs || !sync_fit(fr, s, &lvl, &off))
+	if (errors > s->max_errs)
+		return false;
+	if (!fr->soft_in) {
+		*errs = errors;
+		return true;
+	}
+	if (!sync_fit(fr, s, &lvl, &off))
 		return false;
 	if (track) {
 		lvl = (int16_t)(lvl0 + (lvl - lvl0) / 4);
@@ -234,6 +277,7 @@ static void deliver(air_framer_t *fr, uint8_t flags)
 	f.hard = fr->hard;
 	f.soft = fr->soft_out ? fr->soft : NULL;
 	if (flags & AIR_FRAME_HEAD) {
+		AIR_RX_ADD(heads, 1);
 		uint16_t r = fr->mode->head(&f, fr->ctx);
 
 		if (r & AIR_HEAD_AGAIN) {
@@ -267,6 +311,7 @@ static void replay(air_framer_t *fr, uint16_t from)
 	drop(fr);
 	if (fr->ring || fr->relock)
 		return;			// the ring lives in the same buffer; and never a replay inside a replay
+	AIR_RX_ADD(replay_syms, n);
 	fr->relock = true;
 	fr->soft_in = false;		// the buffer holds symbols as sliced and scaled: no second fit
 	fr->run = 0;
@@ -350,10 +395,19 @@ static bool lock(air_framer_t *fr, const air_sync_t *s, uint8_t errs)
 	return true;
 }
 
+// Compress the sign bits of the newest eight dibits into the table's index.
+static uint8_t tail_signs(uint64_t reg)
+{
+	uint32_t x = ((uint32_t)reg >> 1) & 0x5555u;
+
+	x = (x | (x >> 1)) & 0x3333u;
+	x = (x | (x >> 2)) & 0x0F0Fu;
+	return (uint8_t)(x | (x >> 4));
+}
+
 static void rx_sym(air_framer_t *fr, uint8_t d, int8_t soft, bool search)
 {
 	const air_profile_t *p = &fr->mode->profile;
-	uint16_t due = 0;
 	uint8_t errs;
 
 	// The soft value kept: scaled to nominal, or in a replay the one kept before
@@ -365,7 +419,8 @@ static void rx_sym(air_framer_t *fr, uint8_t d, int8_t soft, bool search)
 	}
 	if (fr->soft_in) {
 		d = slice(fr, soft);
-		keep = rescale(fr, soft);
+		if (fr->state != ST_SEARCH || fr->ring)
+			keep = rescale(fr, soft);
 	}
 	fr->reg = ((fr->reg << 2) | d) & REG_MASK;
 	if (fr->run < UINT16_MAX)
@@ -376,7 +431,15 @@ static void rx_sym(air_framer_t *fr, uint8_t d, int8_t soft, bool search)
 			buf_put(fr, fr->ring_at, d, keep);
 			fr->ring_at = (uint16_t)((fr->ring_at + 1) % fr->ring);
 		}
-		for (uint8_t i = 0; search && i < p->nsyncs; i++) {
+		if (!search)
+			return;
+		const uint8_t *tails = fr->mode->sync_tail_masks;
+		unsigned candidates = tails ? tails[tail_signs(fr->reg)] : (1u << p->nsyncs) - 1u;
+
+		while (candidates) {
+			unsigned i = (unsigned)__builtin_ctz(candidates);
+
+			candidates &= candidates - 1;
 			if (!sync_match(fr, &p->sync[i], false, &errs))
 				continue;
 			if (lock(fr, &p->sync[i], errs))
@@ -391,24 +454,27 @@ static void rx_sym(air_framer_t *fr, uint8_t d, int8_t soft, bool search)
 	buf_put(fr, fr->bpos, d, keep);
 	fr->bpos++;
 	fr->upos++;
-	// A sync where one belongs
-	for (uint8_t i = 0; i < p->nsyncs; i++) {
-		const air_sync_t *s = &p->sync[i];
-		int16_t need = sync_need(s);
-
-		if ((s->flags & AIR_SYNC_START_ONLY) || need < 1)
-			continue;
-		if ((uint16_t)need > due)
-			due = (uint16_t)need;
-		if (fr->upos != (uint16_t)need || fr->sync_seen || !sync_match(fr, s, true, &errs))
-			continue;
-		fr->sync_seen = true;
-		fr->sync_id = s->id;
-		fr->sync_errs = errs;
-		fr->misses = 0;
-		fr->stats.syncs++;
+	// Once a unit has a sync, all its remaining symbols go straight to the buffer.
+	if (fr->sync_seen) {
+		progress(fr);
+		return;
 	}
-	if (fr->upos == due && !fr->sync_seen) {
+	// A sync where one belongs.
+	if (fr->upos <= fr->sync_due) {
+		for (uint8_t i = 0; i < p->nsyncs; i++) {
+			const air_sync_t *s = &p->sync[i];
+
+			if ((s->flags & AIR_SYNC_START_ONLY) || (int)fr->upos != sync_need(s) || !sync_match(fr, s, true, &errs))
+				continue;
+			fr->sync_seen = true;
+			fr->sync_id = s->id;
+			fr->sync_errs = errs;
+			fr->misses = 0;
+			fr->stats.syncs++;
+			break;
+		}
+	}
+	if (fr->upos == fr->sync_due && !fr->sync_seen) {
 		fr->stats.misses++;
 		if (++fr->misses >= fr->mode->lost_frames) {
 			drop(fr);
@@ -418,7 +484,7 @@ static void rx_sym(air_framer_t *fr, uint8_t d, int8_t soft, bool search)
 	}
 	// A sync where none belongs counts only while the last one due was missed: the signal we follow may be gone
 	// and another one there. (A short pattern also turns up in payload, so never while our own syncs come.)
-	if (fr->misses && !(fr->upos <= due && fr->sync_seen)) {
+	if (fr->misses) {
 		for (uint8_t i = 0; i < p->nsyncs; i++) {
 			const air_sync_t *s = &p->sync[i];
 			int16_t lvl = fr->lvl, off = fr->off;
@@ -450,13 +516,16 @@ void air_framer_init(air_framer_t *fr, const air_mode_t *mode, void *ctx, uint8_
 	fr->soft = soft;
 	fr->buf_syms = buf_syms;
 	for (uint8_t i = 0; i < mode->profile.nsyncs; i++) {
-		int16_t need = sync_need(&mode->profile.sync[i]);
+		const air_sync_t *s = &mode->profile.sync[i];
+		int16_t need = sync_need(s);
 
+		if (!(s->flags & AIR_SYNC_START_ONLY) && need > fr->sync_due)
+			fr->sync_due = (uint16_t)need;
 		// A pattern further into its frame than the register reaches: keep that much history in the buffer
 		if (need > AIR_SYNC_SYMS_MAX && (uint16_t)need > fr->ring && (uint16_t)need <= buf_syms)
 			fr->ring = (uint16_t)need;
 	}
-	air_framer_rx_reset(fr);
+	search_start(fr);
 }
 
 void air_framer_rx_reset(air_framer_t *fr)
@@ -465,6 +534,8 @@ void air_framer_rx_reset(air_framer_t *fr)
 	fr->run = 0;
 	fr->reg = 0;
 	fr->relock = false;
+	if (fr->mode->rx_discontinuity)
+		fr->mode->rx_discontinuity(fr->ctx, 0);
 }
 
 void air_framer_rx(air_framer_t *fr, const air_chunk_t *c)
@@ -473,6 +544,8 @@ void air_framer_rx(air_framer_t *fr, const air_chunk_t *c)
 		// The count from the last sync means nothing across a hole
 		drop(fr);
 		fr->run = 0;
+		if (fr->mode->rx_discontinuity)
+			fr->mode->rx_discontinuity(fr->ctx, c->flags);
 		if (c->flags & AIR_CHUNK_NO_SIGNAL)
 			return;
 	}

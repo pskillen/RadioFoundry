@@ -83,8 +83,14 @@ Events:
 | `AIR_EV_TX_STARTED` | the first queued symbol is on air, with its time |
 | `AIR_EV_TX_SPACE` | a chunk left the queue |
 | `AIR_EV_TX_UNDERRUN` | the queue ran dry before the last chunk: idle symbols went out |
-| `AIR_EV_TX_DONE` | the last chunk has left the air, or the abort is through; receiving again |
+| `AIR_EV_TX_DONE` | the provider stopped transmitting. `arg` gives the end reason |
 | `AIR_EV_SLOT` | TDMA: a slot boundary, with its counter and time |
+
+The provider reports `AIR_TX_END_DRAINED` (1) on a confirmed tail after the last chunk. An owner stop (abort,
+suspend, or close) reports `AIR_TX_END_ABORTED` (2) when it ends an active transmission. The transmit watchdog or a
+missed PA key reports `AIR_TX_END_STALLED` (3). The first stop sets the reason, and a missed key takes precedence
+over a later tail. Providers that supply no reason report `AIR_TX_END_UNKNOWN` (0). Close discards pending
+callbacks, and abort may simply drop chunks queued before key-up.
 
 A chunk starts wherever the provider's record does, never at a frame boundary. The framer finds the frames.
 
@@ -146,17 +152,19 @@ down to a hundredth of it).
 | Resampling | a polyphase interpolator (12 phases, 8 taps) to five samples per symbol |
 | Receive filter | an integrate and dump over one symbol for C4FM and square pulses, a shorter one otherwise |
 | Sync fit | the newest symbol-spaced samples are fitted to each pattern (level and offset, least squares). Where the error passes through a minimum under the limit, that sample is a symbol center; a parabola through the neighbors places it between samples |
-| Step gate | per sample phase the modem keeps one bit per symbol (this sample was above the one a symbol before). A pattern can start a fit when the steps of four levels or more among its last 17 symbols are all there but one |
+| Step gate | per sample phase the modem keeps one bit per symbol (this sample was above the one a symbol before). A pattern can start its own fit when the steps of four levels or more among its last 17 symbols are all there but one |
 | Output | symbols leave from the far end of a delay line 26 symbols long, sampled on the latest sync's timing and scaled by its level and offset, so a sync is sampled on the timing it gave |
-| Level | a tap of known scale starts at the profile's deviation. A tap of unknown scale follows the input's average magnitude until the first sync gives the level. The averages start fast and slow down; when a 16-sample average of the magnitude is off the slow one by half or double (a signal after an unmodulated carrier, which leaves the discriminator quiet), both start fast again |
+| Level | a tap of known scale starts at the profile's deviation. A tap of unknown scale follows the input's average magnitude until a sync gives the level, and the averages hold while that lock stands. They start fast and slow down. When a 16-sample average of the magnitude is off the held one by half or double — a carrier after discriminator noise, or the carrier leaving — the lock is dropped and both averages start fast again. A chance sync must not keep the noise level across that step: the next sync would be fitted on a clipped or starved line |
 
-An all-outer sync pattern with fewer than four large steps in the step gate also needs a sign match to start a
-fit. The newest symbol-spaced samples must all have the sign of their corresponding pattern symbols, relative
-to the tracked offset. M17's short sync patterns have so few large steps that the step gate alone starts fits
-on about 95% of filtered noise samples. The sign check rejects most of those samples without depending on the
-signal's scale.
+An all-outer sync pattern with fewer than four large steps also needs an exact sign match relative to the
+tracked offset. The eight-symbol gate keeps that sign history for each phase and rebuilds it when a sync
+changes the offset or rescales the line. For a long all-outer pattern that passes the step gate, disjoint
+pairs of equal expected levels bound the least-squares error. The squared difference in each pair contributes
+at least half that amount to the error. If their total rules out a fit, the modem skips it. This matters on
+alternating preambles, which regularly pass the step-direction check. The samples on either side of a timing
+candidate still use the full fit to locate the peak.
 
-The table gives host fits per second over 60 seconds of fixed-seed Gaussian noise at 300 counts RMS, with an
+The earlier sign-gate measurements count search calls per second over 60 seconds of fixed-seed Gaussian noise at 300 counts RMS, with an
 8 kHz tap and unknown scale.
 
 | Profile | Step gate alone | With sign check |
@@ -166,7 +174,7 @@ The table gives host fits per second over 60 seconds of fixed-seed Gaussian nois
 | NXDN 9600 | 2,518 | 2,518 |
 | M17 | 22,860 | 1,225 |
 
-Between syncs the timing, level and offset hold. Two crystal clocks do not move a fifth of a symbol in a second, so
+Between syncs the timing and offset hold, and so does the level until the magnitude steps as the table says. Two crystal clocks do not move a fifth of a symbol in a second, so
 a mode whose syncs recur gets every frame on fresh timing. Chunks say `AIR_CHUNK_FREE_RUN` when no sync was seen
 within the profile's spacing, and `AIR_CHUNK_GAP` after a hole in the samples (the modem starts over).
 
@@ -182,7 +190,8 @@ steps, 64-bit products for the voice codecs), each in plain C and with a core's 
 | No 64-bit product, no divide, no `%` on a ring index | a library call or a divide instruction per sample on a core without a long multiply |
 | `int` or `unsigned` counters and indexes | a narrower one costs an extend on every step on some cores |
 | The input history written twice, a filter's length apart | the interpolator reads its samples as one run, so a core with paired 16 x 16 multiply-accumulates takes them two at a time |
-| The fit behind the gate | it was nine tenths of the work |
+| Fits restricted to patterns that pass their own gates | an alternating preamble can repeatedly pass the step gate for a long pattern |
+| Timing and phase increments held within each block | the interpolator keeps its phase without dividing at every sample |
 
 Measured on the `hrc7000` platform (no paired multiplies, no long multiply without its HI/LO unit) with an 8 kHz
 tap and the P25 profile, receiving noise: 8.5 % of the CPU (`rx_load`), against 33 % with the fit at every sample,
@@ -203,7 +212,11 @@ Before `air_session_tx_go` only the radio core's task touches the transmit side,
 A mode that has nothing ready in `tx_fill` adds nothing and is asked again one chunk later; it must add something
 before the queue falls under the provider's lead, or the provider sends idle symbols and reports an underrun.
 
-Transmit states: idle, priming, on, ending (the last symbol is queued), done.
+Transmit states are idle, priming, on, ending (the last symbol is queued), and done.
+The session stores the provider's reason in `tx_end_reason` before publishing `AIR_TX_DONE` and keeps it through
+`air_session_tx_clear`. A fresh prime resets the reason to unknown. A refused start can set done with no provider
+event. The owner switches the board transmitter off for every done state. For packet success it must additionally
+require a confirmed drain, no underrun, and completion of the board's `tx_off()`.
 
 In the radio core each mode on the air interface fills one table of these steps (`radio_air_ops_t`,
 `core/radio/radio_air.h`: running, no TX, prepare, go, stop, abort, state, clear), so PTT, the time-out and the
@@ -233,6 +246,7 @@ before anything is queued: `tx_deny=air_no_tx` ("This mode: receive only").
 |---|---|
 | `tests/host/fecTest.c` | the shared codes against the standard's matrices |
 | `tests/host/airFramerTest.c` | sync search, levels, head hook, pieces, history, coasting, transmit packing |
+| `tests/host/airRxWorkTest.c` | 256-sample receive workload ceilings, the M17 sign table, and text delivery at two deviations with or without the first preamble half |
 | `tests/host/airSoftmodemTest.c` | the soft modem on a modeled tap: every tap phase, 8 to 48 kHz, scale and offset errors, noise, other pulse shapes, a P25 call end to end, step gate equivalence, and a noise fit rate below 15% for each shipped profile |
 | `tests/host/fxpTest.c` | the shared fixed-point kernels against wide arithmetic |
 | `tests/host/p25EngineTest.c` | the session under two P25 engines on made-up providers |

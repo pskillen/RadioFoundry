@@ -26,6 +26,11 @@
 #include "dmr/dmr_emergency.h"	// the emergency tone (Settings > Sound); stubs without CONFIG_DMR_EMERGENCY
 #include "hal_time.h"
 #include "config.h"
+#if CONFIG_M17
+#include "m17/m17.h"
+#include "m17/m17_codeplug.h"
+#include "radio/radio_m17.h"
+#endif
 #if CONFIG_HOSTLINK
 #include "hostlink/hostlink.h"
 #endif
@@ -780,7 +785,7 @@ static struct {
 	};
 	uint32_t id;		// the talk target's, or the radio's own DMR ID
 	bool private_call;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 	bool air_set;		// write_channel_job: air is the channel's block
 	ui_air_conv_t air;
 #endif
@@ -822,6 +827,9 @@ void ui_svc_next_aes_key(channel_t *c)
 
 static void write_channel_job(void *ctx);
 static void name_job(void *ctx);
+#if CONFIG_M17
+static void m17_call_job(void *ctx);
+#endif
 #if CONFIG_DMR
 static void dmr_id_job(void *ctx);
 static void save_target_job(void *ctx);
@@ -837,6 +845,9 @@ static void key_write_job(void *ctx);
 #endif
 static void (*const cp_jobs[])(void *ctx) = {
 	save_channel_job, write_channel_job, name_job,
+#if CONFIG_M17
+	m17_call_job,
+#endif
 #if CONFIG_DMR
 	dmr_id_job, save_target_job,
 #endif
@@ -1233,25 +1244,30 @@ bool ui_svc_save_channel(void)
 	return take_channel() && cp_post(save_channel_job);
 }
 
-#if CONFIG_P25 || CONFIG_NXDN
-// The channel editor's P25 or NXDN channel with its block: a plain one in that mode becomes a stored one as in
-// air_save_now; one of the kind is written with the block over its tag's, the rest of the tag kept. A copy (from: the
-// source, another number) takes the source's tag first, so it keeps the same; where that fails its tag is new. False
-// in *ok's place when ch is neither: the caller writes it as usual
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
+// The channel editor's P25, NXDN or M17 channel with its block. A copy (from: the source, another number) takes the
+// source's tag first. False in *ok's place when ch is none of those: the caller writes it as usual
 static bool air_conv_save(uint16_t number, uint16_t from, const channel_t *ch, const ui_air_conv_t *conv, bool *ok)
 {
 	bool plain = ch->kind == CODEPLUG_KIND_NONE;
-	bool p25 = false, nxdn = false;
+	bool p25 = false, nxdn = false, m17 = false;
 #if CONFIG_P25
 	p25 = plain ? ch->mode == RADIO_MODE_P25 : ch->kind == CODEPLUG_KIND_P25;
 #endif
 #if CONFIG_NXDN
 	nxdn = plain ? ch->mode == RADIO_MODE_NXDN : ch->kind == CODEPLUG_KIND_NXDN;
 #endif
-	if (!p25 && !nxdn)
+#if CONFIG_M17
+	m17 = ch->kind == CODEPLUG_KIND_M17;
+#endif
+	if (!p25 && !nxdn && !m17)
 		return false;
 	if (!plain && from != 0 && from != number && codeplug_set_channel(number, ch))
 		(void)codeplug_tag_copy(from, number, ch);
+#if CONFIG_M17
+	if (m17)
+		*ok = m17_chan_store(number, ch, &conv->m17);
+#endif
 #if CONFIG_P25
 	if (p25)
 		*ok = plain ? p25_save_now(number, ch, &conv->p25) : p25_conv_save(number, ch, &conv->p25);
@@ -1275,7 +1291,7 @@ static void write_channel_job(void *ctx)
 	bool ok = false;
 	uint16_t from = (uint16_t)job.id;
 	bool done = false;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 	done = job.air_set && air_conv_save(job.channel, from, &job.now, &job.air, &ok);
 #endif
 	if (!done && !air_save_now(job.channel, &job.now, &ok))
@@ -1306,7 +1322,7 @@ static bool write_channel_post(uint16_t number, const channel_t *ch, uint16_t fr
 	job.temp = !ui_svc_view.vfo && ui_svc_view.channel_number == number && ui_svc_view.temporary;	// here: drop the temporary changes after it
 	job.now = *ch;
 	job.id = from;
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 	job.air_set = conv != NULL;	// before the post: the job may run at once on its own task
 	if (conv != NULL)
 		job.air = *(const ui_air_conv_t *)conv;
@@ -1321,7 +1337,7 @@ bool ui_svc_write_channel(uint16_t number, const channel_t *ch, uint16_t from)
 	return write_channel_post(number, ch, from, NULL);
 }
 
-#if CONFIG_P25 || CONFIG_NXDN
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
 bool ui_svc_write_channel_air(uint16_t number, const channel_t *ch, uint16_t from, const ui_air_conv_t *conv)
 {
 	return write_channel_post(number, ch, from, conv);
@@ -1548,6 +1564,61 @@ bool ui_svc_name_set(uint8_t which, const char *text)
 	job.name[CODEPLUG_NAME_LEN] = '\0';
 	return cp_post(name_job);
 }
+
+#if CONFIG_M17
+_Static_assert(M17_CP_CALL_LEN == 10, "the UI callsign buffer is the record");
+
+bool ui_svc_m17_call_show(char out[10], bool *stored)
+{
+	char name[CODEPLUG_NAME_LEN + 1];
+	settings_t *st;
+
+	if (stored != NULL)
+		*stored = false;
+	out[0] = '\0';
+	if (m17_callsign_stored(out)) {
+		if (stored != NULL)
+			*stored = true;
+		return true;
+	}
+	// The name the engine uses: the settings override, eight bytes as apply_prefs copies it, else the codeplug's
+	st = settings_begin();
+	name[0] = '\0';
+	if (st->radio_name[0] != '\0') {
+		memset(name, 0, sizeof name);
+		memcpy(name, st->radio_name, CODEPLUG_RADIO_NAME_LEN);
+	}
+	settings_end(hal_millis());
+	if (name[0] == '\0')
+		codeplug_radio_name(name);
+	return m17_callsign_pick(NULL, 0, name, out);
+}
+
+// Post the RAM settings back unchanged: an empty callsign makes apply reload the record, a debug override stays
+static void m17_call_job(void *ctx)
+{
+	radio_m17_settings_t s;
+
+	(void)ctx;
+	if (!m17_callsign_store(job.name)) {
+		save_failed(TRN(STORE_ERR_CODEPLUG_WRITE, "Couldn't write the codeplug: not saved"));
+		return;
+	}
+	radio_m17_settings(&s);
+	radio_req_m17_settings(&s);
+}
+
+bool ui_svc_m17_call_set(const char *text)
+{
+	if (job_busy())
+		return false;
+	if (text == NULL)
+		text = "";
+	strncpy(job.name, text, M17_ADDR_CHARS_MAX);
+	job.name[M17_ADDR_CHARS_MAX] = '\0';
+	return cp_post(m17_call_job);
+}
+#endif
 
 #if CONFIG_KEY_ASSIGN
 // --- Side keys (core/input/keyassign.h): the codeplug's quick-key slots, a copy here (UI task only), the key map

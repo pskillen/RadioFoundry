@@ -63,6 +63,9 @@ def ptt(down):
     (H.APRS, bytes([H.APRS_OP_SEND_NOW]), "position"),
     (H.APRS, bytes([H.APRS_OP_STATUS]) + b"x", "aprs"),
     (H.APRS, bytes([4]) + b"Q0TST", None),       # TEST_CALL: a RAM-only callsign, no transmission
+    (H.RADIO, bytes([H.OP_M17, 2]), "channel"),  # M17 BERT transmit
+    (H.RADIO, bytes([H.OP_M17, 4]) + b"\xff\xff\xff\xff\xff\xff" + b"hi", "channel"),
+    (H.RADIO, bytes([H.OP_M17, 1]), None),       # M17 BERT receive
     (9, b"", None),                     # GET_VIEW
 ])
 def test_keys_tx(cmd, payload, where):

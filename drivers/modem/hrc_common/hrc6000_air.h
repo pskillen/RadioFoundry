@@ -177,6 +177,7 @@ typedef struct hrc6000_air {
 	bool mod_saved;
 	uint8_t mod2, mod1;	// the pair before tx_begin
 	uint8_t tx_mod2, tx_mod1;	// ... and the one written for the profile
+	bool key_failed;	// the queue advances even if the PA did not key in time
 
 	hrc6000_air_stats_t st;
 } __attribute__((may_alias)) hrc6000_air_t;

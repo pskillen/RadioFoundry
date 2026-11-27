@@ -12,6 +12,9 @@
 #include "cjk_font.h"	// CJK_FONT_H: the line height a CJK language needs (CONFIG_LANG_ZH)
 #include "config.h"
 #include "codeplug/codeplug_modes.h"	// channel kinds: the mode word
+#if CONFIG_M17
+#include "m17/m17.h"
+#endif
 #if CONFIG_DMR_TRUNK
 #include "dmr/trunk/t3_ms.h"	// the engine's states, for the trunked status words
 #endif
@@ -628,6 +631,7 @@ void ui_draw_title(const font_t *f, int x, int y, int max_w, const char *prefix,
 
 static const char *wrap_line(const font_t *f, const char *t, int max_w, char *line, size_t cap);
 static int wrap_lines(const font_t *f, const char *t, int max_w, int max, char lines[][64], bool preview);
+static void fit_end(const font_t *f, const char *s, int max_w, char *out, size_t len);
 
 // An overlay's top edge (banner, two-line toast) moved up to a gap between lines of what is under it, so it never
 // cuts a line of text in half: the first row at or above y whose row above is all one color (background, or the
@@ -1187,6 +1191,11 @@ static void draw_talk(const radio_view_t *v, bool label_first)
 			sb_str(&b, "TG ");
 		sb_u32(&b, v->nxdn.talk, 1);
 #endif
+#if CONFIG_M17
+	} else if (v->ch.mode == RADIO_MODE_M17) {
+		sb_str(&b, "CAN ");
+		sb_u32(&b, v->m17.can, 1);
+#endif
 	} else {
 		// " MHz" goes before the frequency is cut (font.h alternates)
 		sb_str(&b, TEXT_ALT_OPEN);
@@ -1195,6 +1204,19 @@ static void draw_talk(const radio_view_t *v, bool label_first)
 		sb_freq(&b, v->ch.tx_hz);
 		sb_str(&b, TEXT_ALT_CLOSE);
 	}
+#if CONFIG_M17
+	// "CAN 3" then the arrow then who PTT calls. A heard address stays on the call line, not here.
+	if (v->ch.mode == RADIO_MODE_M17 && !v->ch.rx_only && v->ch.tx_hz != 0) {
+		const char *who = v->m17.tx_dst[0] == '\0' || strcmp(v->m17.tx_dst, "ALL") == 0 ?
+			TR(QUICK_VALUE_ALL, "All") : v->m17.tx_dst;
+		int x = gfx_text(f, 0, L->talk_y, buf, c);
+		char fit[40];
+		x = gfx_text(f, x, L->talk_y, GLYPH_ARROW, ui_col.dim);
+		gfx_text_fit(f, who, gfx_width() - x, fit, sizeof fit);
+		gfx_text(f, x, L->talk_y, fit, c);
+		return;
+	}
+#endif
 	// Too wide: shorter text, never a smaller font
 	int x = gfx_text(f, 0, L->talk_y, GLYPH_ARROW, ui_col.dim);	// no space, on purpose: as on DMR's talk line
 	char fit[40];
@@ -1256,6 +1278,19 @@ static void draw_chips(const radio_view_t *v, const ui_state_t *s)
 #endif
 		return;
 	}
+#if CONFIG_M17
+	if (v->ch.mode == RADIO_MODE_M17) {
+		if (pw_temp)
+			x = gfx_text(f, x, y, GLYPH_DOT, ui_col.warn);
+		x = gfx_text(f, x, y, ui_power_name(v->power, v->ch.tx_hz), pw_temp ? ui_col.warn : ui_col.fg) + f->w;
+		sb_init(&b, buf, sizeof buf);
+		sb_str(&b, "CAN ");
+		sb_u32(&b, v->m17.can, 1);
+		if (x + gfx_text_width(f, buf) <= w)
+			gfx_text(f, x, y, buf, ui_col.fg);
+		return;
+	}
+#endif
 	if (v->ch.mode == RADIO_MODE_NXDN) {
 		// The same for NXDN: the power, the RAN sent and the rate
 		if (pw_temp)
@@ -1399,7 +1434,12 @@ static const char *deny_reason(const radio_view_t *v, char *buf, size_t len)
 	case TXDENY_HWOPT: hwopt_needed(&b); break;
 	case TXDENY_REFUSED: sb_str(&b, TR(DENY_WHY_RADIO_REFUSED, "Radio refused to send")); break;
 	case TXDENY_BENCH: sb_str(&b, TR(DENY_WHY_AIR_BENCH, "Air bench: PTT off")); break;
-	case TXDENY_AIR_NO_TX: sb_str(&b, TR(DENY_WHY_AIR_NO_TX, "This mode: receive only")); break;
+	case TXDENY_AIR_NO_TX:
+		sb_str(&b, CONFIG_M17 && v->ch.mode == RADIO_MODE_M17 ?
+			TR(M17_DENY_RX_ONLY, "M17: receive only") :
+			TR(DENY_WHY_AIR_NO_TX, "This mode: receive only"));
+		break;
+	case TXDENY_M17_CALL: sb_str(&b, TR(M17_DENY_CALLSIGN, "M17: set your callsign")); break;
 #if CONFIG_P25_TRUNK || CONFIG_DMR_TRUNK
 	case TXDENY_TRUNK:
 		switch (trunk_why(v)) {
@@ -2196,6 +2236,87 @@ static void air_call_line(const air_call_t *c, const font_t *f, int y)
 }
 #endif
 
+#if CONFIG_M17
+static bool m17_receiving(const radio_view_t *v)
+{
+	return v->state == RS_RX && v->ch.mode == RADIO_MODE_M17 &&
+		(v->m17.flags & RADIO_M17_RX) && v->m17.rx_state != RADIO_M17_RX_NONE;
+}
+
+static const char *m17_rx_status(uint8_t state)
+{
+	switch (state) {
+	case RADIO_M17_RX_OTHER_CAN: return TR(M17_STATE_OTHER_CAN, "Other CAN");
+	case RADIO_M17_RX_ENCRYPTED: return TR(M17_STATE_ENCRYPTED, "Encrypted");
+	case RADIO_M17_RX_VOICE_DATA: return TR(M17_STATE_VOICE_DATA, "Voice + data");
+	case RADIO_M17_RX_DATA: return TR(M17_STATE_DATA, "Data");
+	case RADIO_M17_RX_VOICE: return TR(M17_STATE_VOICE, "Voice");
+	default: return GLYPH_ELLIPSIS;
+	}
+}
+
+// A receive block grows upward from the hint. Measure its actual lines before drawing adjacent Home content.
+static int __attribute__((noinline)) m17_rx_lines(const radio_m17_view_t *m, bool draw)
+{
+	const font_t *f = ui_layout.small;
+	int w = gfx_width();
+	const char *src = m->caller[0] ? m->caller : GLYPH_ELLIPSIS;
+	const char *dst = strcmp(m->dest, "ALL") == 0 ? TR(QUICK_VALUE_ALL, "All") : m->dest;
+	const char *status = m17_rx_status(m->rx_state);
+	char target[40], can[16], via[48], fit[RADIO_M17_META_LEN + 2];
+	sbuf_t b;
+
+	sb_init(&b, target, sizeof target);
+	sb_str(&b, src);
+	if (*dst) {
+		sb_str(&b, " " GLYPH_ARROW " ");
+		sb_str(&b, dst);
+	}
+	sb_init(&b, can, sizeof can);
+	sb_str(&b, "CAN ");
+	if (m->rx_can == UINT8_MAX)
+		sb_str(&b, GLYPH_ELLIPSIS);
+	else
+		sb_u32(&b, m->rx_can, 1);
+	bool split_addr = gfx_text_width(f, target) > w;
+	bool split_status = gfx_text_width(f, can) + f->w + gfx_text_width(f, status) > w;
+	int lines = 2 + split_addr + split_status + (m->via[0] != '\0') + (m->meta[0] != '\0');
+	int top = ui_layout.hint_y - lines * f->h;
+	if (!draw)
+		return top;
+	int y = top;
+	if (split_addr) {
+		gfx_text(f, 0, y, src, ui_col.rx);
+		gfx_text(f, 0, y += f->h, GLYPH_ARROW, ui_col.rx);
+		gfx_text(f, 2 * f->w, y, dst, ui_col.rx);
+	} else {
+		gfx_text(f, 0, y, target, ui_col.rx);
+	}
+	y += f->h;
+	if (m->via[0]) {
+		sb_init(&b, via, sizeof via);
+		sb_str(&b, TR(M17_BODY_VIA, "via "));
+		sb_str(&b, m->via);
+		gfx_text_fit(f, via, w, fit, sizeof fit);
+		gfx_text(f, 0, y, fit, ui_col.dim);
+		y += f->h;
+	}
+	int x = gfx_text(f, 0, y, can, ui_col.fg) + f->w;
+	if (split_status) {
+		y += f->h;
+		x = 0;
+	}
+	gfx_text_fit(f, status, w - x, fit, sizeof fit);
+	gfx_text(f, x, y, fit, m->rx_state == RADIO_M17_RX_OTHER_CAN || m->rx_state == RADIO_M17_RX_ENCRYPTED ?
+		ui_col.warn : ui_col.fg);
+	if (m->meta[0]) {
+		fit_end(f, m->meta, w, fit, sizeof fit);
+		gfx_text(f, 0, y + f->h, fit, ui_col.fg);
+	}
+	return top;
+}
+#endif
+
 static void draw_activity(const radio_view_t *v, const ui_state_t *s)
 {
 	const ui_layout_t *L = &ui_layout;
@@ -2462,6 +2583,22 @@ void ui_draw_home(const radio_view_t *v, const ui_state_t *s)
 #endif
 	gfx_clear(ui_col.bg);
 	ui_draw_top(v, s, NULL, NULL);
+#if CONFIG_M17
+	if (m17_receiving(v)) {
+		int top = m17_rx_lines(&v->m17, false);
+
+		if (top >= ui_layout.talk_y)
+			draw_place(v, s);
+		if (top >= ui_layout.chips_y)
+			draw_talk(v, s->label_first);
+		if (top >= ui_layout.activity_y) {
+			draw_chips(v, s);
+			if (ui_layout.sep_y >= 0)
+				gfx_hline(0, ui_layout.sep_y, gfx_width(), ui_col.line);
+		}
+		m17_rx_lines(&v->m17, true);
+	} else
+#endif
 	if (s->large_text) {
 		draw_home_large(v, s);
 	} else {
@@ -2814,13 +2951,13 @@ static void dual_pane(const radio_view_t *v, const ui_state_t *s, int i, int y, 
 
 // Large text (Settings > Display): the two channels only, each as large as fits. The selected one has the arrow;
 // the one a call comes in on is green and says RX (a word, for mono displays)
-static void dual_large(const radio_view_t *v, const ui_state_t *s)
+static void dual_large(const radio_view_t *v, const ui_state_t *s, int bottom)
 {
 	const ui_layout_t *L = &ui_layout;
 	const ui_dual_t *d = &s->dual;
 	int w = gfx_width();
 	int y = L->strip_h + 2;
-	int room = (L->hint_y - y) / 2;
+	int room = (bottom - y) / 2;
 	for (int i = 0; i < 2; i++) {
 		const ui_dual_pane_t *p = &d->pane[i];
 		char buf[48], form[48], fit[48];
@@ -3001,8 +3138,17 @@ void ui_draw_home_dual(const radio_view_t *v, const ui_state_t *s)
 	int w = gfx_width();
 	gfx_clear(ui_col.bg);
 	ui_draw_top(v, s, NULL, NULL);
+#if CONFIG_M17
+	if (m17_receiving(v)) {
+		int top = m17_rx_lines(&v->m17, false);
+
+		if (top - L->strip_h - 2 >= 2 * L->small->h)
+			dual_large(v, s, top);
+		m17_rx_lines(&v->m17, true);
+	} else
+#endif
 	if (s->large_text) {
-		dual_large(v, s);
+		dual_large(v, s, L->hint_y);
 	} else {
 		int top = L->strip_h, gap = gfx_height() >= UI_TALL_PX ? 6 : 2, pad;
 		dual_fit_t fit;
@@ -3032,8 +3178,6 @@ void ui_draw_bottom(const ui_state_t *s, const char *hint)
 	else if (s->hints && hint != NULL)
 		ui_draw_hint(hint, false);
 }
-
-static void fit_end(const font_t *f, const char *s, int max_w, char *out, size_t len);
 
 // Up to max lines of t wrapped to max_w: lines[] filled, the count returned. Text left after the last line shortens
 // it (at the end for a preview, else from the middle), so nothing is silently dropped
@@ -3077,7 +3221,11 @@ void ui_draw_banner(const ui_state_t *s)
 	} else {
 		nt = wrap_lines(f, bn->title, w - 4, 2, title, false);
 	}
-	int nx = bn->text[0] ? wrap_lines(f, bn->text, w - 4, 2, text, bn->kind == UI_BANNER_MESSAGE) : 0;
+	bool message = bn->kind == UI_BANNER_MESSAGE;
+#if CONFIG_M17_PACKET
+	message = message || bn->kind == UI_BANNER_M17_MESSAGE;
+#endif
+	int nx = bn->text[0] ? wrap_lines(f, bn->text, w - 4, 2, text, message) : 0;
 	int pad = gfx_height() >= UI_TALL_PX ? 2 : 1;
 	int h = (nt + nx + 1) * f->h + 2 * pad;
 	int y = L->hint_y - h;
@@ -3096,7 +3244,7 @@ void ui_draw_banner(const ui_state_t *s)
 		gfx_text(f, 2, ty, title[i], gfx_bpp() == 1 ? fg : bn->warn ? ui_col.warn : ui_col.fg);
 	for (int i = 0; i < nx; i++, ty += f->h)
 		gfx_text(f, 2, ty, text[i], fg);
-	const char *act = (bn->kind == UI_BANNER_MESSAGE || bn->kind == UI_BANNER_ZONE_OFFER || bn->kind == UI_BANNER_APRS_MESSAGE) ?
+	const char *act = (message || bn->kind == UI_BANNER_ZONE_OFFER || bn->kind == UI_BANNER_APRS_MESSAGE) ?
 		TR(BANNER_HINT_OPEN, "# Open") :
 		(bn->kind == UI_BANNER_CALL_ALERT || bn->kind == UI_BANNER_PRIVATE) ?
 			TR(BANNER_HINT_ACTIONS, "# Actions") : TR(BANNER_HINT_HIDE, "Back hide");
@@ -3627,6 +3775,32 @@ void ui_draw_hotspot(const radio_view_t *v, const hotspot_view_t *h, const ui_st
 
 // --- Quick settings (3x3 grid, positions match the keypad; a numbered list on 128x64) ---
 
+#if CONFIG_M17
+const radio_m17_selected_t *ui_m17_selected(const radio_view_t *v)
+{
+	const radio_m17_selected_t *sel = &v->m17_selected;
+	const radio_m17_context_t *c = &sel->context;
+	if (v->ch.mode != RADIO_MODE_M17 || sel->generation == 0 || c->is_vfo != v->vfo)
+		return NULL;
+	bool matches = v->vfo ? c->vfo_index == v->vfo_index && c->vfo.rx_hz == v->ch.rx_hz &&
+		c->vfo.tx_hz == v->ch.tx_hz :
+		c->stored.zone == v->zone_index && c->stored.pos == v->zone_pos && c->stored.number == v->channel_number;
+	return matches ? sel : NULL;
+}
+
+const char *ui_m17_destination(uint64_t dst, char out[RADIO_M17_CALL_LEN])
+{
+	if (dst == M17_ADDR_BROADCAST)
+		return TR(QUICK_VALUE_ALL, "All");
+	uint8_t raw[M17_ADDR_BYTES];
+	for (int i = M17_ADDR_BYTES - 1; i >= 0; i--) {
+		raw[i] = (uint8_t)dst;
+		dst >>= 8;
+	}
+	return m17_addr_decode(raw, out, RADIO_M17_CALL_LEN) ? out : "";
+}
+#endif
+
 uint8_t ui_quick_kind(int pos, const radio_view_t *v)
 {
 	static const uint8_t fm[UI_QUICK_TILES] = {
@@ -3639,6 +3813,18 @@ uint8_t ui_quick_kind(int pos, const radio_view_t *v)
 		return QT_POWER;
 	if (!v->vfo && pos == 3)
 		return QT_TO_VFO;	// a channel's tile 4 copies it to the VFO; the VFO's stays Mode
+#if CONFIG_M17
+	if (v->ch.mode == RADIO_MODE_M17 && (ui_svc_features() & UI_FEAT_M17)) {
+		if (pos == 7)
+			return QT_TALK_TO;
+		if (v->vfo) {
+			if (pos == 1)
+				return QT_M17_CAN;
+			if (pos == 2)
+				return QT_M17_SQUELCH;
+		}
+	}
+#endif
 	uint8_t kind = v->ch.mode == RADIO_MODE_DMR ? dmr[pos] : fm[pos];
 	if (v->vfo && (kind == QT_MONITOR || kind == QT_PRIVACY))
 		return QT_SPLIT;	// the VFO's TX frequency; Monitor stays on its key, privacy on channels
@@ -3674,6 +3860,11 @@ bool ui_quick_tile(int tile, const radio_view_t *v, const ui_state_t *s, char *l
 			TEXT_ALT_NEXT "DMon" TEXT_ALT_CLOSE),
 		[QT_PRIVACY] = TRN(QUICK_LABEL_PRIVACY, TEXT_ALT_OPEN "Privacy" TEXT_ALT_NEXT "Priv" TEXT_ALT_CLOSE),
 		[QT_TALK_TO] = TRN(QUICK_LABEL_TALK_TO, TEXT_ALT_OPEN "Talk to" TEXT_ALT_NEXT "Talk" TEXT_ALT_CLOSE),
+#if CONFIG_M17
+		[QT_M17_CAN] = TRN(M17_LABEL_CAN, "CAN"),
+		[QT_M17_SQUELCH] = TRN(QUICK_LABEL_CAN_SQUELCH, TEXT_ALT_OPEN "CAN squelch"
+			TEXT_ALT_NEXT "CAN sq" TEXT_ALT_CLOSE),
+#endif
 		[QT_TO_VFO] = TRN(QUICK_LABEL_COPY_TO_VFO, TEXT_ALT_OPEN "Copy to VFO"
 			TEXT_ALT_NEXT "To VFO" TEXT_ALT_CLOSE),
 		[QT_SPLIT] = TRN(QUICK_LABEL_TX_FREQ, TEXT_ALT_OPEN "TX freq" TEXT_ALT_NEXT "TXFreq" TEXT_ALT_CLOSE),
@@ -3778,6 +3969,16 @@ bool ui_quick_tile(int tile, const radio_view_t *v, const ui_state_t *s, char *l
 		sb_str(&b, s->privacy ? TR(VALUE_ON, "On") : TR(VALUE_OFF, "Off"));
 		return feat(UI_FEAT_PRIVACY) && CONFIG_DMR_PRIVACY;
 	case QT_TALK_TO:
+#if CONFIG_M17
+		if (v->ch.mode == RADIO_MODE_M17) {
+			const radio_m17_selected_t *sel = ui_m17_selected(v);
+			if (sel == NULL)
+				return false;
+			char dst[RADIO_M17_CALL_LEN];
+			sb_str(&b, ui_m17_destination(sel->effective_dst, dst));
+			return true;
+		}
+#endif
 		if (v->dmr.target_private)
 			sb_u32(&b, v->dmr.target_id, 1);
 		else if (v->dmr.target_id == 0xFFFFFFu)
@@ -3785,6 +3986,19 @@ bool ui_quick_tile(int tile, const radio_view_t *v, const ui_state_t *s, char *l
 		else
 			sb_u32(&b, v->dmr.target_id, 1);
 		return true;
+#endif
+#if CONFIG_M17
+	case QT_M17_CAN:
+	case QT_M17_SQUELCH: {
+		const radio_m17_selected_t *sel = ui_m17_selected(v);
+		if (sel == NULL)
+			return false;
+		if (kind == QT_M17_CAN)
+			sb_u32(&b, sel->can, 1);
+		else
+			sb_str(&b, sel->can_squelch ? TR(VALUE_ON, "On") : TR(VALUE_OFF, "Off"));
+		return true;
+	}
 #endif
 	default:
 		return false;

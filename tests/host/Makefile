@@ -152,13 +152,55 @@ m17EngineTest: m17EngineTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(CORE)/air
                $(CORE)/air/air_softmodem.c $(CORE)/air/air_softmodem.h
 	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17EngineTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
 
+TESTS   += m17PacketRxTest
+m17PacketRxTest: m17PacketRxTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h) \
+                 $(CORE)/air/air_softmodem.c
+	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17PacketRxTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
+
+TESTS   += airRxWorkTest
+airRxWorkTest: airRxWorkTest.c $(M17ENG) $(wildcard $(CORE)/air/*.h) $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_softmodem.c
+	$(CC) $(CFLAGS) $(if $(filter 1,$(COVERAGE) $(SANITIZE)),,-Os) -U_FORTIFY_SOURCE -DAIR_RX_WORK -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 \
+		-I$(ROOT)/hal -Wshadow -o $@ airRxWorkTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
+
+M17DECODE := $(CORE)/radio/radio_m17_msg_decode.c
+M17MSG  := $(M17DECODE) $(CORE)/radio/radio_m17_msg.c
+M17MSG_HEADERS := $(CORE)/radio/radio_m17_msg.h $(CORE)/radio/radio_m17_msg_decode.h
+M17MSG_FLAGS := -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow
+
 # The radio module's lend, without the state machine: a fake vocoder block and a fake P25 block
 TESTS   += m17RadioTest
 m17RadioTest: m17RadioTest.c $(M17ENG) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(CORE)/air/air_session.c \
-              $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/radio/radio_m17.h) $(CORE)/air/air_session.h
+              $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/radio/radio_m17.h) $(CORE)/air/air_session.h $(M17MSG) $(M17MSG_HEADERS)
 	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DCONFIG_P25=1 -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
 		-I$(ROOT)/hal -Wshadow -o $@ m17RadioTest.c $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c \
-		$(M17ENG) $(CORE)/air/air_session.c -lm
+		$(M17ENG) $(CORE)/air/air_session.c $(M17MSG) -lm
+
+TESTS   += m17MessageDecodeTest m17MessageStoreTest m17MessageRxTest m17MessageTxRequestTest m17MessageTxAdapterTest
+m17MessageDecodeTest: m17MessageDecodeTest.c $(M17DECODE) $(M17FEC) $(M17MSG_HEADERS) $(wildcard $(CORE)/m17/*.h)
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -o $@ m17MessageDecodeTest.c $(M17DECODE) $(M17FEC)
+
+m17MessageStoreTest: m17MessageStoreTest.c $(CORE)/radio/radio_m17_msg.c $(M17MSG_HEADERS)
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -o $@ m17MessageStoreTest.c $(CORE)/radio/radio_m17_msg.c
+
+m17MessageTxRequestTest: m17MessageTxRequestTest.c $(CORE)/radio/radio_m17_msg_tx.c $(CORE)/radio/radio_m17_msg_tx.h $(CORE)/m17/m17_text.h $(M17MSG_HEADERS)
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -o $@ m17MessageTxRequestTest.c $(CORE)/radio/radio_m17_msg_tx.c
+
+M17RX := $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(CORE)/air/air_session.c $(M17ENG) $(M17MSG)
+m17MessageRxTest: m17MessageRxTest.c $(M17RX) $(M17MSG_HEADERS) $(CORE)/radio/radio_m17.h \
+                  $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_session.h
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -DCONFIG_P25=1 -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
+		-o $@ m17MessageRxTest.c $(M17RX) -lm
+
+m17MessageTxAdapterTest: m17MessageTxAdapterTest.c $(M17RX) $(M17MSG_HEADERS) $(CORE)/radio/radio_m17.h \
+                         $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_session.h
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -DCONFIG_P25=1 -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
+		-o $@ m17MessageTxAdapterTest.c $(M17RX) -lm
+
+TESTS   += airSessionTxEndTest
+airSessionTxEndTest: airSessionTxEndTest.c $(CORE)/air/air_session.c $(CORE)/air/air_session.h \
+                     $(CORE)/air/air_framer.c $(CORE)/air/air_framer.h
+	$(CC) $(CFLAGS) -Wshadow -o $@ airSessionTxEndTest.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c
+
 nxdnEngineTest: nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(wildcard $(CORE)/nxdn/*.h) $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC)
 	$(CC) $(CFLAGS) -DCONFIG_NXDN_SCRAMBLER=1 -I$(ROOT)/hal -Wshadow -o $@ nxdnEngineTest.c $(CORE)/nxdn/nxdn_engine.c $(NXDN) $(CORE)/nxdn/nxdn_scramble.c $(CORE)/dmr/ambe/ambeFec.c $(CORE)/air/air_session.c $(CORE)/air/air_framer.c $(CORE)/air/air_softmodem.c $(FEC) -lm
 
@@ -284,7 +326,15 @@ run: $(TESTS)
 	./nxdnTest | tail -1
 	./m17FrameTest
 	./m17EngineTest
+	./m17PacketRxTest
+	./airRxWorkTest
 	./m17RadioTest
+	./m17MessageDecodeTest
+	./m17MessageStoreTest
+	./m17MessageRxTest
+	./m17MessageTxRequestTest
+	./m17MessageTxAdapterTest
+	./airSessionTxEndTest
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest
 	./p25VoiceTest
@@ -301,6 +351,7 @@ run: $(TESTS)
 	./sfrTest
 	./aprsTest
 	$(PYTHON) satelliteTleTest.py
+	$(PYTHON) -B m17BenchMessageTest.py
 ifneq ($(TSHARK),)
 	@# Independent check of the frames the gateway sent: no malformed packets or bad checksums
 	@for f in ipGatewayTest.pcap ipGatewayTest16.pcap ipGatewayTest31.pcap ipGatewayTestShared.pcap ipGatewayTestAir440.pcap; do "$(TSHARK)" -r $$f -o ip.check_checksum:TRUE -o udp.check_checksum:TRUE -z expert,note -q; done > ipGatewayTest.expert
@@ -396,12 +447,28 @@ radioCoreTestP25Nxdn: $(RCP25NX) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE
 
 # M17 only (no P25, no NXDN): the air-mode table has one row, and PTT does not ask for the DMR vocoder
 TESTS   += radioCoreTestM17
-RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c \
-           $(CORE)/hostlink/build_info.c $(CORE)/debuglink/debuglink_view_m17.c
+RCM17   := $(RCORE) $(CORE)/radio/radio_m17.c $(CORE)/radio/radio_lend.c $(M17ENG) $(CORE)/air/air_session.c $(M17MSG) \
+           $(CORE)/radio/radio_m17_msg_tx.c $(CORE)/hostlink/build_info.c $(CORE)/debuglink/debuglink_view_m17.c
 radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/call/*.h) $(CORE)/dmr/dmrDataService.h \
                   $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
 		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ $(RCM17) -lm
+
+# M17 message state tests include the radio core test harness.
+TESTS   += m17MessageRadioTest
+m17MessageRadioTest: m17MessageRadioTest.c $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/call/*.h) $(CORE)/dmr/dmrDataService.h \
+                     $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
+	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
+		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ m17MessageRadioTest.c $(filter-out radioCoreTest.c,$(RCM17)) -lm
+
+TESTS   += m17MessageDebugTest m17MessageDebugTestNoPacket
+M17DBG  := $(filter-out radioCoreTest.c,$(RCM17))
+m17MessageDebugTest: m17MessageDebugTest.c $(M17DBG) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/m17/*.h)
+	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
+		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ m17MessageDebugTest.c $(M17DBG) -lm
+m17MessageDebugTestNoPacket: m17MessageDebugTestNoPacket.c $(CORE)/debuglink/debuglink_view_m17.c $(CORE)/debuglink/dl_fmt.c
+	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DCONFIG_M17=1 -DCONFIG_M17_PACKET=0 -o $@ m17MessageDebugTestNoPacket.c \
+		$(CORE)/debuglink/debuglink_view_m17.c $(CORE)/debuglink/dl_fmt.c
 
 # The same with APRS: what the data service hears goes into the station list (a DMR APRS position, docs/spec/aprs.md 8.2)
 TESTS   += radioCoreTestAprs
@@ -529,7 +596,7 @@ boardBandTest: boardBandTest.c $(ROOT)/hal/board.h
 	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -o $@ boardBandTest.c
 
 run: run-core
-run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
+run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 m17MessageRadioTest m17MessageDebugTest m17MessageDebugTestNoPacket radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
           rx2LinkTest keyassignTest powerSwitchTest powerKeyTest boardBandTest batteryTest
 	./aprsRadioTest
 	./radioCoreTest
@@ -538,6 +605,9 @@ run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T
 	./radioCoreTestNxdn
 	./radioCoreTestP25Nxdn
 	./radioCoreTestM17
+	./m17MessageRadioTest
+	./m17MessageDebugTest
+	./m17MessageDebugTestNoPacket
 	./radioCoreTestP25T
 	./radioCoreTestAprs
 	./radioCoreTestAprsDmr
@@ -760,7 +830,7 @@ TESTS   += uiFlowTest uiFlowTestNoColor uiSim
 TESTS   += uiFlowTestSatellite
 
 uiFlowTest: uiFlowTest.c $(UIDEPS)
-	$(CC) $(UIFLAGS) -DCONFIG_P25=1 -DCONFIG_P25_TRUNK=1 -DCONFIG_NXDN=1 -o $@ uiFlowTest.c $(UIAPP) -lz
+	$(CC) $(UIFLAGS) -DCONFIG_P25=1 -DCONFIG_P25_TRUNK=1 -DCONFIG_NXDN=1 -DCONFIG_M17=1 -o $@ uiFlowTest.c $(UIAPP) -lz
 
 # The same flows built as a radio with only a monochrome screen builds them (CONFIG_UI_COLOR=n): no color rows;
 # without a translation (CONFIG_LANG_ES=n): the Language screen dims Spanish; and with the backlight tests
@@ -778,7 +848,7 @@ uiFlowTestSatellite: uiFlowTest.c $(UIDEPS)
 # off by default: make -B uiSim UI_LANG=fr (docs/dev/translating.md). The CJK face compiles to nothing without Chinese
 UI_LANG_FLAG := $(if $(UI_LANG),-DCONFIG_LANG_$(shell echo '$(UI_LANG)' | tr a-z A-Z)=1)
 uiSim: uiSim.c $(UIDEPS) $(CJK)
-	$(CC) $(UIFLAGS) $(UI_LANG_FLAG) -DCONFIG_SATELLITE_TLE=1 -o $@ uiSim.c $(UIAPP) $(CJK) -lz
+	$(CC) $(UIFLAGS) $(UI_LANG_FLAG) -DCONFIG_SATELLITE_TLE=1 -DCONFIG_M17=1 -o $@ uiSim.c $(UIAPP) $(CJK) -lz
 
 # The beep reel (tools/beep_reel.py). BEEP_DIR picks the beep.c and beep.h to build with, so CI can build the base
 # commit's beeps for a before and after comparison. We copy that beep.h into out/beep/radio/ and put out/beep first on

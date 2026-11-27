@@ -166,7 +166,11 @@ static void left(uint8_t from)
 #define ON_BL_TEST()	false
 #endif
 
-void ui_push(uint8_t scr, uint16_t arg)
+static void push_frame(uint8_t scr, uint16_t arg
+#if CONFIG_M17_PACKET
+		, uint32_t m17_msg_id
+#endif
+)
 {
 	if (sp + 1 >= UI_STACK_MAX) {
 		left(UI_STACK_MAX - 1);
@@ -175,6 +179,9 @@ void ui_push(uint8_t scr, uint16_t arg)
 	sp++;
 	stack[sp].scr = scr;
 	stack[sp].arg = arg;
+#if CONFIG_M17_PACKET
+	stack[sp].m17_msg_id = m17_msg_id;
+#endif
 	stack[sp].focus = 0;
 	stack[sp].top = 0;
 	ui_st.toast = NULL;
@@ -217,6 +224,24 @@ static void cp_question_gone(uint8_t from)
 			ui_toast(TR(CPLUG_TOAST_NOT_SAVED, "Not saved"));
 	}
 }
+
+
+void ui_push(uint8_t scr, uint16_t arg)
+{
+	push_frame(scr, arg
+#if CONFIG_M17_PACKET
+		, 0
+#endif
+	);
+}
+
+#if CONFIG_M17_PACKET
+void ui_push_m17_message(uint8_t scr, uint16_t arg, uint32_t id)
+{
+	if (id != 0)
+		push_frame(scr, arg, id);
+}
+#endif
 
 void ui_pop(void)
 {
@@ -563,6 +588,11 @@ void ui_open_caller_actions(void)
 static ui_event_t events[UI_EVENTS];
 static volatile uint8_t ev_head, ev_tail;
 static bool wake_req;		// a banner or the emergency screen came up: ui_app_take_wake
+#if CONFIG_M17_PACKET
+static uint32_t m17_received_seen;
+// One UI-task scratch snapshot shared by DMR and M17 banner reads; service reads have their own snapshot.
+ui_msg_t ui_message_scratch;
+#endif
 
 bool ui_notify(const ui_event_t *ev)
 {
@@ -638,9 +668,14 @@ static void handle_event(const ui_event_t *ev)
 		station(&b, ev);
 		{
 			// The banner shows two lines of the message: more than the event carries, from the inbox
-			ui_msg_t m;
-			bool got = ui_svc_msg_get(ev->index, &m);
-			banner(UI_BANNER_MESSAGE, false, ev->id, title, got ? m.text : ev->text);
+#if CONFIG_M17_PACKET
+			ui_msg_t *m = &ui_message_scratch;
+#else
+			ui_msg_t local_message;
+			ui_msg_t *m = &local_message;
+#endif
+			bool got = ui_svc_msg_get(ev->index, m);
+			banner(UI_BANNER_MESSAGE, false, ev->id, title, got ? m->text : ev->text);
 		}
 		ui_st.banner.msg = ev->index;
 		if (ui_st.message_tone)
@@ -660,6 +695,43 @@ static void handle_event(const ui_event_t *ev)
 				TR(MSG_BANNER_NOT_DELIVERED, "Not delivered: send again"));
 		}
 		break;
+#if CONFIG_M17_PACKET
+	case UI_EV_M17_SENT: {
+		// Sent means the packet went out. M17 has no delivery receipt, so this is never "Delivered".
+		const char *who = (ev->name[0] == '\0' || strcmp(ev->name, "ALL") == 0) ?
+			TR(QUICK_VALUE_ALL, "All") : ev->name;
+		const char *why = NULL;
+		if (ev->ok) {
+			sb_str(&b, TR(BANNER_SENT_TO, "Sent to "));
+			name_mark = b.p;
+			sb_str(&b, who);
+			banner(UI_BANNER_RESULT, false, 0, title, NULL);
+			break;
+		}
+		switch (ev->index) {
+		case RADIO_M17_MSG_TX_BUSY:
+			why = TR(MSG_M17_RESULT_BUSY, "Channel busy: try again");
+			break;
+		case RADIO_M17_MSG_TX_REFUSED:
+			why = TR(MSG_M17_RESULT_REFUSED, "Radio refused the message");
+			break;
+		case RADIO_M17_MSG_TX_CONTEXT:
+			why = TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed");
+			break;
+		case RADIO_M17_MSG_TX_ADDRESS:
+			why = TR(M17_DENY_CALLSIGN, "M17: set your callsign");
+			break;
+		case RADIO_M17_MSG_TX_FIT:
+			why = TR(M17_DENY_RX_ONLY, "M17: receive only");
+			break;
+		default:
+			why = TR(MSG_M17_RESULT_FAILED, "Message was not sent");
+			break;
+		}
+		banner(UI_BANNER_RESULT, true, 0, why, who);
+		break;
+	}
+#endif
 	case UI_EV_CALL_ALERT:
 		sb_str(&b, TR(ALERT_BANNER_FROM, "Call alert from "));
 		station(&b, ev);
@@ -796,13 +868,19 @@ static void handle_event(const ui_event_t *ev)
 static void banner_open(void)
 {
 	ui_banner_t *b = &ui_st.banner;
-	ui_target_t t;
-	memset(&t, 0, sizeof t);
-	t.id = b->id;
-	t.saved = ui_contact_name(b->id, false, t.name);
 	uint8_t kind = b->kind;
 	uint16_t msg = b->msg;
+#if CONFIG_M17_PACKET
+	uint32_t m17_id = b->id;
+#endif
 	b->kind = UI_BANNER_NONE;
+#if CONFIG_M17_PACKET
+	if (kind == UI_BANNER_M17_MESSAGE) {
+		// The ID may have been evicted while the banner was visible; the detail handles that case.
+		ui_push_m17_message(SCR_MESSAGE, 0, m17_id);
+		return;
+	}
+#endif
 	if (kind == UI_BANNER_MESSAGE)
 		ui_push(SCR_MESSAGE, msg);
 #if CONFIG_ZONE_SHARE
@@ -813,8 +891,13 @@ static void banner_open(void)
 	else if (kind == UI_BANNER_APRS_MESSAGE)
 		ui_push(SCR_MESSAGES, 0);
 #endif
-	else
+	else {
+		ui_target_t t;
+		memset(&t, 0, sizeof t);
+		t.id = b->id;
+		t.saved = ui_contact_name(b->id, false, t.name);
 		ui_open_actions(&t);
+	}
 }
 
 // --- VFO frequency entry (digits on Home in the VFO; task-flows.md 12) ---
@@ -1410,6 +1493,11 @@ static void quick_unavailable(uint8_t kind)
 	case QT_MODE: ui_toast(TR(WHY_VFO_ONE_MODE_IN_BUILD, "VFO: one mode in this build")); break;
 	case QT_TO_VFO: ui_toast(TR(WHY_VFO_NOT_IN_BUILD, "VFO: not in this build")); break;
 	case QT_VOX: ui_toast(TR(WHY_VOX_NOT_ON_RADIO_YET, "VOX: not on this radio yet")); break;
+#if CONFIG_M17
+	case QT_M17_CAN:
+	case QT_M17_SQUELCH:
+	case QT_TALK_TO: ui_toast(TR(M17_TOAST_CHANNEL_CHANGED, "Channel changed")); break;
+#endif
 	default: ui_toast(TR(WHY_NOT_IN_BUILD, "Not in this build")); break;
 	}
 }
@@ -1547,7 +1635,18 @@ static void quick_activate(int tile)
 		}
 		break;
 	case QT_TALK_TO:
-		ui_push(SCR_PICKER, 0);
+#if CONFIG_M17
+		if (view->ch.mode == RADIO_MODE_M17)
+			ui_push(SCR_M17_TALK_TO, 0);
+		else
+#endif
+			ui_push(SCR_PICKER, 0);
+		break;
+#endif
+#if CONFIG_M17
+	case QT_M17_CAN:
+	case QT_M17_SQUELCH:
+		ui_push(kind == QT_M17_CAN ? SCR_M17_CAN : SCR_M17_CAN_SQUELCH, 0);
 		break;
 #endif
 	case QT_POWER: {
@@ -1958,6 +2057,10 @@ void ui_app_init(void)
 	knob_seen = -1;
 #endif
 	wake_req = false;
+#if CONFIG_M17_PACKET
+	m17_received_seen = 0;
+	stack[0].m17_msg_id = 0;
+#endif
 #if CONFIG_DUAL_WATCH
 	ui_dual_reset();
 #endif
@@ -2190,7 +2293,8 @@ void ui_app_key(const input_event_t *ev)
 	// Long * locks only from Home (principles 3): in a menu it would lock the keys mid-task, and in text entry a slow *
 	// is a delete. It unlocks from anywhere (auto lock can lock with a menu open)
 	bool typing = stack[sp].scr == SCR_TEXT || stack[sp].scr == SCR_APRS_TO ||
-		stack[sp].scr == SCR_MESSAGE_TEXT;
+		stack[sp].scr == SCR_MESSAGE_TEXT || stack[sp].scr == SCR_M17_CALL ||
+		stack[sp].scr == SCR_M17_CHAN_DST;
 	bool lock_key = has_quick_key ? (ev->action == ACT_QUICK && ev->gesture == GESTURE_LONG && (sp == 0 || ui_st.locked)) :
 		(ev->action == ACT_BACK && ev->gesture == GESTURE_LONG && ui_st.locked);
 	// A side key set to key lock (keyassign.h) locks and unlocks on a press or a long press, as long QUICK does
@@ -2498,6 +2602,27 @@ bool ui_app_tick(const radio_view_t *v, uint32_t now_ms)
 	knob_tick(v);
 #endif
 	ui_svc_poll();
+#if CONFIG_M17_PACKET
+	ui_m17_msg_summary_t m17_summary;
+	ui_svc_m17_msg_summary(&m17_summary);
+	if (m17_summary.received_seq != m17_received_seen) {
+		m17_received_seen = m17_summary.received_seq;
+		if (m17_summary.last_received_id != 0 &&
+		    ui_svc_m17_msg_get(m17_summary.last_received_id, &ui_message_scratch)) {
+			char title[UI_BANNER_TEXT];
+			sbuf_t b;
+			sb_init(&b, title, sizeof title);
+			sb_str(&b, TR(MSG_BANNER_FROM, "Message from "));
+			name_mark = b.p;
+			sb_str(&b, ui_message_scratch.call);
+			banner(UI_BANNER_M17_MESSAGE, false, m17_summary.last_received_id, title, ui_message_scratch.text);
+			if (ui_st.message_tone)
+				ui_svc_beep(UI_BEEP_MESSAGE);
+			vibrate(UI_VIBE_MESSAGE);
+		}
+	}
+	ui_svc_m17_msg_poll();
+#endif
 	ui_svc_keys_poll();
 #if CONFIG_ZONE_EDIT
 	ui_svc_zone_poll();
@@ -2641,10 +2766,15 @@ bool ui_app_tick(const radio_view_t *v, uint32_t now_ms)
 #endif
 	if (ui_st.entry && (now - entry_last >= ENTRY_TIMEOUT_MS || !view->vfo))
 		entry_cancel();
-	uint16_t unread = ui_svc_msg_unread();
+	uint32_t unread = ui_svc_msg_unread();
 	aprs_view_t aprs_view;
 	if (ui_svc_aprs_view(&aprs_view))
 		unread += aprs_view.unread;
+#if CONFIG_M17_PACKET
+	unread += m17_summary.unread;
+#endif
+	if (unread > UINT16_MAX)
+		unread = UINT16_MAX;
 	if (unread != ui_st.unread) {
 		ui_st.unread = unread;
 		dirty = true;

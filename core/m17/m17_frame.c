@@ -3,6 +3,7 @@
 // M17 frame codec (docs/spec/m17.md): CRC, addresses, puncturing, interleaving, randomizing, and LSF, stream, packet
 // and BERT payloads. No RTOS or board code.
 #include "m17.h"
+#include "../air/air_rx_work.h"
 
 #include <string.h>
 
@@ -296,6 +297,8 @@ static int conv_decode(const m17_conv_path_t *path, const uint8_t *plain368, uin
 	for (uint16_t i = 0; i < path->nkeep; i++)
 		bit_put(keep, i, bit_get(plain368, (uint16_t)(src_off + i)));
 	unpuncture_soft(path, keep, path->nkeep, w->soft);
+	AIR_RX_ADD(viterbi, 1);
+	AIR_RX_ADD(viterbi_bits, path->nbits);
 	return fec_conv_decode(&M17_CONV_CODE, w->soft, path->nbits, w->dec, out);
 }
 
@@ -536,7 +539,7 @@ void m17_bert_encode(uint8_t payload[M17_PAYLOAD_BYTES])
 	m17_bert_encode_bits(in, payload);
 }
 
-int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BITS / 8])
+int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BYTES])
 {
 	uint8_t plain[M17_PAYLOAD_BYTES];
 	uint8_t dec[28];
@@ -546,7 +549,7 @@ int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w,
 	errs = conv_decode(&path_bert, plain, 0, w, dec);
 	if (errs < 0)
 		return errs;
-	memset(out, 0, M17_BERT_BITS / 8);
+	memset(out, 0, M17_BERT_BYTES);
 	for (uint16_t i = 0; i < M17_BERT_BITS; i++)
 		bit_put(out, i, bit_get(dec, i));
 	return errs;

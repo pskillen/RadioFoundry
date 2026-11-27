@@ -83,10 +83,17 @@ static void build_lsf(m17_engine_t *e)
 {
 	uint8_t pay[M17_PAYLOAD_BYTES];
 	uint8_t sync[2];
+	uint16_t type = (uint16_t)((e->cfg.can << M17_TYPE_CAN_SHIFT) & M17_TYPE_CAN_MASK);
+
+	// Encryption, META subtype and signature bits are zero in both modes.
+	if (e->cfg.tx_kind == M17_TX_VOICE)
+		type |= M17_TYPE_STREAM | M17_TYPE_VOICE;
 
 	memset(e->lsf, 0, sizeof e->lsf);
 	put_addr(e->lsf, e->cfg.dst);
 	put_addr(e->lsf + M17_ADDR_BYTES, e->cfg.own);
+	e->lsf[M17_LSF_TYPE_OFFSET] = (uint8_t)(type >> 8);
+	e->lsf[M17_LSF_TYPE_OFFSET + 1] = (uint8_t)type;
 	m17_lsf_encode(e->lsf, pay);
 	frame_sync(M17_SYNC_ID_LSF, sync);
 	fill_frame(e, sync, pay);
@@ -128,7 +135,7 @@ static void build_stream(m17_engine_t *e, bool last)
 
 static void build_bert(m17_engine_t *e)
 {
-	uint8_t bits[(M17_BERT_BITS + 7) / 8];
+	uint8_t bits[M17_BERT_BYTES];
 	uint8_t pay[M17_PAYLOAD_BYTES];
 	uint8_t sync[2];
 

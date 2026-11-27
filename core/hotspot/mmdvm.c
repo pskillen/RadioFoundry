@@ -410,7 +410,9 @@ static void dmr_data(uint8_t command, const uint8_t *p, uint8_t len, uint32_t no
 	}
 }
 
-bool mmdvm_frame(const uint8_t *frame, uint16_t len, uint32_t now_ms)
+// noinline: inlined into host-link dispatch, the version and status buffers sit on every protocol's path, including
+// the stub entry's VFO read (the host task's deepest chain with the debug link off)
+bool __attribute__((noinline)) mmdvm_frame(const uint8_t *frame, uint16_t len, uint32_t now_ms)
 {
 	if ((len < 3) || (frame[0] != MMDVM_FRAME_START) || (frame[1] != len)) {
 		return true;

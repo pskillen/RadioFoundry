@@ -174,6 +174,41 @@ msgctxt "MSG_BANNER_NOT_DELIVERED"
 msgid "Not delivered: send again"
 msgstr "未送达：请重发"
 
+#: core/ui/ui_app.c core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "QUICK_VALUE_ALL"
+msgid "All"
+msgstr "全部"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c
+msgctxt "MSG_M17_RESULT_BUSY"
+msgid "Channel busy: try again"
+msgstr "信道忙：请重试"
+
+#: core/ui/ui_app.c
+msgctxt "MSG_M17_RESULT_REFUSED"
+msgid "Radio refused the message"
+msgstr "电台拒绝了该消息"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c
+msgctxt "M17_TOAST_CHANNEL_CHANGED"
+msgid "Channel changed"
+msgstr "信道已更改"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "M17_DENY_CALLSIGN"
+msgid "M17: set your callsign"
+msgstr "M17: 请先设置呼号"
+
+#: core/ui/ui_app.c core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "M17_DENY_RX_ONLY"
+msgid "M17: receive only"
+msgstr "M17: 仅接收"
+
+#: core/ui/ui_app.c
+msgctxt "MSG_M17_RESULT_FAILED"
+msgid "Message was not sent"
+msgstr "消息未发出"
+
 #: core/ui/ui_app.c
 msgctxt "ALERT_BANNER_FROM"
 msgid "Call alert from "
@@ -1079,7 +1114,7 @@ msgctxt "APRS_LABEL_PACKETS"
 msgid "Packets"
 msgstr "数据包"
 
-#: core/ui/ui_aprs.c
+#: core/ui/ui_aprs.c core/ui/ui_menus.c
 msgctxt "HINT_OK_CHOOSE_BACK"
 msgid "OK choose  Back"
 msgstr "OK 选  返回"
@@ -1785,6 +1820,11 @@ msgid "New APRS message"
 msgstr "新 APRS 消息"
 
 #: core/ui/ui_menus.c
+msgctxt "MSG_ROW_NEW_M17"
+msgid "New M17 message"
+msgstr "新 M17 消息"
+
+#: core/ui/ui_menus.c
 msgctxt "MSG_HINT_LIST"
 msgid "OK open  # reply  Back"
 msgstr "OK 打开  # 回复  返回"
@@ -1838,6 +1878,11 @@ msgstr "来自 "
 msgctxt "MSG_BODY_TO"
 msgid "To "
 msgstr "至 "
+
+#: core/ui/ui_menus.c
+msgctxt "MSG_M17_BODY_STORED_CUT"
+msgid "[Stored text truncated]"
+msgstr "[存储的消息不全]"
 
 #: core/ui/ui_menus.c
 msgctxt "HINT_OK_CHOOSE_MORE_BACK"
@@ -2130,9 +2175,34 @@ msgid "Empty zone"
 msgstr "空区域"
 
 #: core/ui/ui_menus.c
+msgctxt "MSG_M17_TOAST_UNAVAILABLE"
+msgid "M17 message: not available"
+msgstr "M17 消息：不可用"
+
+#: core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "DENY_WHY_RX_ONLY"
+msgid "This channel is RX only"
+msgstr "本信道仅接收"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_DST"
+msgid "Not an M17 address"
+msgstr "不是 M17 地址"
+
+#: core/ui/ui_menus.c
+msgctxt "TOAST_SAVED"
+msgid "Saved"
+msgstr "已保存"
+
+#: core/ui/ui_menus.c
 msgctxt "TEXT_TOAST_FULL"
 msgid "That's the most it can hold"
 msgstr "已达上限"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_CHAR"
+msgid "Letters, digits and - / ."
+msgstr "A-Z 0-9 - / ."
 
 #: core/ui/ui_menus.c
 msgctxt "LABEL_NAME"
@@ -2143,6 +2213,16 @@ msgstr "名称"
 msgctxt "SATELLITE_2"
 msgid "Satellite"
 msgstr "卫星"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_LABEL_CALLSIGN"
+msgid "{M17 callsign|M17 call}"
+msgstr "{M17呼号|M17}"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_LABEL_TALK_TO"
+msgid "Talk to"
+msgstr "通话对象"
 
 #: core/ui/ui_menus.c
 msgctxt "SATELLITE_TLE_TITLE_LINE1_UPPER"
@@ -2243,6 +2323,16 @@ msgstr "模式"
 msgctxt "CHAN_LABEL_RATE"
 msgid "Rate"
 msgstr "速率"
+
+#: core/ui/ui_menus.c core/ui/ui_screens.c
+msgctxt "M17_LABEL_CAN"
+msgid "CAN"
+msgstr "CAN"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_LABEL_CAN_SQUELCH"
+msgid "CAN squelch"
+msgstr "CAN静噪"
 
 #: core/ui/ui_menus.c core/ui/ui_screens.c
 msgctxt "WORD_RX_ONLY"
@@ -2428,6 +2518,11 @@ msgstr "ID 最大 16776415"
 msgctxt "CHAN_TOAST_DCS_DIGITS"
 msgid "DCS codes use digits 0-7"
 msgstr "DCS 码仅用 0-7"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_CAN"
+msgid "CAN is 0 to 15"
+msgstr "CAN 0-15"
 
 #: core/ui/ui_menus.c
 msgctxt "CHAN_TOAST_NAC_REPEATER"
@@ -3073,11 +3168,6 @@ msgstr "保存在电台频率中"
 msgctxt "BODY_RADIO"
 msgid "Radio: "
 msgstr "电台： "
-
-#: core/ui/ui_menus.c
-msgctxt "TOAST_SAVED"
-msgid "Saved"
-msgstr "已保存"
 
 #: core/ui/ui_menus.c
 msgctxt "MYID_TOAST_IDS_START_AT_1"
@@ -4345,6 +4435,11 @@ msgid " steps"
 msgstr " 步"
 
 #: core/ui/ui_menus.c
+msgctxt "M17_WHY_NOT_ON_RADIO"
+msgid "M17: not on this radio"
+msgstr "本机不支持 M17"
+
+#: core/ui/ui_menus.c
 msgctxt "WHY_PERMIT_TONE_NOT_IN_BUILD"
 msgid "Talk permit tone: not in this build"
 msgstr "通话许可音：本版本无"
@@ -4513,6 +4608,16 @@ msgstr "通话对象"
 msgctxt "PICKER_HINT"
 msgid "{PTT once  OK use  Hold OK set|OK use  Hold OK set}"
 msgstr "{PTT 一次  OK 使用  长按 OK 设定|OK 使用  长按 OK 设定}"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_ROW_TALK_OTHER"
+msgid "Other…"
+msgstr "其他……"
+
+#: core/ui/ui_menus.c
+msgctxt "M17_TOAST_TALK_TO_FAILED"
+msgid "Couldn't queue Talk to"
+msgstr "无法设置目标"
 
 #: core/ui/ui_menus.c
 msgctxt "SCAN_ROW_SKIP_FOR_NOW"
@@ -4838,11 +4943,6 @@ msgstr "请关机再开机"
 msgctxt "HW_FIX_SETTINGS_PATH"
 msgid "Settings>Advanced>Hardware"
 msgstr "设置>高级>Hardware"
-
-#: core/ui/ui_screens.c
-msgctxt "DENY_WHY_RX_ONLY"
-msgid "This channel is RX only"
-msgstr "本信道仅接收"
 
 #: core/ui/ui_screens.c
 msgctxt "DENY_WHY_BANDS"
@@ -5310,6 +5410,36 @@ msgid "MON: digital monitor"
 msgstr "MON：数字监听"
 
 #: core/ui/ui_screens.c
+msgctxt "M17_STATE_OTHER_CAN"
+msgid "Other CAN"
+msgstr "其他 CAN"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_ENCRYPTED"
+msgid "Encrypted"
+msgstr "已加密"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_VOICE_DATA"
+msgid "Voice + data"
+msgstr "语音和数据"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_DATA"
+msgid "Data"
+msgstr "数据"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_STATE_VOICE"
+msgid "Voice"
+msgstr "语音"
+
+#: core/ui/ui_screens.c
+msgctxt "M17_BODY_VIA"
+msgid "via "
+msgstr "经 "
+
+#: core/ui/ui_screens.c
 msgctxt "ACTIVITY_STATE_SQUELCH_OPEN"
 msgid "Squelch open"
 msgstr "静噪打开"
@@ -5600,6 +5730,11 @@ msgid "{Talk to|Talk}"
 msgstr "{通话对象|通话}"
 
 #: core/ui/ui_screens.c
+msgctxt "QUICK_LABEL_CAN_SQUELCH"
+msgid "{CAN squelch|CAN sq}"
+msgstr "{CAN静噪|CAN静}"
+
+#: core/ui/ui_screens.c
 msgctxt "QUICK_LABEL_COPY_TO_VFO"
 msgid "{Copy to VFO|To VFO}"
 msgstr "{复制到 VFO|到 VFO}"
@@ -5623,11 +5758,6 @@ msgstr "接收亚音"
 msgctxt "QUICK_VALUE_COPY"
 msgid "Copy"
 msgstr "复制"
-
-#: core/ui/ui_screens.c
-msgctxt "QUICK_VALUE_ALL"
-msgid "All"
-msgstr "全部"
 
 #: core/ui/ui_screens.c
 msgctxt "QUICK_HINT_SPLIT"

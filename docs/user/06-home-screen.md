@@ -62,6 +62,13 @@ listen to), "Encrypted: not played" and "No codec: voice off". Hold **Monitor** 
 
 On FM, the activity region shows "Receiving" while the squelch is open, or "Squelch open" (monitor).
 
+On M17, Home shows the incoming caller, destination, and CAN. A call to everyone shows **All**. An ellipsis
+appears while Home is waiting for the callsign or CAN. **Other CAN** means the call is on a different CAN and
+the CAN filter is on. The other labels are **Encrypted**, **Voice + data**, **Data**, and **Voice**.
+If a relay provides the original caller's callsign, the **via** line names the relay. Text in the call setup
+appears above the hint as it arrives. On a small screen, the receive lines can replace the usual transmit details
+until the call ends. See [Read an incoming M17 call](24-m17.md#read-an-incoming-call).
+
 ## Transmitting
 
 While you hold **PTT**, the screen shows TALKING, the target, the timeslot and color code (DMR), the time on air and

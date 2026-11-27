@@ -24,6 +24,9 @@
 #if CONFIG_NXDN
 #include "nxdn/nxdn_codeplug.h"
 #endif
+#if CONFIG_M17
+#include "m17/m17_codeplug.h"
+#endif
 
 // The UI services' one radio view copy (the UI task's only; too big for its stack). A service fetches it with
 // radio_get_view and reads it before returning: nothing may hold it across a call into another service
@@ -55,6 +58,7 @@ extern radio_view_t ui_svc_view;
 #define UI_FEAT_P25		(1u << 22)	// P25 on this board (CONFIG_P25, radio_p25_fits): the VFO's mode tile offers it
 #define UI_FEAT_NXDN		(1u << 23)	// NXDN on this board (CONFIG_NXDN, radio_nxdn_fits): the same
 #define UI_FEAT_M17		(1u << 24)	// M17 on this board (CONFIG_M17, radio_m17_fits): the same
+#define UI_FEAT_M17_PACKET	(1u << 25)	// M17 packet receive enabled and supported by the board
 uint32_t ui_svc_features(void);
 // The parts of it each package reports (ui_svc_features ORs them): dmr-voice / radio core, dmr-data, storage-cps,
 // radio-features
@@ -104,14 +108,17 @@ bool ui_svc_save_channel(void);
 // codeplug storage in this build
 void ui_svc_next_aes_key(channel_t *ch);
 bool ui_svc_write_channel(uint16_t number, const channel_t *ch, uint16_t from);
-#if CONFIG_P25 || CONFIG_NXDN
-// A P25 or NXDN channel's own settings, its tag's parameter block (p25-codeplug.md 2, nxdn-codeplug.md 2)
+#if CONFIG_P25 || CONFIG_NXDN || CONFIG_M17
+// A P25, NXDN or M17 channel's own settings, its tag's parameter block
 typedef union {
 #if CONFIG_P25
 	p25_conv_t p25;
 #endif
 #if CONFIG_NXDN
 	nxdn_conv_t nxdn;
+#endif
+#if CONFIG_M17
+	m17_chan_t m17;
 #endif
 } ui_air_conv_t;
 // ui_svc_write_channel for a P25 or NXDN channel (ch's kind, or a plain one in that mode) with conv as its block: the
@@ -201,11 +208,17 @@ void ui_svc_volume_hold(bool hold);
 
 // --- Messages and signaling (dmr-data) ---
 #define UI_MSG_TEXT_MAX	143
+enum { UI_MSG_VIA_DMR, UI_MSG_VIA_M17 };
 typedef struct {
 	uint32_t src;		// sender (or, for sent ones, recipient)
 	bool group;		// sent to a talkgroup
 	bool unread;
 	bool sent;		// one we sent
+#if CONFIG_M17_PACKET
+	uint8_t via;		// UI_MSG_VIA_* (DMR is zero)
+	bool cut;		// stored text was truncated
+	char call[10];		// M17 sender callsign
+#endif
 	uint32_t age_ms;	// how long ago
 	char name[17];		// sender's name if known
 	char text[UI_MSG_TEXT_MAX + 1];
@@ -215,6 +228,22 @@ uint16_t ui_svc_msg_unread(void);
 bool ui_svc_msg_get(uint16_t i, ui_msg_t *out);
 void ui_svc_msg_read(uint16_t i);		// mark read
 bool ui_svc_msg_delete(uint16_t i);
+// M17 snapshots are independent of the DMR inbox; IDs are nonzero and remain stable across insertions.
+typedef struct {
+	uint32_t received_seq, last_received_id;
+	uint8_t count, unread;
+} ui_m17_msg_summary_t;
+void ui_svc_m17_msg_summary(ui_m17_msg_summary_t *out);
+bool ui_svc_m17_msg_get_at(uint16_t i, uint32_t *id, ui_msg_t *out);
+bool ui_svc_m17_msg_get(uint32_t id, ui_msg_t *out);
+bool ui_svc_m17_msg_read(uint32_t id);
+bool ui_svc_m17_msg_delete(uint32_t id);
+// Queue one M17 text message on the selected channel. call is the destination
+// (blank or ALL is broadcast). text is handset display text; the service turns
+// it into UTF-8 and checks the wire length. False: nothing queued. A queued
+// send finishes later, as UI_EV_M17_SENT from ui_svc_m17_msg_poll().
+bool ui_svc_m17_msg_send(const char *call, const char *text);
+void ui_svc_m17_msg_poll(void);
 // Queue a text message; the result comes back as a ui_notify() event
 bool ui_svc_msg_send(uint32_t dst, bool group, const char *text);
 bool ui_svc_msg_reply(uint16_t i, const char *text);
@@ -504,6 +533,8 @@ typedef enum {
 				// says why
 	UI_EV_CODEPLUG_FOREIGN,	// a codeplug write is held: ask what to do with another firmware's codeplug
 	UI_EV_APRS_MESSAGE,	// an APRS message addressed to us: name = sender callsign, text = message text
+	UI_EV_M17_SENT,		// an M17 message finished: ok = sent on air (not a delivery receipt);
+				// name = destination (ALL is broadcast); index = radio_m17_msg_tx_reason_t when !ok
 } ui_event_kind_t;
 
 typedef struct {
@@ -525,6 +556,13 @@ void ui_svc_boot_text(char line1[17], char line2[17]);
 enum { UI_NAME_RADIO, UI_NAME_BOOT1, UI_NAME_BOOT2, UI_NAME_COUNT };
 void ui_svc_name_get(uint8_t which, char out[17]);
 bool ui_svc_name_set(uint8_t which, const char *text);
+#if CONFIG_M17
+// The radio-wide M17 callsign (m17-codeplug.md 1). show writes the explicit record, or the radio-name fallback when
+// there is none (*stored false). False, and out empty, when that fallback is not a callsign either. set queues a
+// storage job (false while one is pending): empty text clears the record.
+bool ui_svc_m17_call_show(char out[10], bool *stored);
+bool ui_svc_m17_call_set(const char *text);
+#endif
 
 // Queue an event for the UI (copies it). False when the queue is full (the event is dropped)
 bool ui_notify(const ui_event_t *ev);

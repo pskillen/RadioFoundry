@@ -49,6 +49,13 @@ typedef enum {
 #if CONFIG_BACKLIGHT_TEST
 	SCR_BL_TEST,			// Settings > Advanced > Backlight tests
 #endif
+	SCR_M17_CALL,			// the radio-wide M17 callsign (Settings > My radio; CONFIG_M17)
+	SCR_M17_CHAN_DST,		// an M17 channel's Talk to (the channel editor; CONFIG_M17)
+	SCR_M17_TALK_TO,		// temporary M17 destination (Quick settings; CONFIG_M17)
+	SCR_M17_TALK_TO_OTHER,		// custom temporary M17 destination (CONFIG_M17)
+	SCR_M17_CAN,			// Quick settings: the M17 VFO's CAN (CONFIG_M17)
+	SCR_M17_CAN_SQUELCH,		// Quick settings: the M17 VFO's CAN filter (CONFIG_M17)
+	SCR_M17_MESSAGE_TO,		// M17 message destination (Messages; CONFIG_M17_PACKET)
 	SCR_COUNT
 } ui_scr_t;
 
@@ -65,6 +72,9 @@ typedef struct {
 	uint8_t scr;
 	uint16_t focus, top;
 	uint16_t arg;		// zone index, settings group, message index, info page
+#if CONFIG_M17_PACKET
+	uint32_t m17_msg_id;	// nonzero: stable M17 message reference; zero: DMR/APRS
+#endif
 } ui_frame_t;
 
 // A station or talkgroup that actions apply to
@@ -131,6 +141,11 @@ const radio_view_t *ui_view(void);
 ui_frame_t *ui_frame(void);
 uint8_t ui_depth(void);
 void ui_push(uint8_t scr, uint16_t arg);
+#if CONFIG_M17_PACKET
+extern ui_msg_t ui_message_scratch;
+// Sets the reference before the screen enter hook and list callbacks. IDs must be nonzero.
+void ui_push_m17_message(uint8_t scr, uint16_t arg, uint32_t id);
+#endif
 void ui_pop(void);
 #if CONFIG_BACKLIGHT_TEST
 // The backlight tests: hold the light at a percent (0-100) against the dim and off times, or -1 to let it go

@@ -185,7 +185,8 @@ static void test_stream_roundtrip(void)
 
 static void test_packet_bert_roundtrip(void)
 {
-	uint8_t data[25], data2[25], bits[26], pay[M17_PAYLOAD_BYTES], bert[M17_BERT_BITS / 8], bert2[M17_BERT_BITS / 8];
+	uint8_t data[25], data2[25], bits[26], pay[M17_PAYLOAD_BYTES];
+	uint8_t bert[M17_BERT_BYTES], bert2[M17_BERT_BYTES];
 	m17_fec_work_t w;
 	uint8_t fnum, vb;
 	bool last;
@@ -207,6 +208,8 @@ static void test_packet_bert_roundtrip(void)
 	m17_packet_encode(data, 0, true, 7, pay);
 	CHECK(m17_packet_decode(pay, &w, data2, &fnum, &last, &vb) >= 0, "last packet");
 	CHECK(last && vb == 7, "last valid");
+	memset(bert, 0xff, sizeof bert);
+	memset(bert2, 0, sizeof bert2);
 	m17_bert_encode(pay);
 	CHECK(m17_bert_decode(pay, &w, bert2) >= 0, "bert");
 	m17_bert_encode(pay);

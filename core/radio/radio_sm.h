@@ -14,6 +14,9 @@
 #include "radio/radio_cwid.h"
 #include "radio/beep.h"	// beep_seg_t
 #include "radio/sigtone.h"	// SIG_STEPS
+#if CONFIG_M17_PACKET
+#include "m17/m17_engine.h"	// m17_csma_t
+#endif
 #if CONFIG_APRS
 #include "aprs/aprs.h"
 #endif
@@ -201,6 +204,13 @@ typedef enum {
 	RREQ_NXDN_SET,		// radio_task.c: the pending NXDN settings were copied (radio_nxdn_set_settings); applied here
 	RREQ_M17_SET,		// radio_task.c: the pending M17 settings were copied (radio_m17_set_settings); applied here
 	RREQ_M17_BERT,		// arg: 1 count received BERT, 2 transmit BERT, 3 stop
+#if CONFIG_M17
+	RREQ_M17_TALK_TO,	// arg and arg2 carry the low and high words of the destination
+	RREQ_M17_VFO_CAN,	// arg: new value, arg2: edit CAN squelch instead of CAN
+#endif
+#if CONFIG_M17_PACKET
+	RREQ_M17_MSG_SEND,	// radio_task.c: arg and arg2 carry the serial, never radio_sm_request
+#endif
 	// New request types go above
 
 	RREQ_COUNT		// KEEP LAST: sizes req_flags[] (radio_sm.c)
@@ -226,6 +236,9 @@ typedef struct {
 	uint8_t type;		// radio_req_type_t
 	int32_t arg;
 	uint32_t arg2;
+#if CONFIG_M17
+	uint32_t generation;	// RREQ_M17_TALK_TO, RREQ_M17_VFO_CAN
+#endif
 } radio_req_t;
 
 #if CONFIG_DMR
@@ -298,6 +311,28 @@ typedef struct {
 	int16_t volume_sent;		// last level given to board.radio->volume, -1 = none yet
 	int16_t knob_seen;		// the knob's position last put in view.volume_knob, -1 = none yet
 	bool vol_hold;			// RREQ_VOLUME_HOLD: the level stays, the knob is ignored
+
+#if CONFIG_M17
+	uint64_t m17_override;		// temporary choice for view.m17_selected; zero selects its base
+#if CONFIG_M17_PACKET
+	struct {
+		const radio_m17_msg_tx_request_t *request;
+		void (*complete)(uint64_t serial, uint8_t reason);
+		uint64_t source;
+		m17_csma_t csma;
+		uint32_t rx_hz, tx_hz;
+		uint32_t start_ms, sample_ms;
+		uint8_t can, phase;
+		bool sampled;
+		uint8_t reason;
+	} m17_msg;
+	uint32_t m17_msg_rng;
+	uint32_t m17_rx_hz, m17_rx_ms;	// last successful tune and receiver settle reference
+#endif
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+	bool m17_dual_scoped;		// the full watch selects a pane; the debug scan uses the tuned channel
+#endif
+#endif
 
 	bool ptt;			// PTT held
 	bool host_audio;		// this PTT is a host audio session's (USRP): its audio, not the microphone
@@ -609,6 +644,11 @@ void radio_sm_t3_brief(radio_sm_t *sm);
 #endif
 void radio_sm_init(radio_sm_t *sm, uint32_t now_ms);
 void radio_sm_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms);
+#if CONFIG_M17_PACKET
+// The owner retains request until complete, then must not access it again.
+void radio_sm_m17_msg_accept(radio_sm_t *sm, const radio_m17_msg_tx_request_t *request,
+		void (*complete)(uint64_t serial, uint8_t reason), uint32_t now_ms);
+#endif
 // Every RADIO_POLL_MS: status, squelch, audio, LEDs, TX time-out
 void radio_sm_poll(radio_sm_t *sm, uint32_t now_ms);
 

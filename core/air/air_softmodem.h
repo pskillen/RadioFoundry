@@ -43,13 +43,11 @@ typedef struct {
 	uint8_t track_shift;			// their time constant: 2^shift samples
 	bool gain_known;			// the tap gave counts_per_khz: the level is not tracked, only fitted on syncs
 	bool running;				// samples have come since the open or the last reset
-	bool locked;				// a sync set the timing and levels not long ago: the averages hold
+	bool locked;				// a sync set the timing and level; a half or double magnitude step drops it
 	int16_t in[2 * AIR_SOFTMODEM_TAPS];	// the newest input samples, each written twice, TAPS apart: the last TAPS
 	uint8_t in_at;				// are always one run, in[in_at + 1] the oldest
 	uint16_t step, den;			// input samples per filtered sample, as a fraction
 	uint16_t pos;				// the next filtered sample's place between two input samples, in 1/den
-	uint16_t ph_r;				// pos x phases / den, kept without a divide: its remainder ...
-	uint8_t ph;				// ... and its whole part, the interpolator phase
 	// The receive filter (an integrate and dump over box samples) and its output, the line
 	int16_t sum[AIR_SOFTMODEM_SPS];
 	int32_t acc;
@@ -58,18 +56,19 @@ typedef struct {
 	uint8_t line_at;
 	uint8_t line_n;				// valid samples in it (saturates)
 	uint8_t phase;				// line_at modulo SPS: the sample phase, steps' index
-	bool fitted;				// the sample before this one was fitted: last_q is its error
 	// The sync search's gate: per sample phase, one bit per symbol back (bit 0 the newest): that sample was above
 	// the one a symbol before it. A pattern is fitted only where the large steps of its last 17 symbols are all
 	// there but one
 	uint16_t steps[AIR_SOFTMODEM_SPS];
-	uint16_t gate_up[AIR_SYNCS_MAX];	// per pattern: steps up, or low 16 sign bits for a sign-gated pattern
+	uint32_t short_hash;			// which low five sign bits can begin an 8-symbol fit
+	uint16_t short_signs[AIR_SOFTMODEM_SPS];	// 8 negative and 8 positive bits, newest in each low bit
+	uint16_t gate_up[AIR_SYNCS_MAX];	// steps up with equal pairs in unused bits, or packed signs
 	uint16_t gate_mask[AIR_SYNCS_MAX];	// per pattern: large steps, or remaining sign bits
 	uint8_t valid;				// bit i: pattern i can be fitted (its length, more than one level)
+	uint8_t short_gate;			// bit i: an 8-symbol sign-gated pattern
 	uint8_t sign_gate;			// bit i: pattern i is all outer and has too few large steps
-	uint8_t neg_partner[AIR_SYNCS_MAX];	// index of the negated twin pattern, 0xFF none
 	// The sync search: the best fit so far of the peak being climbed
-	uint16_t cand_q, cand_prev_q, last_q;	// fit errors (0xFFFF none): the candidate's, the sample's before it
+	uint16_t cand_q, cand_prev_q;	// fit errors (0xFFFF none): the candidate's, the sample's before it
 	int16_t cand_lvl, cand_off;		// x 256
 	uint8_t cand_sync;
 	uint8_t hold;				// samples before a new candidate may start (the far side of a peak)

@@ -190,12 +190,83 @@ static void test_callsign_load(void)
 	CHECK(m17_callsign_load("Q0TEST", out) && strcmp(out, "AB1CD") == 0);
 }
 
+static void test_callsign_store(void)
+{
+	const uint8_t longer[12] = { 'a', 'b', '1', 'c', 'd', 0, 0, 0, 0, 0, 1, 2 };
+	const uint8_t shortrec[4] = { 'A', 'B', 0, 0 };
+	uint8_t raw[16];
+	char out[M17_CP_CALL_LEN];
+	int n;
+
+	fresh();
+	CHECK(!m17_callsign_stored(out) && out[0] == '\0');
+	CHECK(m17_callsign_store("ab1cd"));
+	n = codeplug_kv_get(0x0A06u, raw, sizeof raw);
+	CHECK(n == 10 && memcmp(raw, "AB1CD", 6) == 0 && raw[9] == 0);
+	CHECK(m17_callsign_stored(out) && strcmp(out, "AB1CD") == 0);
+	CHECK(!m17_callsign_store("AB*CD"));
+	CHECK(m17_callsign_stored(out) && strcmp(out, "AB1CD") == 0);
+	CHECK(!m17_callsign_store("ABCDEFGHIJ"));
+	CHECK(m17_callsign_stored(out) && strcmp(out, "AB1CD") == 0);
+	CHECK(codeplug_kv_set(0x0A06u, longer, sizeof longer));
+	CHECK(m17_callsign_store("zz9"));
+	n = codeplug_kv_get(0x0A06u, raw, sizeof raw);
+	CHECK(n == 12 && raw[0] == 'Z' && raw[1] == 'Z' && raw[2] == '9' && raw[3] == 0);
+	CHECK(raw[10] == 1 && raw[11] == 2);
+	CHECK(m17_callsign_store(""));
+	n = codeplug_kv_get(0x0A06u, raw, sizeof raw);
+	CHECK(n == 12 && raw[0] == 0 && raw[9] == 0 && raw[10] == 1 && raw[11] == 2);
+	CHECK(!m17_callsign_stored(out));
+	CHECK(codeplug_kv_set(0x0A06u, shortrec, sizeof shortrec));
+	CHECK(m17_callsign_store("cd"));
+	n = codeplug_kv_get(0x0A06u, raw, sizeof raw);
+	CHECK(n == 10 && raw[0] == 'C' && raw[1] == 'D' && raw[2] == 0);
+}
+
+static void test_chan_store(void)
+{
+	channel_t ch = {
+		.name = "M17 test", .rx_hz = 453100000, .tx_hz = 453100000, .mode = RADIO_MODE_DMR,
+		.rx_only = false, .bw = RADIO_BW_25K, .power = CODEPLUG_POWER_DEFAULT,
+		.rx_tone.type = TONE_CTCSS, .tx_tone.type = TONE_CTCSS,
+	};
+	codeplug_tag_t tag = { .kind = CODEPLUG_KIND_M17, .system = 1, .flags = CODEPLUG_TAG_TX };
+	const uint8_t seeded[] = { 0xE3, 0, 0, 0, 0, 0, 0, 0xAA };
+	m17_chan_t m = { .can = 15, .can_squelch = false, .dst = M17_ADDR_BROADCAST };
+	m17_chan_t back;
+	channel_t bad;
+	uint8_t raw[16];
+	int n;
+
+	fresh();
+	CHECK(m17_chan_store(10, &ch, &m));
+	CHECK(codeplug_channel(10, &ch) && ch.kind == CODEPLUG_KIND_M17 && ch.bw == RADIO_BW_12K5 && !ch.rx_only);
+	CHECK(m17_chan_load(10, &ch, &back) && back.can == 15 && !back.can_squelch && back.dst == M17_ADDR_BROADCAST);
+	CHECK(codeplug_tag_write(10, ch.name, &tag, seeded, sizeof seeded));
+	m.can = 1;
+	m.can_squelch = true;
+	CHECK(m17_chan_store(10, &ch, &m));
+	n = codeplug_kv_get((uint16_t)(0x0400u + 9u), raw, sizeof raw);
+	CHECK(n > 8 && (raw[5] & 0xE0u) == 0xE0u && raw[5] & 0x01u && raw[12] == 0xAA);
+	CHECK(m17_chan_load(10, &ch, &back) && back.can == 1 && back.can_squelch);
+	bad = ch;
+	bad.rx_hz = 0;
+	m.can = 4;
+	CHECK(!m17_chan_store(10, &bad, &m));
+	CHECK(m17_chan_load(10, &ch, &back) && back.can == 1);
+	CHECK(codeplug_tag_write(10, ch.name, &tag, NULL, 0));
+	CHECK(m17_chan_store(10, &ch, &m));
+	CHECK(m17_chan_load(10, &ch, &back) && back.can == 4 && back.can_squelch);
+}
+
 int main(void)
 {
 	test_vectors();
 	test_dst_edges();
 	test_chan_load();
+	test_chan_store();
 	test_callsign_load();
+	test_callsign_store();
 	sim_flash_free();
 	if (failures) {
 		printf("m17CodeplugTest: %d failure(s)\n", failures);

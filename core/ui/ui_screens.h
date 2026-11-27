@@ -32,6 +32,9 @@ typedef enum {
 	UI_BANNER_INFO,		// anything else ("Hotspot started by host. Back to stop.")
 	UI_BANNER_ZONE_OFFER,	// another radio offers a zone or channel: CONTEXT opens the offer
 	UI_BANNER_APRS_MESSAGE,	// APRS message addressed to us: CONTEXT opens the APRS messages screen
+#if CONFIG_M17_PACKET
+	UI_BANNER_M17_MESSAGE,	// M17 message: id is the stable inbox reference
+#endif
 } ui_banner_kind_t;
 
 typedef struct {
@@ -40,7 +43,7 @@ typedef struct {
 	bool hold;		// stays until opened, hidden with BACK or what it is about is gone (until_ms unused)
 	uint8_t name_at;	// where the station's name starts in title (0: none): a title too long breaks there
 	uint32_t until_ms;
-	uint32_t id;		// the station it is about (0 = none)
+	uint32_t id;		// station ID, or stable M17 inbox reference
 	uint16_t msg;		// UI_BANNER_MESSAGE: the message's index in the inbox
 	char title[UI_BANNER_TEXT];
 	char text[UI_BANNER_TEXT];
@@ -143,12 +146,19 @@ typedef struct {
 enum {
 	QT_POWER, QT_SQUELCH, QT_TONE, QT_MODE, QT_MONITOR, QT_VOX, QT_SCAN, QT_BANDWIDTH, QT_BRIGHTNESS,
 	QT_TIMESLOT, QT_CC, QT_HEAR_ALL, QT_PRIVACY, QT_TALK_TO,
+#if CONFIG_M17
+	QT_M17_CAN, QT_M17_SQUELCH,
+#endif
 	QT_TO_VFO,		// on a channel, in place of QT_MODE: copy the channel to the VFO
 	QT_SPLIT,		// in the VFO, in place of QT_MONITOR (FM) / QT_PRIVACY (DMR): the TX frequency or offset
 
 };
 // The tile kind at position 0..8 (keys 1..9) for this channel or the VFO
 uint8_t ui_quick_kind(int pos, const radio_view_t *v);
+#if CONFIG_M17
+const radio_m17_selected_t *ui_m17_selected(const radio_view_t *v);
+const char *ui_m17_destination(uint64_t dst, char out[RADIO_M17_CALL_LEN]);
+#endif
 // True when a contact name only repeats its ID ("TG 123" for talkgroup 123): Home then shows the ID once
 bool ui_name_is_id(const char *name, uint32_t id, bool private_call);
 

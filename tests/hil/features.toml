@@ -106,7 +106,8 @@ source = ["core/m17", "core/radio/radio_m17.c", "core/radio/radio_m17.h", "core/
 [feature.m17_packet]
 switch = "M17_PACKET"
 spec = "docs/spec/m17.md"
-source = ["core/m17"]
+source = ["core/m17", "core/radio/radio_m17_msg.c", "core/radio/radio_m17_msg_decode.c", "core/radio/radio_m17_msg_tx.c",
+           "core/debuglink/debuglink_view_m17.c", "core/debuglink/debuglink_view_radio.c"]
 
 [feature.m17_voice]
 switch = "M17_VOICE"

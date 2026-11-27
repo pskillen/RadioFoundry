@@ -54,6 +54,32 @@
 #define M17_LSF_BYTES		30
 #define M17_LSF_CRC_BYTES	2
 #define M17_LSF_DATA_BYTES	28		// bytes 0-27 covered by the CRC
+#define M17_LSF_TYPE_OFFSET	12
+#define M17_LSF_META_OFFSET	14
+
+// TYPE is a big-endian word. Masks are in their on-air positions (spec 3.5).
+#define M17_TYPE_MODE_SHIFT	0
+#define M17_TYPE_MODE_MASK	(0x01u << M17_TYPE_MODE_SHIFT)
+#define M17_TYPE_DATA_SHIFT	1
+#define M17_TYPE_DATA_MASK	(0x03u << M17_TYPE_DATA_SHIFT)
+#define M17_TYPE_ENC_SHIFT	3
+#define M17_TYPE_ENC_MASK	(0x03u << M17_TYPE_ENC_SHIFT)
+#define M17_TYPE_SUB_SHIFT	5
+#define M17_TYPE_SUB_MASK	(0x03u << M17_TYPE_SUB_SHIFT)
+#define M17_TYPE_CAN_SHIFT	7
+#define M17_TYPE_CAN_MASK	(0x0Fu << M17_TYPE_CAN_SHIFT)
+#define M17_TYPE_SIGNED_SHIFT	11
+#define M17_TYPE_SIGNED_MASK	(0x01u << M17_TYPE_SIGNED_SHIFT)
+#define M17_TYPE_RESERVED_MASK	0xF000u
+
+#define M17_TYPE_STREAM		(1u << M17_TYPE_MODE_SHIFT)
+#define M17_TYPE_DATA		(1u << M17_TYPE_DATA_SHIFT)
+#define M17_TYPE_VOICE		(2u << M17_TYPE_DATA_SHIFT)
+#define M17_TYPE_VOICE_DATA	(3u << M17_TYPE_DATA_SHIFT)
+#define M17_TYPE_META_TEXT	(0u << M17_TYPE_SUB_SHIFT)
+#define M17_TYPE_META_CALL	(2u << M17_TYPE_SUB_SHIFT)
+#define M17_META_TEXT_BLOCK_BYTES	13
+#define M17_META_TEXT_BYTES	(4 * M17_META_TEXT_BLOCK_BYTES)
 
 // ── Stream (spec 3.2) ──
 #define M17_LICH_BITS		48
@@ -69,6 +95,7 @@
 
 // ── BERT (spec 3.7) ──
 #define M17_BERT_BITS		197
+#define M17_BERT_BYTES		((M17_BERT_BITS + 7) / 8)
 
 // ── Addresses (spec 7, app. A): base 40, big endian, six bytes ──
 #define M17_ADDR_BYTES		6
@@ -122,6 +149,6 @@ int m17_packet_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *
 void m17_bert_encode(uint8_t payload[M17_PAYLOAD_BYTES]);
 // The same coding as m17_bert_encode, for 197 bits the caller supplies (a running PRBS). The four tail bits stay 0.
 void m17_bert_encode_bits(const uint8_t bits[], uint8_t payload[M17_PAYLOAD_BYTES]);
-int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BITS / 8]);
+int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BYTES]);
 
 #endif

@@ -50,9 +50,10 @@ values = [
 # The Chinese image beside Spanish: the 160 px class moves its words up to 8x16 while a wide language is in use, and
 # the 720 KB region has room for both (boards/mduv380/config.mk, docs/spec/ui.md 2.5). ci's maximal build skips both
 # switches; this extra builds them
+# Chinese leaves M17 out until the size profile (voice) gives the room back: with it the image is 4-5 KB too big.
 [ci]
 extra = [
-	{ name = "chinese", make = ["CONFIG_LANG_ZH=y", "CONFIG_LANG_DEFAULT_ZH=y", "CONFIG_SATELLITE_TLE=n"] },
+	{ name = "chinese", make = ["CONFIG_LANG_ZH=y", "CONFIG_LANG_DEFAULT_ZH=y", "CONFIG_SATELLITE_TLE=n", "CONFIG_M17=n"] },
 ]
 
 [flash]

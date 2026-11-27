@@ -43,6 +43,7 @@
 #if CONFIG_M17
 #include "m17/m17.h"
 #include "m17/m17_codeplug.h"
+#include "m17/m17_engine.h"
 #endif
 #if CONFIG_DMR_TRUNK_TX
 #include "radio/radio_trunk.h"
@@ -433,13 +434,14 @@ static void air_step1(uint8_t i)
 
 // 4800 symbols/s (P25, NXDN at 9600 bit/s): everything. 2400 symbols/s (NXDN at 4800 bit/s): what air_fit2400 says
 // for each provider (a provider that transmits a profile only, or receives it only)
+static uint32_t air_fit4800 = AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT;
 static uint32_t air_fit2400[2] = { AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT, AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT };
 static uint32_t air_fit(uint8_t i, const air_profile_t *pr)
 {
 	if (air_nofit) {
 		return 0;
 	}
-	return pr->sym_rate == 4800 ? AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT : pr->sym_rate == 2400 ? air_fit2400[i] : 0;
+	return pr->sym_rate == 4800 ? air_fit4800 : pr->sym_rate == 2400 ? air_fit2400[i] : 0;
 }
 static bool air_open(uint8_t i, air_event_cb_t cb, void *ctx)
 {
@@ -884,7 +886,7 @@ static radio_sm_t sm;
 
 static void req(uint8_t type, int32_t arg)
 {
-	radio_req_t r = { type, arg, 0 };
+	radio_req_t r = { .type = type, .arg = arg, .arg2 = 0 };
 	radio_sm_request(&sm, &r, now);
 }
 
@@ -2859,7 +2861,7 @@ static void test_hotspot(void)
 	req(RREQ_HS_ENTER, 0);
 	CHECK(sm.hotspot && sm.view.hotspot && !sim.started && sim.cb == NULL && !sm.view.dmr.active);
 	CHECK(hw.set_mode_calls == modes);	// already in DMR
-	radio_req_t r = { RREQ_HS_FREQ, 438800000, 438800000 };
+	radio_req_t r = { .type = RREQ_HS_FREQ, .arg = 438800000, .arg2 = 438800000 };
 	radio_sm_request(&sm, &r, now);
 	CHECK(hw.rx_hz == 438800000 && hw.tx_hz == 438800000 && hw.tx_calls == tx0 + 1 &&
 		hw.tx_power == 1);
@@ -2895,7 +2897,7 @@ static void test_hotspot(void)
 	CHECK(!sm.hs_power_due);
 	sim.tx_active = false;
 	req(RREQ_HS_POWER, 254);
-	radio_req_t f = { RREQ_HS_FREQ, 438800000, 438800000 };
+	radio_req_t f = { .type = RREQ_HS_FREQ, .arg = 438800000, .arg2 = 438800000 };
 	radio_sm_request(&sm, &f, now);
 	CHECK(!sm.dmr_keyed && hw.tx_calls == tx0 + 3);
 	set.tx_inhibit = false;
@@ -4199,6 +4201,27 @@ void radio_req_m17_settings(const radio_m17_settings_t *s)
 	req(RREQ_M17_SET, 0);
 }
 void radio_req_m17_bert(uint8_t cmd) { req(RREQ_M17_BERT, cmd); }
+#if CONFIG_M17_PACKET
+uint64_t test_m17_msg_send_serial;
+uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const char *text, size_t length)
+{
+	(void)generation;
+	(void)destination;
+	(void)text;
+	(void)length;
+	return test_m17_msg_send_serial;
+}
+uint64_t radio_req_m17_msg_send_display(uint32_t generation, uint64_t destination, const char *text)
+{
+	return radio_req_m17_msg_send(generation, destination, text, text != NULL ? strlen(text) : 0);
+}
+bool radio_get_m17_msg_tx_result(radio_m17_msg_tx_result_t *out)
+{
+	if (out)
+		*out = (radio_m17_msg_tx_result_t){ 0 };
+	return false;
+}
+#endif
 #endif
 // Not under test here: debuglink_view_radio.c, linked for the volume operation, refers to them
 void radio_req_scan_dual(uint16_t pos) { (void)pos; }
@@ -4214,7 +4237,7 @@ void radio_req_scan(uint8_t cmd) { req(RREQ_SCAN, cmd); }
 void radio_req_vfo_step_size(uint32_t hz) { req(RREQ_VFO_STEP_SIZE, (int32_t)hz); }
 void radio_req_dual(const radio_dual_ref_t ref[2], uint8_t sel)
 {
-	radio_req_t r = { RREQ_DUAL, 0, 0 };
+	radio_req_t r = { .type = RREQ_DUAL, .arg = 0, .arg2 = 0 };
 	if (ref != NULL) {
 		r.arg = (int32_t)radio_dual_arg(&ref[0], sel == 0);
 		r.arg2 = radio_dual_arg(&ref[1], sel != 0);
@@ -4242,7 +4265,7 @@ void radio_req_roam(uint8_t cmd) { req(RREQ_ROAM, cmd); }
 void radio_req_beep(uint8_t b) { req(RREQ_BEEP, b); }
 void radio_req_beep_after(uint8_t b, uint32_t delay_ms)
 {
-	radio_req_t r = { RREQ_BEEP, b, delay_ms };
+	radio_req_t r = { .type = RREQ_BEEP, .arg = b, .arg2 = delay_ms };
 	radio_sm_request(&sm, &r, now);
 }
 void radio_req_vibrate(uint8_t v) { req(RREQ_VIBRATE, v); }
@@ -7537,7 +7560,7 @@ static void test_air_bench(void)
 	start();
 	req(RREQ_ZONE_POS, 3);			// DMR rptr, power 2
 	CHECK(sm.dmr_running);
-	radio_req_t r = { RREQ_AIR_BENCH, 1 | (5 << 8), 0 };
+	radio_req_t r = { .type = RREQ_AIR_BENCH, .arg = 1 | (5 << 8), .arg2 = 0 };
 	radio_sm_request(&sm, &r, now);
 	CHECK(sm.air_bench && sm.bench_seq == 5 && !sm.dmr_running && hw_mode == RADIO_MODE_DMR && hw.rx_bw == RADIO_BW_12K5);
 	req(RREQ_PTT, 1);			// PTT gives way to the bench
@@ -7551,7 +7574,7 @@ static void test_air_bench(void)
 	for (int i = 0; i < AIR_DEPTH; i++) {
 		CHECK(fake_air0.tx_queue(&c));
 	}
-	r = (radio_req_t){ RREQ_AIR_TX, 1 | (6 << 8), 200 };
+	r = (radio_req_t){ .type = RREQ_AIR_TX, .arg = 1 | (6 << 8), .arg2 = 200 };
 	radio_sm_request(&sm, &r, now);
 	CHECK(sm.bench_keyed && hw.keyed && fair[0].on && sm.view.state == RS_TX && sm.view.tx_auto);
 	CHECK(hw.tx_hz == 438500000 && hw.tx_bw == RADIO_BW_12K5 && hw.tx_tone.type == TONE_NONE);
@@ -7566,16 +7589,16 @@ static void test_air_bench(void)
 	sm.set.tx_inhibit = false;
 	fake_air0.close();
 	// Leave: the channel again, DMR takes the modem back
-	r = (radio_req_t){ RREQ_AIR_BENCH, 0, 0 };
+	r = (radio_req_t){ .type = RREQ_AIR_BENCH, .arg = 0, .arg2 = 0 };
 	radio_sm_request(&sm, &r, now);
 	CHECK(!sm.air_bench && sm.dmr_running);
 	// From a P25 channel: the engine stops for the bench and comes back after
 	req(RREQ_ZONE_POS, 2);
 	CHECK(radio_p25_running());
-	r = (radio_req_t){ RREQ_AIR_BENCH, 1, 0 };
+	r = (radio_req_t){ .type = RREQ_AIR_BENCH, .arg = 1, .arg2 = 0 };
 	radio_sm_request(&sm, &r, now);
 	CHECK(sm.air_bench && !radio_p25_running());
-	r = (radio_req_t){ RREQ_AIR_BENCH, 0, 0 };
+	r = (radio_req_t){ .type = RREQ_AIR_BENCH, .arg = 0, .arg2 = 0 };
 	radio_sm_request(&sm, &r, now);
 	CHECK(!sm.air_bench && radio_p25_running());
 }
@@ -10391,7 +10414,7 @@ static void test_t3_dial(void)
 	radio_t3_dial_args("0123456789*#01234567", w);	// the first 16
 	CHECK(w[0] == 0x01234567u && w[1] == 0x89AB0123u);
 	radio_t3_dial_args("5551234", w);
-	radio_req_t r = { RREQ_T3_DIAL, (int32_t)w[0], w[1] };
+	radio_req_t r = { .type = RREQ_T3_DIAL, .arg = (int32_t)w[0], .arg2 = w[1] };
 	radio_sm_request(&sm, &r, now);
 	req(RREQ_DMR_TARGET, (int32_t)((1u << 24) | T3_ID_PSTNI));
 	unsigned from = sim.air_count;
@@ -10431,7 +10454,7 @@ static void test_t3_dial(void)
 
 	// No digits: refused, nothing asked for
 	radio_t3_dial_args("", w);
-	r = (radio_req_t){ RREQ_T3_DIAL, (int32_t)w[0], w[1] };
+	r = (radio_req_t){ .type = RREQ_T3_DIAL, .arg = (int32_t)w[0], .arg2 = w[1] };
 	radio_sm_request(&sm, &r, now);
 	from = sim.air_count;
 	req(RREQ_PTT, 1);
@@ -11786,11 +11809,39 @@ bool m17_chan_load(uint16_t number, const channel_t *ch, m17_chan_t *out)
 	return true;
 }
 
+bool m17_chan_store(uint16_t number, const channel_t *ch, const m17_chan_t *m)
+{
+	(void)ch;
+	if (number < 1 || number > NCH)
+		return false;
+	stored_m17[number] = *m;
+	return true;
+}
+
 bool m17_callsign_load(const char *radio_name, char out[M17_CP_CALL_LEN])
 {
 	strcpy(m17_name_seen, radio_name);
 	memcpy(out, m17_record_call, M17_CP_CALL_LEN);
 	return out[0] != '\0';
+}
+
+bool m17_callsign_stored(char out[M17_CP_CALL_LEN])
+{
+	memcpy(out, m17_record_call, M17_CP_CALL_LEN);
+	return out[0] != '\0';
+}
+
+bool m17_callsign_pick(const uint8_t *b, int len, const char *radio_name, char out[M17_CP_CALL_LEN])
+{
+	(void)b;
+	(void)len;
+	return m17_callsign_load(radio_name, out);
+}
+
+bool m17_callsign_store(const char *text)
+{
+	(void)text;
+	return true;
 }
 
 static void m17_view_text(char *buf, size_t cap)
@@ -11817,8 +11868,14 @@ static void test_air_ops_m17(void)
 	CHECK((sm.view.m17.flags & RADIO_M17_ON) != 0);
 	req(RREQ_PTT, 1);
 	CHECK(sm.view.tx_deny != TXDENY_NO_CODEC);
-	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_REFUSED && radio_m17_running());
+	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_M17_CALL && radio_m17_running());
 	req(RREQ_PTT, 0);
+	CHECK(!hw.keyed);
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 2 }, 1) == DL_ST_OK);
+	CHECK(sm.view.state == RS_TX && hw.keyed);
+	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 3 }, 1) == DL_ST_OK);
+	run(800);
+	CHECK(sm.view.state == RS_IDLE && !hw.keyed);
 	// Op 44: settings, then BERT. A blank callsign still refuses voice and still sends BERT
 	CHECK(debuglink_is_feature_op(DL_OP_M17));
 	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){ 0, 16 }, 2) == DL_ST_BAD_ARG);
@@ -11837,6 +11894,15 @@ static void test_air_ops_m17(void)
 	CHECK(!radio_m17_bert_on());
 	run(800);		// the end frame finishes; the state stays TX until it does
 	CHECK(sm.view.state == RS_IDLE);
+	air_fit4800 = AIR_FIT_RX | AIR_FIT_SOFT;
+	start();
+	req(RREQ_VFO, 1);
+	req(RREQ_VFO_SET, 446100000);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	req(RREQ_PTT, 1);
+	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_AIR_NO_TX && !hw.keyed);
+	req(RREQ_PTT, 0);
+	air_fit4800 = AIR_FIT_RX | AIR_FIT_TX | AIR_FIT_SOFT;
 	codec_present = was;
 }
 
@@ -11856,6 +11922,7 @@ static void test_m17_stored(void)
 	CHECK(sm.view.channel_number == 3 && sm.view.ch.mode == RADIO_MODE_M17 && radio_m17_running());
 	CHECK(radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch && s.dst == 0xED87Dull &&
 	      strcmp(s.callsign, "AB1CD") == 0);
+	CHECK(sm.view.m17.can == 3 && strcmp(sm.view.m17.tx_dst, "ECHO") == 0);
 	CHECK(strcmp(m17_name_seen, "Q0TEST") == 0);
 	m17_view_text(buf, sizeof buf);
 	CHECK(strstr(buf, "m17.run.can=3\nm17.run.squelch=0\nm17.run.dst=ECHO\nm17.run.call=AB1CD\n") != NULL);
@@ -11870,6 +11937,7 @@ static void test_m17_stored(void)
 	radio_m17_settings(&s);
 	CHECK(s.can == 7 && s.can_squelch);
 	CHECK(radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch && s.dst == 0xED87Dull);
+	CHECK(sm.view.m17.can == 3 && strcmp(sm.view.m17.tx_dst, "ECHO") == 0);
 	CHECK(debuglink_radio_feature_op(DL_OP_M17, (const uint8_t[]){
 		0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 'T', 'E', 'S', 'T', 0, 0, 0, 0, 0 }, 18) == DL_ST_OK);
 	CHECK(radio_m17_in_force(&s) && strcmp(s.callsign, "TEST") == 0);
@@ -11879,12 +11947,13 @@ static void test_m17_stored(void)
 	req(RREQ_ZONE_POS, 2);
 	CHECK(radio_m17_in_force(&s) && s.callsign[0] == '\0');
 	req(RREQ_PTT, 1);
-	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_REFUSED);
+	CHECK(sm.view.state == RS_TX_DENIED && sm.view.tx_deny == TXDENY_M17_CALL);
 	req(RREQ_PTT, 0);
 
 	stored_m17[3] = (m17_chan_t){ 0, true, M17_ADDR_BROADCAST };
 	req(RREQ_ZONE_POS, 0);
 	req(RREQ_ZONE_POS, 2);
+	CHECK(sm.view.m17.can == 0 && strcmp(sm.view.m17.tx_dst, "ALL") == 0);
 	m17_view_text(buf, sizeof buf);
 	CHECK(strstr(buf, "m17.run.can=0\nm17.run.squelch=1\nm17.run.dst=ALL\nm17.run.call=\n") != NULL);
 
@@ -11903,6 +11972,382 @@ static void test_m17_stored(void)
 	req(RREQ_PTT, 0);
 	CHECK(strstr(build_modes_now(), "M17,") == NULL);
 	air_nofit = false;
+}
+static uint64_t m17_destination(const char *name)
+{
+	if (strcmp(name, "ALL") == 0)
+		return M17_ADDR_BROADCAST;
+	uint8_t raw[M17_ADDR_BYTES];
+	uint64_t dst = 0;
+
+	if (!m17_addr_encode(name, raw)) {
+		CHECK(false);
+		return 0;
+	}
+	for (size_t i = 0; i < sizeof raw; i++)
+		dst = (dst << 8) | raw[i];
+	return dst;
+}
+
+static void m17_talk_to(uint32_t generation, uint64_t dst)
+{
+	const radio_req_t r = {
+		.type = RREQ_M17_TALK_TO, .arg = (int32_t)(uint32_t)dst, .arg2 = (uint32_t)(dst >> 32),
+		.generation = generation,
+	};
+	radio_sm_request(&sm, &r, now);
+}
+
+static void check_m17_dst(const char *name)
+{
+	char view[512], field[48];
+	radio_m17_settings_t s;
+	CHECK(radio_m17_in_force(&s) && s.dst == m17_destination(name));
+	CHECK(strcmp(sm.view.m17.tx_dst, name) == 0);
+	m17_view_text(view, sizeof view);
+	snprintf(field, sizeof field, "m17.run.dst=%s\n", name);
+	CHECK(strstr(view, field) != NULL);
+}
+
+static void check_m17_tx(const char *name)
+{
+	CHECK(sm.view.state == RS_TX && hw.keyed);
+	run(120);
+	const m17_engine_t *engine = radio_m17_engine_mem();
+	CHECK(engine != NULL && engine->active);
+	if (engine != NULL) {
+		CHECK(m17_crc16(engine->lsf, sizeof engine->lsf) == 0);
+		uint64_t dst = 0;
+		for (size_t i = 0; i < M17_ADDR_BYTES; i++)
+			dst = (dst << 8) | engine->lsf[i];
+		CHECK(dst == m17_destination(name));
+	}
+}
+
+static void setup_m17_talk_to(void)
+{
+	setup_codeplug();
+	add(3, "M17 A", 446100000, RADIO_MODE_DMR, false, 2);
+	add(6, "M17 B", 446200000, RADIO_MODE_DMR, false, 2);
+	chans[3].kind = chans[6].kind = CODEPLUG_KIND_M17;
+	chans[3].system = chans[6].system = 0xFF;
+	stored_m17[3] = (m17_chan_t){ 3, false, m17_destination("ECHO") };
+	stored_m17[6] = (m17_chan_t){ 9, true, m17_destination("ALL") };
+	strcpy(m17_record_call, "AB1CD");
+	start();
+	req(RREQ_ZONE_POS, 2);
+}
+
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+static void m17_wait_for_pane(uint8_t pane)
+{
+	for (int i = 0; i < 400 && sm.dual_at != pane; i++)
+		poll_for(RADIO_POLL_MS);
+	CHECK(sm.view.scan == SCAN_DUAL && sm.dual_at == pane);
+}
+#endif
+
+static void test_m17_vfo_can(void)
+{
+	setup_m17_talk_to();
+	req(RREQ_VFO_SET, 446100000);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	const radio_m17_selected_t *v = &sm.view.m17_selected;
+	CHECK(v->context.is_vfo && v->generation != 0 && v->can == 0 && !v->can_squelch);
+
+	m17_talk_to(v->generation, m17_destination("INFO"));
+	radio_req_t edit = { .type = RREQ_M17_VFO_CAN, .arg = 15, .generation = v->generation };
+	radio_sm_request(&sm, &edit, now);
+	edit.arg = 1;
+	edit.arg2 = 1;
+	radio_sm_request(&sm, &edit, now);
+	radio_m17_settings_t s;
+	CHECK(radio_m17_in_force(&s) && s.can == 15 && s.can_squelch && s.dst == m17_destination("INFO"));
+	CHECK(v->can == 15 && v->can_squelch && v->effective_dst == m17_destination("INFO"));
+
+	req(RREQ_VFO_SET, 446200000);
+	edit.arg = 0;
+	radio_sm_request(&sm, &edit, now);	// stale after the retune
+	CHECK(radio_m17_in_force(&s) && s.can == 15 && s.can_squelch && s.dst == M17_ADDR_BROADCAST);
+
+	edit.generation = v->generation;
+	radio_sm_request(&sm, &edit, now);
+	CHECK(radio_m17_in_force(&s) && s.can == 15 && !s.can_squelch);
+	edit.arg = 16;
+	edit.arg2 = 0;
+	radio_sm_request(&sm, &edit, now);
+	CHECK(v->can == 15);
+
+	req(RREQ_ZONE_POS, 2);
+	CHECK(!v->context.is_vfo && radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch);
+	edit.generation = v->generation;
+	edit.arg = 7;
+	radio_sm_request(&sm, &edit, now);
+	radio_m17_settings(&s);
+	CHECK(s.can == 15 && !s.can_squelch);	// stored channels cannot edit the VFO
+}
+
+static void test_m17_talk_to_stored(void)
+{
+	setup_m17_talk_to();
+	const radio_m17_selected_t *v = &sm.view.m17_selected;
+	uint32_t generation = v->generation;
+	CHECK(generation != 0 && !v->context.is_vfo && v->context.stored.number == 3);
+	CHECK(v->base_dst == m17_destination("ECHO") && v->effective_dst == v->base_dst && v->can == 3);
+	check_m17_dst("ECHO");
+
+	m17_talk_to(generation, m17_destination("INFO"));
+	CHECK(v->effective_dst == m17_destination("INFO"));
+	check_m17_dst("INFO");
+	req(RREQ_PTT, 1);
+	check_m17_tx("INFO");
+	req(RREQ_PTT, 0);
+	run(800);
+
+	m17_talk_to(generation, 0);
+	CHECK(v->effective_dst == v->base_dst);
+	check_m17_dst("ECHO");
+	m17_talk_to(generation, m17_destination("UNLINK"));
+	check_m17_dst("UNLINK");
+	CHECK(stored_m17[3].dst == m17_destination("ECHO") && stored_m17[3].can == 3 &&
+	      !stored_m17[3].can_squelch);
+
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+	const radio_dual_ref_t pair[2] = { { false, 0, 2 }, { false, 1, 0 } };
+	radio_req_dual(pair, 0);
+	CHECK(v->generation == generation);
+	m17_wait_for_pane(1);
+	check_m17_dst("ALL");
+	CHECK(sm.view.m17.can == 9 && v->can == 3 && v->context.stored.number == 3);
+	CHECK(v->generation == generation && v->effective_dst == m17_destination("UNLINK"));
+	m17_wait_for_pane(0);
+	check_m17_dst("UNLINK");
+
+	// Selecting the other zone without a tune reloads the running side's base and previews the selected side.
+	radio_req_dual(pair, 1);
+	CHECK(sm.dual_at == 0 && v->context.stored.number == 6 && v->context.stored.zone == 1);
+	CHECK(v->base_dst == M17_ADDR_BROADCAST && v->can == 9);
+	check_m17_dst("ECHO");
+	radio_req_dual(NULL, 0);
+	CHECK(sm.view.scan == SCAN_OFF && sm.view.channel_number == 6);
+#else
+	req(RREQ_ZONE, 1);
+#endif
+	CHECK(sm.view.m17.can == 9 && v->generation != generation);
+	check_m17_dst("ALL");
+	CHECK(stored_m17[6].dst == M17_ADDR_BROADCAST && stored_m17[6].can == 9 && stored_m17[6].can_squelch);
+
+	req(RREQ_ZONE, 0);
+	req(RREQ_ZONE_POS, 2);
+	check_m17_dst("ECHO");
+	CHECK(stored_m17[3].dst == m17_destination("ECHO"));
+
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+	generation = v->generation;
+	m17_talk_to(generation, m17_destination("INFO"));
+	radio_req_dual(pair, 0);
+	m17_wait_for_pane(1);
+	stored_m17[3].dst = m17_destination("UNLINK");
+	req(RREQ_RELOAD, 0);
+	CHECK(v->generation != generation && v->base_dst == m17_destination("UNLINK"));
+	CHECK(v->effective_dst == m17_destination("INFO"));
+	check_m17_dst("ALL");
+
+	generation = v->generation;
+	zones[0].channels[2] = 0;	// the off-receiver ref disappeared
+	req(RREQ_RELOAD, 0);
+	CHECK(v->generation == 0 && sm.view.channel_number == 6);
+	m17_talk_to(generation, m17_destination("INFO"));
+	radio_req_dual(NULL, 0);	// restoration fails, so the tuned channel becomes selected
+	CHECK(sm.view.scan == SCAN_OFF && v->generation != 0 && v->generation != generation);
+	CHECK(v->context.stored.number == 6);
+	check_m17_dst("ALL");
+#endif
+}
+
+static void test_m17_talk_to_deferred(void)
+{
+	setup_m17_talk_to();
+	const radio_m17_selected_t *v = &sm.view.m17_selected;
+	radio_m17_settings_t s;
+
+	req(RREQ_PTT, 1);
+	check_m17_tx("ECHO");
+	req(RREQ_PTT, 0);
+	CHECK(sm.view.state == RS_TX && hw.keyed);
+	uint32_t serial = sm.serial;
+	m17_talk_to(v->generation, m17_destination("INFO"));
+	CHECK(sm.serial == serial && sm.view.state == RS_TX && hw.keyed);
+	CHECK(v->effective_dst == m17_destination("ECHO"));
+	check_m17_dst("ECHO");
+	CHECK(radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch && strcmp(s.callsign, "AB1CD") == 0);
+
+	// A new key-down during drain must use the pending destination as soon as the first TX ends.
+	req(RREQ_PTT, 1);
+	run(800);
+	CHECK(v->effective_dst == m17_destination("INFO"));
+	check_m17_dst("INFO");
+	check_m17_tx("INFO");
+	CHECK(radio_m17_in_force(&s) && s.can == 3 && !s.can_squelch && strcmp(s.callsign, "AB1CD") == 0);
+	req(RREQ_PTT, 0);
+	run(800);
+	CHECK(sm.view.state == RS_IDLE && !hw.keyed);
+
+	req(RREQ_M17_BERT, 1);
+	CHECK(radio_m17_bert_on());
+	m17_talk_to(v->generation, M17_ADDR_BROADCAST);
+	CHECK(v->effective_dst == M17_ADDR_BROADCAST && radio_m17_bert_on());
+	check_m17_dst("ALL");
+	req(RREQ_M17_BERT, 3);
+	req(RREQ_PTT, 1);
+	check_m17_tx("ALL");
+	req(RREQ_PTT, 0);
+	run(800);
+}
+
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+static void test_m17_talk_to_dual_vfos(void)
+{
+	setup_m17_talk_to();
+	req(RREQ_VFO_SET, 446100000);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	const radio_dual_ref_t pair[2] = { { true, 0, 0 }, { true, 0, 1 } };
+	radio_req_dual(pair, 1);
+	radio_req_dual(NULL, 0);
+	CHECK(sm.view.vfo_index == 1);
+	req(RREQ_VFO_SET, 446200000);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	radio_req_dual(pair, 0);
+	CHECK(sm.dual_at == 1 && sm.view.channel_number == 0);
+	const radio_m17_selected_t *v = &sm.view.m17_selected;
+	uint32_t generation = v->generation;
+	CHECK(generation != 0 && v->context.is_vfo && v->context.vfo_index == 0);
+	CHECK(v->context.vfo.rx_hz == 446100000 && v->context.vfo.tx_hz == 446100000);
+
+	m17_talk_to(generation, m17_destination("INFO"));
+	CHECK(v->base_dst == M17_ADDR_BROADCAST && v->effective_dst == m17_destination("INFO"));
+	check_m17_dst("ALL");
+
+	// Settings refresh the off-receiver preview and the running side's own base.
+	radio_m17_settings_t s;
+	radio_m17_settings(&s);
+	s.dst = m17_destination("UNLINK");
+	radio_req_m17_settings(&s);
+	CHECK(sm.dual_at == 1 && v->generation != generation && v->base_dst == s.dst);
+	CHECK(v->effective_dst == m17_destination("INFO"));
+	m17_talk_to(generation, 0);
+	CHECK(v->effective_dst == m17_destination("INFO"));
+	generation = v->generation;
+	check_m17_dst("UNLINK");
+	m17_wait_for_pane(0);
+	CHECK(sm.view.vfo_index == 0 && sm.view.channel_number == 0);
+	check_m17_dst("INFO");
+	m17_wait_for_pane(1);
+	check_m17_dst("UNLINK");
+	radio_req_dual(NULL, 0);
+	CHECK(sm.view.scan == SCAN_OFF && sm.view.vfo_index == 0 && v->generation == generation);
+	check_m17_dst("INFO");
+	radio_req_dual(pair, 0);
+	CHECK(v->generation == generation);
+	m17_wait_for_pane(1);
+	req(RREQ_PTT, 1);
+	CHECK(sm.dual_at == 0 && hw.tx_hz == 446100000 && sm.view.scan == SCAN_DUAL);
+	check_m17_tx("INFO");
+	req(RREQ_PTT, 0);
+	run(800);
+	m17_wait_for_pane(0);
+
+	radio_req_dual(pair, 1);
+	CHECK(sm.dual_at == 0 && sm.view.scan == SCAN_DUAL && v->context.vfo_index == 1);
+	check_m17_dst("UNLINK");
+	radio_req_dual(pair, 0);
+	CHECK(sm.dual_at == 0 && sm.view.scan == SCAN_DUAL && v->generation != generation);
+	uint32_t serial = sm.serial;
+	m17_talk_to(generation, m17_destination("UNLINK"));
+	CHECK(sm.serial == serial && v->effective_dst == s.dst && sm.view.scan == SCAN_DUAL);
+	check_m17_dst("UNLINK");
+}
+#endif
+
+static void test_m17_talk_to_context(void)
+{
+	setup_m17_talk_to();
+	const radio_m17_selected_t *v = &sm.view.m17_selected;
+	const uint64_t info = m17_destination("INFO");
+	const uint64_t unlink = m17_destination("UNLINK");
+	uint32_t old = v->generation;
+	m17_talk_to(old, info);
+	req(RREQ_ZONE, 1);
+	req(RREQ_ZONE, 0);
+	req(RREQ_ZONE_POS, 2);
+	CHECK(v->generation != old && v->context.stored.number == 3);
+	uint32_t serial = sm.serial;
+	m17_talk_to(old, unlink);
+	m17_talk_to(v->generation, 1ull << 48);
+	CHECK(sm.serial == serial);
+	check_m17_dst("ECHO");
+
+	m17_talk_to(v->generation, info);
+	old = v->generation;
+	stored_m17[3].dst = unlink;
+	req(RREQ_RELOAD, 0);
+	CHECK(v->generation != old && v->base_dst == unlink && v->effective_dst == info);
+	check_m17_dst("INFO");
+	m17_talk_to(old, 0);
+	check_m17_dst("INFO");
+
+	req(RREQ_VFO_SET, 446100000);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	old = v->generation;
+	m17_talk_to(old, info);
+	req(RREQ_RETUNE, 0);
+	run(500);
+	CHECK(v->generation == old && v->effective_dst == info);
+	check_m17_dst("INFO");
+
+	req(RREQ_VFO_SET, 446200000);
+	CHECK(v->generation != old && v->context.vfo.rx_hz == 446200000);
+	m17_talk_to(old, unlink);
+	check_m17_dst("ALL");
+
+	old = v->generation;
+	m17_talk_to(old, info);
+	req(RREQ_VFO_TX, 446300000);
+	CHECK(v->generation != old && v->context.vfo.tx_hz == 446300000);
+	m17_talk_to(old, unlink);
+	check_m17_dst("ALL");
+
+	old = v->generation;
+	m17_talk_to(old, info);
+	req(RREQ_MODE, RADIO_MODE_FM);
+	CHECK(v->generation == 0);
+	m17_talk_to(old, unlink);
+	req(RREQ_MODE, RADIO_MODE_M17);
+	CHECK(v->generation != old);
+	m17_talk_to(old, unlink);
+	check_m17_dst("ALL");
+
+	m17_talk_to(v->generation, info);
+	old = v->generation;
+	radio_m17_settings_t set;
+	radio_m17_settings(&set);
+	set.dst = unlink;
+	set.can = 11;
+	radio_req_m17_settings(&set);
+	CHECK(v->generation != old && v->base_dst == unlink && v->effective_dst == info && v->can == 11);
+	check_m17_dst("INFO");
+
+	req(RREQ_VFO, 0);
+	req(RREQ_ZONE_POS, 2);
+	old = v->generation;
+	m17_talk_to(old, info);
+	check_m17_dst("INFO");
+	boot();
+	CHECK(v->generation != 0 && v->generation != old && v->context.stored.number == 3);
+	m17_talk_to(old, info);
+	check_m17_dst("UNLINK");
+	m17_talk_to(v->generation, info);
+	check_m17_dst("INFO");
 }
 #endif
 
@@ -12043,6 +12488,13 @@ int main(void)
 #if CONFIG_M17
 	test_air_ops_m17();
 	test_m17_stored();
+	test_m17_vfo_can();
+	test_m17_talk_to_stored();
+	test_m17_talk_to_deferred();
+#if CONFIG_SCAN && CONFIG_DUAL_WATCH
+	test_m17_talk_to_dual_vfos();
+#endif
+	test_m17_talk_to_context();
 #endif
 	test_dmr_data_glue();	// (last: the data service's state carries over)
 	test_factory_reset();

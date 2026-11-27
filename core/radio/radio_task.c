@@ -103,6 +103,18 @@ static SemaphoreHandle_t view_lock;
 static QueueHandle_t requests;
 
 static volatile uint32_t req_handled, req_dropped;
+#if CONFIG_M17_PACKET
+// One copied request, shared by submitters and the radio owner under the scheduler gate.
+static radio_m17_msg_tx_t m17_msg_tx;
+
+static void m17_msg_complete(uint64_t serial, uint8_t reason)
+{
+	vTaskSuspendAll();
+	(void)radio_m17_msg_tx_complete(&m17_msg_tx, serial, reason);
+	radio_m17_packet_tx_snap_note(serial, reason);
+	(void)xTaskResumeAll();
+}
+#endif
 
 static bool send(const radio_req_t *req, TickType_t wait)
 {
@@ -313,6 +325,16 @@ static void radio_task(void *arg)
 				} else if (req.type == RREQ_SETTINGS) {
 					apply_pending_settings();
 				}
+#if CONFIG_M17_PACKET
+				else if (req.type == RREQ_M17_MSG_SEND) {
+					uint64_t serial = (uint32_t)req.arg | ((uint64_t)req.arg2 << 32);
+					vTaskSuspendAll();
+					const radio_m17_msg_tx_request_t *request = radio_m17_msg_tx_consume(&m17_msg_tx, serial);
+					(void)xTaskResumeAll();
+					if (request)
+						radio_sm_m17_msg_accept(&sm, request, m17_msg_complete, hal_millis());
+				}
+#endif
 #if CONFIG_SATELLITE_TLE
 				else if (req.type == RREQ_SATELLITE_TRACK) {
 					satellite_request(req.arg != 0, (uint8_t)req.arg2, hal_millis());
@@ -374,8 +396,18 @@ static void satellite_set_locked(bool locked)
 }
 #endif
 
+#if CONFIG_M17_PACKET
+// The RX hook runs in task context and can publish without waiting or taking the view mutex.
+static void m17_inbox_lock(void) { vTaskSuspendAll(); }
+static void m17_inbox_unlock(void) { (void)xTaskResumeAll(); }
+static const radio_m17_inbox_ops_t m17_inbox_ops = { m17_inbox_lock, m17_inbox_unlock, hal_millis };
+#endif
+
 void radio_core_start(void)
 {
+#if CONFIG_M17_PACKET
+	radio_m17_inbox_bind(&m17_inbox_ops);
+#endif
 #if CONFIG_APRS
 	aprs_set_lock(copy_lock, copy_unlock);
 #endif
@@ -733,7 +765,76 @@ void radio_req_nxdn_settings(const radio_nxdn_settings_t *s)
 	post(RREQ_NXDN_SET, 0, pdMS_TO_TICKS(50));
 }
 #endif
+#if CONFIG_M17_PACKET
+static uint64_t m17_msg_submit(uint64_t serial)
+{
+	if (!serial)
+		return 0;
+	const radio_req_t req = { .type = RREQ_M17_MSG_SEND, .arg = (int32_t)(uint32_t)serial,
+		.arg2 = (uint32_t)(serial >> 32) };
+	if (!send(&req, 0)) {
+		vTaskSuspendAll();
+		(void)radio_m17_msg_tx_rollback(&m17_msg_tx, serial);
+		(void)xTaskResumeAll();
+		return 0;
+	}
+	vTaskSuspendAll();
+	radio_m17_packet_tx_snap_arm(serial, m17_msg_tx.request.destination);
+	(void)xTaskResumeAll();
+	return serial;
+}
+
+uint64_t radio_req_m17_msg_send(uint32_t generation, uint64_t destination, const char *text, size_t length)
+{
+	if (requests == NULL || !radio_m17_msg_tx_validate(text, length))
+		return 0;
+	vTaskSuspendAll();
+	uint64_t serial = radio_m17_msg_tx_reserve(&m17_msg_tx, generation, destination, text, length);
+	(void)xTaskResumeAll();
+	return m17_msg_submit(serial);
+}
+
+uint64_t radio_req_m17_msg_send_display(uint32_t generation, uint64_t destination, const char *text)
+{
+	if (requests == NULL)
+		return 0;
+	vTaskSuspendAll();
+	uint64_t serial = radio_m17_msg_tx_reserve_display(&m17_msg_tx, generation, destination, text);
+	(void)xTaskResumeAll();
+	return m17_msg_submit(serial);
+}
+
+bool radio_get_m17_msg_tx_result(radio_m17_msg_tx_result_t *out)
+{
+	if (!out)
+		return false;
+	vTaskSuspendAll();
+	*out = radio_m17_msg_tx_result(&m17_msg_tx);
+	(void)xTaskResumeAll();
+	return out->serial != 0;
+}
+#endif
+
 #if CONFIG_M17
+static bool m17_selection_request(uint8_t type, uint32_t generation, int32_t arg, uint32_t arg2)
+{
+	if (requests == NULL || generation == 0)
+		return false;
+	const radio_req_t req = { .type = type, .arg = arg, .arg2 = arg2, .generation = generation };
+	return send(&req, pdMS_TO_TICKS(50));
+}
+
+bool radio_req_m17_talk_to(uint32_t generation, uint64_t dst)
+{
+	return dst >> 48 == 0 &&
+		m17_selection_request(RREQ_M17_TALK_TO, generation, (int32_t)(uint32_t)dst, (uint32_t)(dst >> 32));
+}
+
+bool radio_req_m17_vfo_can(uint32_t generation, bool squelch, uint8_t value)
+{
+	return m17_selection_request(RREQ_M17_VFO_CAN, generation, value, squelch);
+}
+
 void radio_req_m17_settings(const radio_m17_settings_t *s)
 {
 	if (view_lock == NULL) {

@@ -38,6 +38,10 @@
 #endif
 #if CONFIG_M17
 #include "m17/m17.h"
+#include "radio/radio.h"
+#if CONFIG_M17_PACKET
+#include "radio/radio_m17_msg_tx.h"
+#endif
 #endif
 
 #define DL_SETTING_MIC_GAIN	29u	// SETTING id of the mic gain step (radio/mic_gain.h)
@@ -46,6 +50,7 @@
 #define DL_SETTING_REF_TRIM	35u	// SETTING id of the reference trim, ppb two's complement (radio/ref_trim.h)
 #define DL_SETTING_TONES_OFF	36u	// SETTING id of the Settings > Sound tones (radio_settings_t.tones_off)
 #define DL_SETTING_GPS		37u	// SETTING id of Settings > Location > GPS (settings_t.gps, board_t.gps)
+#define M17_DL_MSG_TEXT_MAX	56u	// RADIO op 44 cmd 4: DL_REQ_MAX minus cmd, subcommand and 6-byte destination
 
 static const char *word(uint8_t v, const char *const *names, uint8_t n)
 {
@@ -296,6 +301,114 @@ static bool set_one(radio_settings_t *s, uint8_t id, uint16_t v)
 // (view.dual_sel), and the channel, zone and VFO requests then act on that one
 #define DL_SCAN_DUAL_SELECT	7u
 
+#if CONFIG_M17
+// noinline: the message buffer and radio_view_t stay off every other op's stack in debuglink_radio_feature_op
+static __attribute__((noinline)) uint8_t debuglink_radio_m17_op(const uint8_t *a, uint16_t len)
+{
+	// cmd 0 settings, 1 BERT receive, 2 BERT transmit, 3 stop, 4 send a text message (packet). Settings
+	// fields are optional and trailing: CAN (0xFF keeps, else 0..15), squelch (0xFF keeps, else 0/1),
+	// destination 6 bytes (all 0xFF keeps; 0 is broadcast), callsign 9 bytes (a first 0 keeps). Cmd 4:
+	// destination 6 bytes big-endian, then UTF-8 text through the end of the frame (no NUL on the wire).
+	if (len < 1)
+		return DL_ST_BAD_ARG;
+#if CONFIG_M17_PACKET
+	if (a[0] == 4) {
+		radio_view_t view;
+		char text[57];
+		uint64_t dst = 0;
+		uint16_t tlen;
+
+		if (len < 7)
+			return DL_ST_BAD_ARG;
+		for (uint8_t i = 0; i < M17_ADDR_BYTES; i++)
+			dst = (dst << 8) | a[1 + i];
+		tlen = (uint16_t)(len - 7);
+		if (dst == 0 || (dst >= 0xEE6B28000000ull && dst != M17_ADDR_BROADCAST))
+			return DL_ST_BAD_ARG;
+		if (tlen == 0 || tlen > M17_DL_MSG_TEXT_MAX)
+			return DL_ST_BAD_ARG;
+		memcpy(text, a + 7, tlen);
+		text[tlen] = '\0';
+		if (!radio_m17_msg_tx_validate(text, tlen))
+			return DL_ST_BAD_ARG;
+		radio_get_view(&view);
+		if (view.m17_selected.generation == 0)
+			return DL_ST_REFUSED;
+		if (radio_req_m17_msg_send(view.m17_selected.generation, dst, text, tlen) == 0)
+			return DL_ST_REFUSED;
+		return DL_ST_OK;
+	}
+#endif
+	if (a[0] > 3)
+		return DL_ST_BAD_ARG;
+	if (a[0] != 0) {
+		if (len != 1)
+			return DL_ST_BAD_ARG;
+		radio_req_m17_bert(a[0]);
+		return DL_ST_OK;
+	}
+	radio_m17_settings_t s;
+	const uint8_t *p = a + 1;
+	uint16_t left = (uint16_t)(len - 1);
+
+	radio_m17_settings(&s);
+	if (left >= 1) {
+		if (p[0] != 0xFF) {
+			if (p[0] > RADIO_M17_CAN_MAX)
+				return DL_ST_BAD_ARG;
+			s.can = p[0];
+		}
+		p++;
+		left--;
+	}
+	if (left >= 1) {
+		if (p[0] != 0xFF) {
+			if (p[0] > 1)
+				return DL_ST_BAD_ARG;
+			s.can_squelch = p[0] != 0;
+		}
+		p++;
+		left--;
+	}
+	if (left != 0) {
+		bool keep = true;
+		uint64_t dst = 0;
+
+		if (left < M17_ADDR_BYTES)
+			return DL_ST_BAD_ARG;
+		for (uint8_t i = 0; i < M17_ADDR_BYTES; i++) {
+			if (p[i] != 0xFF)
+				keep = false;
+			dst = (dst << 8) | p[i];
+		}
+		if (!keep)
+			s.dst = dst;
+		p += M17_ADDR_BYTES;
+		left = (uint16_t)(left - M17_ADDR_BYTES);
+	}
+	if (left != 0) {
+		char call[RADIO_M17_CALL_LEN];
+		uint8_t raw[M17_ADDR_BYTES];
+		unsigned n = 0;
+
+		if (left != 9)
+			return DL_ST_BAD_ARG;
+		if (p[0] != 0) {
+			while (n < 9 && p[n] != 0) {
+				call[n] = (char)p[n];
+				n++;
+			}
+			call[n] = '\0';
+			if (!m17_addr_encode(call, raw))
+				return DL_ST_BAD_ARG;
+			memcpy(s.callsign, call, n + 1);
+		}
+	}
+	radio_req_m17_settings(&s);
+	return DL_ST_OK;
+}
+#endif
+
 uint8_t debuglink_radio_feature_op(uint8_t op, const uint8_t *a, uint16_t len)
 {
 	switch (op) {
@@ -479,82 +592,12 @@ uint8_t debuglink_radio_feature_op(uint8_t op, const uint8_t *a, uint16_t len)
 		return DL_ST_UNAVAILABLE;
 #endif
 	}
-	case DL_OP_M17: {
-		// cmd 0 settings, 1 BERT receive, 2 BERT transmit, 3 stop. Settings fields are optional and trailing:
-		// CAN (0xFF keeps, else 0..15), squelch (0xFF keeps, else 0/1), destination 6 bytes (all 0xFF keeps;
-		// 0 is broadcast), callsign 9 bytes (a first 0 keeps). RAM only
-		if (len < 1 || a[0] > 3)
-			return DL_ST_BAD_ARG;
+	case DL_OP_M17:
 #if CONFIG_M17
-		if (a[0] != 0) {
-			if (len != 1)
-				return DL_ST_BAD_ARG;
-			radio_req_m17_bert(a[0]);
-			return DL_ST_OK;
-		}
-		radio_m17_settings_t s;
-		const uint8_t *p = a + 1;
-		uint16_t left = (uint16_t)(len - 1);
-
-		radio_m17_settings(&s);
-		if (left >= 1) {
-			if (p[0] != 0xFF) {
-				if (p[0] > RADIO_M17_CAN_MAX)
-					return DL_ST_BAD_ARG;
-				s.can = p[0];
-			}
-			p++;
-			left--;
-		}
-		if (left >= 1) {
-			if (p[0] != 0xFF) {
-				if (p[0] > 1)
-					return DL_ST_BAD_ARG;
-				s.can_squelch = p[0] != 0;
-			}
-			p++;
-			left--;
-		}
-		if (left != 0) {
-			bool keep = true;
-			uint64_t dst = 0;
-
-			if (left < M17_ADDR_BYTES)
-				return DL_ST_BAD_ARG;
-			for (uint8_t i = 0; i < M17_ADDR_BYTES; i++) {
-				if (p[i] != 0xFF)
-					keep = false;
-				dst = (dst << 8) | p[i];
-			}
-			if (!keep)
-				s.dst = dst;
-			p += M17_ADDR_BYTES;
-			left = (uint16_t)(left - M17_ADDR_BYTES);
-		}
-		if (left != 0) {
-			char call[RADIO_M17_CALL_LEN];
-			uint8_t raw[M17_ADDR_BYTES];
-			unsigned n = 0;
-
-			if (left != 9)
-				return DL_ST_BAD_ARG;
-			if (p[0] != 0) {
-				while (n < 9 && p[n] != 0) {
-					call[n] = (char)p[n];
-					n++;
-				}
-				call[n] = '\0';
-				if (!m17_addr_encode(call, raw))
-					return DL_ST_BAD_ARG;
-				memcpy(s.callsign, call, n + 1);
-			}
-		}
-		radio_req_m17_settings(&s);
-		return DL_ST_OK;
+		return debuglink_radio_m17_op(a, len);
 #else
 		return DL_ST_UNAVAILABLE;
 #endif
-	}
 	case DL_OP_VFO_SFR:
 		// u8: the VFO's SFR role as a channel's SFR byte A (sfr.h; role bits 0 = none). The radio core refuses it
 		// outside the VFO; dmr.sfr_role shows what it took

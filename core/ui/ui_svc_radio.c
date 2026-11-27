@@ -229,6 +229,9 @@ uint32_t ui_svc_feat_radio(void)
 #endif
 #if CONFIG_M17
 	       (radio_m17_fits() ? UI_FEAT_M17 : 0) |
+#if CONFIG_M17_PACKET
+	       ((radio_m17_fit() & AIR_FIT_RX) ? UI_FEAT_M17_PACKET : 0) |
+#endif
 #endif
 	       0;
 }

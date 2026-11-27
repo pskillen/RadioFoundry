@@ -979,3 +979,25 @@ about 95% of filtered samples in Gaussian noise. That fit rate can starve the id
 soft modem. Require every symbol-spaced sample to have the expected sign relative to the tracked offset when an
 all-outer pattern has fewer than four large steps in the step gate. The sign check works before a reliable level
 is available. See [air-interface.md](air-interface.md#6-sample-taps-and-the-soft-modem).
+
+**18.2 A noise sync holds its level, and the link setup never matches.**
+Symptom: with no traffic the receiver counts short syncs, and a packet from a transmitter whose voice
+shows its callsign never counts a link setup. Cause: discriminator noise is a different magnitude from
+the carrier. A chance sync froze the soft modem's level at the noise, so the carrier clipped or starved
+on that line. The link-setup word needs its real steps to start a fit; the short syncs are gated on sign
+and still match. Rule: a fast average of the magnitude keeps running while locked, and a step of half or
+double drops the lock and starts the level averages again
+([air-interface.md](air-interface.md#6-sample-taps-and-the-soft-modem)).
+
+**18.3 The copy ring can overrun while a preamble repeatedly passes the step gate.**
+An 8 kHz copy half holds 256 samples. At 72 MHz the 32 ms half gives the modem task 2,304,000 cycles. Before
+the fix, the longest measured call with noise was 37.4 ms and the longest with a text packet was 59.4 ms.
+The alternating preamble opened the gate for a long sync at hundreds of sample phases, and each gate hit
+started fits for every pattern. Framer sync checks and replays also ran in the same call.
+
+The modem now fits only the patterns that pass their own gates. An equal-level pair bound rejects fits that
+cannot reach the required error. The framer filters candidates by sign before checking the full pattern.
+In the Cortex-M4 instruction model, the busiest text half is about 620,000 cycles (26.9%). Noise peaks at
+558,000 cycles (24.2%) and averages 326,000 (14.2%). The budget is 30% for the busiest half and 15% on average
+in noise. Confirm timing and the ring overrun count on a radio, since the model omits interrupts, task
+scheduling, and flash stalls. See [m17.md](m17.md).
