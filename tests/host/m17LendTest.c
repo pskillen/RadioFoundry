@@ -5,6 +5,7 @@
 #undef main
 
 #include "c2fx.h"
+#include "debuglink/debuglink_m17_bench.h"
 #include "nxdn/nxdn_engine.h"
 #include "radio/radio_nxdn.h"
 
@@ -17,6 +18,42 @@ void *radio_nxdn_idle_mem(size_t *len)
 	return nxdn_lends ? nxdn_mem : NULL;
 }
 
+#if CONFIG_DEBUGLINK
+static void (*audio_job)(void);
+static bool armed;
+static void *last_dec, *last_scratch;
+
+static bool defer_audio(void (*job)(void))
+{
+	if (audio_job != NULL)
+		return false;
+	audio_job = job;
+	return true;
+}
+
+bool debuglink_m17_bench_armed(void)
+{
+	return armed;
+}
+
+bool debuglink_m17_bench_audio(void *dec, void *scratch, int16_t pcm[AUDIO_BLOCK_SAMPLES])
+{
+	last_dec = dec;
+	last_scratch = scratch;
+	armed = false;
+	return dec != NULL && scratch != NULL;
+}
+
+static void run_audio_job(void)
+{
+	if (audio_job != NULL) {
+		void (*job)(void) = audio_job;
+		audio_job = NULL;
+		job();
+	}
+}
+#endif
+
 static void check_session(const void *engine, bool has_voice)
 {
 	radio_m17_settings_t settings;
@@ -28,7 +65,27 @@ static void check_session(const void *engine, bool has_voice)
 	radio_m17_poll(&view);
 	CHECK((view.flags & RADIO_M17_ON) != 0);
 	CHECK(((view.flags & RADIO_M17_VOICE_MEM) != 0) == has_voice);
+#if CONFIG_DEBUGLINK
+	radio_m17_bench_service();
+	CHECK(audio_job == NULL);	// no request
+	armed = true;
+	radio_m17_bench_service();
+	CHECK((audio_job != NULL) == has_voice);
+	if (has_voice) {
+		run_audio_job();
+		CHECK(last_scratch == voc_mem);
+		CHECK(last_dec == (uint8_t *)voc_mem + C2FX_SCRATCH_BYTES);
+		armed = true;
+		radio_m17_bench_service();
+		CHECK(audio_job != NULL);
+	}
+#endif
 	radio_m17_end();
+#if CONFIG_DEBUGLINK
+	run_audio_job();	// a delayed audio wake must not touch the released lend
+	CHECK(last_scratch == NULL && last_dec == NULL);
+	armed = false;
+#endif
 	radio_m17_poll(&view);
 	CHECK((view.flags & (RADIO_M17_ON | RADIO_M17_VOICE_MEM)) == 0);
 }

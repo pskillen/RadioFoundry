@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "app/audio_job.h"
 #include "debuglink/debuglink_m17_bench.h"
 #include "debuglink/dl_frame.h"
 #include "hal_time.h"
@@ -16,6 +17,7 @@ static unsigned reads;
 static uint32_t now;
 static uint8_t flags;
 static bool audio_scheduled;
+static unsigned audio_wakes, audio_jobs;
 static c2fx_dec_t dec;
 static c2fx_scratch_t *scratch;
 static int16_t pcm[C2FX_FRAME_LEN];
@@ -31,12 +33,27 @@ uint32_t hal_millis(void)
 	return now;
 }
 
+static void bench_audio_job(void)
+{
+	audio_jobs++;
+	debuglink_m17_bench_audio(&dec, scratch, pcm);
+}
+
+void xTaskNotifyGive(TaskHandle_t task)
+{
+	audio_wakes++;
+}
+
 void hal_delay_ms(uint32_t ms)
 {
 	now += ms;
 	if (audio_scheduled) {
 		audio_scheduled = false;
-		debuglink_m17_bench_audio(&dec, scratch, pcm);
+		if (!debuglink_m17_bench_armed() || !audio_job_submit(NULL, bench_audio_job) ||
+		    audio_job_submit(NULL, bench_audio_job))
+			abort();
+		audio_job_service();
+		audio_job_service();	// the pending job was consumed
 	}
 }
 
@@ -84,7 +101,7 @@ static bool command_completes(void)
 
 	audio_scheduled = true;
 	reads = 0;
-	if (debuglink_m17_bench_run() != DL_ST_OK || reads != 100)
+	if (debuglink_m17_bench_run() != DL_ST_OK || reads != 100 || audio_wakes != 1 || audio_jobs != 1)
 		return false;
 	dl_text_init(&text, buf, sizeof buf);
 	debuglink_m17_bench_view(&text);

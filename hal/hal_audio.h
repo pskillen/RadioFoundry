@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "config.h"
 
 #define AUDIO_RATE_HZ		8000
 #define AUDIO_BLOCK_SAMPLES	160	// 20 ms
@@ -52,6 +53,11 @@ typedef struct {
 	bool (*speaker_blocked)(void);
 	// Optional: the stream's timing (debug link view audio.*). NULL: not counted
 	void (*stream_stats)(audio_stream_stats_t *out);
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+	// Optional: queue work from the radio task on the higher-priority audio task, even with PCM stopped.
+	// The job must not block. False means the task could not start or already has a job.
+	bool (*defer)(void (*job)(void));
+#endif
 } hal_audio_t;
 
 #endif

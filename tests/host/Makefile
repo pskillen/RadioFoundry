@@ -227,9 +227,9 @@ c2fxSeamTest: c2fxSeamTest.c $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/incl
 		-I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables -I$(C2FX_DIR)/src/dsp -o $@ c2fxSeamTest.c $(C2FX_DSP) $(C2FX_SRC)
 
 TESTS += m17BenchTest
-M17BENCH := $(CORE)/m17/m17_bench.c $(CORE)/debuglink/debuglink_m17_bench.c $(CORE)/debuglink/dl_fmt.c
+M17BENCH := $(CORE)/app/audio_job.c $(CORE)/m17/m17_bench.c $(CORE)/debuglink/debuglink_m17_bench.c $(CORE)/debuglink/dl_fmt.c
 m17BenchTest: m17BenchTest.c $(M17BENCH) $(CORE)/m17/m17_bench.h $(CORE)/debuglink/debuglink_m17_bench.h \
-              $(ROOT)/hal/hal_time.h $(wildcard stubs/m17_bench_rtos/*.h) \
+              $(ROOT)/hal/hal_time.h $(CORE)/app/audio_job.h $(wildcard stubs/m17_bench_rtos/*.h) \
               $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/include/*.h $(C2FX_DIR)/src/*/*.h)
 	$(CC) $(CFLAGS) -Wshadow -DCONFIG_M17=1 -DCONFIG_M17_VOICE=1 \
 		-DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.0\" \
@@ -487,7 +487,7 @@ C2FX_HEADERS := $(patsubst -I%,%,$(call TP_INCLUDES,-I$(ROOT)/third_party/c2fx/i
 m17LendTestDecoder4504: M17_LEND_FLAGS = -DC2FX_NO_ENCODER
 m17LendTestDecoder4504 m17LendTestEncoder5392: m17LendTest.c m17RadioTest.c $(M17RX) $(wildcard $(CORE)/radio/*.h) \
                        $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h) $(CORE)/nxdn/nxdn_engine.h \
-                       $(C2FX_HEADERS)/c2fx.h $(C2FX_HEADERS)/c2fx_types.h
+                       $(C2FX_HEADERS)/c2fx.h $(C2FX_HEADERS)/c2fx_types.h $(CORE)/debuglink/debuglink_m17_bench.h
 	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -I$(C2FX_HEADERS) $(M17_LEND_FLAGS) -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
 		-DCONFIG_P25=1 -DCONFIG_NXDN=1 -DCONFIG_NXDN_SCRAMBLER=1 -DCONFIG_M17_VOICE=1 \
 		-o $@ m17LendTest.c $(M17RX) -lm

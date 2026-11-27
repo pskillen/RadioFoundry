@@ -17,6 +17,7 @@
 #include "air/air_session.h"
 #if CONFIG_M17_VOICE
 #include "c2fx.h"
+#include "debuglink/debuglink_m17_bench.h"
 #endif
 
 _Static_assert(RADIO_M17_CALL_LEN == M17_CP_CALL_LEN, "M17 callsign buffers must match");
@@ -49,6 +50,11 @@ static radio_m17_settings_t set;
 static radio_m17_settings_t applied;	// what the running engine was given
 static char radio_name[CODEPLUG_RADIO_NAME_LEN + 1];
 static m17_block_t *blk;
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+// Published by the radio task and revoked before it releases the lend. The higher-priority
+// audio task can finish the job without yielding to the radio task.
+static m17_block_t *bench_block;
+#endif
 static bool bert_on;			// a BERT count or transmission was asked for; cleared when the session ends
 static radio_m17_stats_t stats;
 static air_session_stats_t air_base;
@@ -550,6 +556,26 @@ void *radio_m17_lend_place(const radio_lend_t *blocks, uint8_t n, radio_m17_voic
 }
 #endif
 
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+static void bench_audio(void)
+{
+	m17_block_t *b = __atomic_load_n(&bench_block, __ATOMIC_ACQUIRE);
+	int16_t pcm[AUDIO_BLOCK_SAMPLES];
+
+	debuglink_m17_bench_audio(b != NULL ? b->voice.state : NULL, b != NULL ? b->voice.scratch : NULL, pcm);
+}
+
+void radio_m17_bench_service(void)
+{
+	if (!debuglink_m17_bench_armed() || blk == NULL || blk->voice.scratch == NULL ||
+	    board.audio == NULL || board.audio->defer == NULL)
+		return;
+
+	__atomic_store_n(&bench_block, blk, __ATOMIC_RELEASE);
+	board.audio->defer(bench_audio);
+}
+#endif
+
 bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst)
 {
 	m17_engine_cfg_t cfg;
@@ -610,6 +636,9 @@ void radio_m17_end(void)
 	m17_block_t *b = blk;
 
 	bert_on = false;
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+	__atomic_store_n(&bench_block, NULL, __ATOMIC_RELEASE);
+#endif
 	if (b == NULL)
 		return;
 	// The provider is closed before the pointer goes: nothing it calls can touch the block after this

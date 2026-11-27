@@ -61,6 +61,14 @@ uint8_t debuglink_m17_bench_run(void)
 	}
 }
 
+bool debuglink_m17_bench_armed(void)
+{
+	taskENTER_CRITICAL();
+	bool armed = phase == ARMED;
+	taskEXIT_CRITICAL();
+	return armed;
+}
+
 bool debuglink_m17_bench_audio(void *dec, void *scratch, int16_t pcm[AUDIO_BLOCK_SAMPLES])
 {
 	taskENTER_CRITICAL();

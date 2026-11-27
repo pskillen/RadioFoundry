@@ -40,9 +40,15 @@ void hrc_audio_pcm_gate_reset(void);
 bool hrc_audio_pcm_start(audio_block_cb_t cb, void *ctx);
 void hrc_audio_pcm_stop(void);
 void hrc_audio_pcm_speaker(bool on);
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+bool hrc_audio_pcm_defer(void (*job)(void));
+#define HRC_AUDIO_DEFER	, .defer = hrc_audio_pcm_defer
+#else
+#define HRC_AUDIO_DEFER
+#endif
 #define HRC_AUDIO_PCM_OPS	.start = hrc_audio_pcm_start, .stop = hrc_audio_pcm_stop, \
 				.speaker_pcm = hrc_audio_pcm_speaker, .spk_pending = hrc_audio_pcm_spk_pending, \
-				.speaker_blocked = hrc_audio_pcm_speaker_blocked
+				.speaker_blocked = hrc_audio_pcm_speaker_blocked HRC_AUDIO_DEFER
 extern const hal_audio_t hrc_audio_pcm;
 
 // Block, overrun and underrun counters for diagnostics (underruns: the speaker queue ran out with the FIFO taking

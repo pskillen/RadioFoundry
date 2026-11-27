@@ -3,6 +3,9 @@
 #ifndef M17_BENCH_STUB_TASK_H
 #define M17_BENCH_STUB_TASK_H
 
-unsigned uxTaskGetStackHighWaterMark(void *task);
+typedef void *TaskHandle_t;
+
+void xTaskNotifyGive(TaskHandle_t task);
+unsigned uxTaskGetStackHighWaterMark(TaskHandle_t task);
 
 #endif

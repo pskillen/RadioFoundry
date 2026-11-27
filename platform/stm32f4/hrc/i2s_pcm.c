@@ -28,6 +28,7 @@
 #include "hal_time.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "app/audio_job.h"
 #include "debuglink/dlog.h"
 #include "hrc/dmr_glue.h"
 #include "hrc/pcm_ring.h"
@@ -412,6 +413,9 @@ static void audio_task(void *arg)
 	(void)arg;
 	for (;;) {
 		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+		audio_job_service();
+#endif
 		for (;;) {
 			taskENTER_CRITICAL();
 			uint8_t p = pending;
@@ -437,6 +441,22 @@ static void audio_task(void *arg)
 	}
 }
 
+static bool create_audio_task(void)
+{
+	if (xTaskCreate(audio_task, "audio", AUDIO_TASK_STACK, NULL, AUDIO_TASK_PRIORITY, &task) != pdPASS) {
+		task = NULL;
+		return false;
+	}
+	return true;
+}
+
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+bool stm32_i2s_pcm_defer(void (*job)(void))
+{
+	return (task != NULL || create_audio_task()) && audio_job_submit(task, job);
+}
+#endif
+
 // --- hal_audio_t ---
 
 static void clock(bool on)
@@ -448,14 +468,21 @@ static void clock(bool on)
 
 bool stm32_i2s_pcm_start(const stm32_i2s_pcm_cfg_t *c, audio_block_cb_t cb, void *ctx)
 {
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+	if (task == NULL && !create_audio_task())
+		return false;
+	if (cfg == NULL) {
+		cfg = c;
+		hw_setup();
+	}
+#else
 	if (task == NULL) {
 		cfg = c;
 		hw_setup();
-		if (xTaskCreate(audio_task, "audio", AUDIO_TASK_STACK, NULL, AUDIO_TASK_PRIORITY, &task) != pdPASS) {
-			task = NULL;
+		if (!create_audio_task())
 			return false;
-		}
 	}
+#endif
 	block_ctx = ctx;
 	block_cb = cb;
 	if (running) {
@@ -478,8 +505,8 @@ bool stm32_i2s_pcm_start(const stm32_i2s_pcm_cfg_t *c, audio_block_cb_t cb, void
 void stm32_i2s_pcm_stop(void)
 {
 	running = false;
-	if (task == NULL) {
-		return;		// never started: nothing set up
+	if (task == NULL || (CONFIG_M17_VOICE && CONFIG_DEBUGLINK && cfg == NULL)) {
+		return;		// hardware never set up
 	}
 	fifo_off();
 	hw_stop();
