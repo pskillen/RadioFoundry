@@ -374,6 +374,11 @@ spec = "docs/spec/debuglink.md"
 switch = "TASK_STACKS"
 spec = "docs/spec/debuglink.md"
 
+[feature.task_cpu]
+switch = "TASK_CPU"
+spec = "docs/spec/debuglink.md"
+source = ["core/app/task_cpu.c", "core/app/task_cpu.h", "core/debuglink/debuglink_view_tasks.c"]
+
 [feature.cps_openfw]
 switch = "CPS_OPENFW"
 spec = "docs/spec/cps-protocol.md"

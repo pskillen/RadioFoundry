@@ -1276,6 +1276,18 @@ run-taskStack: taskStackTest
 	./taskStackTest
 .PHONY: run-taskStack
 
+# Task run-time stats and debug link formatting, with a fake RTOS and hardware clock.
+TCPU    := taskCpuTest.c $(CORE)/app/task_cpu.c $(CORE)/debuglink/debuglink_view_tasks.c $(CORE)/debuglink/dl_fmt.c
+TESTS   += taskCpuTest
+taskCpuTest: $(TCPU) $(CORE)/app/task_cpu.h $(CORE)/app/task_stack.h $(CORE)/debuglink/debuglink.h \
+             $(wildcard stubs/task_cpu/*.h)
+	$(CC) $(CFLAGS) -Istubs/task_cpu -I$(ROOT)/hal -Wshadow -DCONFIG_TASK_CPU=1 -DCONFIG_TASK_STACKS=0 -o $@ $(TCPU)
+
+run: run-taskCpu
+run-taskCpu: taskCpuTest
+	./taskCpuTest
+.PHONY: run-taskCpu
+
 # The hardware watchdog's portable side: the idle task's feed, the longest idle gap, the bench starve (core/app/
 # watchdog.c), the debug link's watchdog section and DL_CMD_WATCHDOG (core/debuglink/debuglink_watchdog.c). The
 # platform, the clock, the radio's view and the log are faked; watchdog_stub/ holds the stand-in FreeRTOS headers

@@ -8,6 +8,7 @@
     rfoundry_debug.py version
     rfoundry_debug.py diag [--watch N] [--raw]       radio summary + voice path + board diagnostics lines, with rates
     rfoundry_debug.py view [--section NAME] [--json] the radio state as key=value (all sections)
+    rfoundry_debug.py tasks cpu [--window S]          per-task CPU share over S seconds (default 2)
     rfoundry_debug.py reset                          zero the diagnostics counters
     rfoundry_debug.py screenshot -o FILE.png [--scale N] [--crop] [--tries N]
     rfoundry_debug.py key NAME [--long | --hold MS | --repeat N | --down | --up | --steps N]
@@ -203,7 +204,8 @@ PRESS, LONG, REPEAT, DOWN, UP = range(5)
 VIEW_SECTIONS = ["core", "channel", "dmr", "dmr_call", "dmr_stats", "hotspot", "link", "features", "dmr_data",
                  "storage", "dmr_ext", "dmr_data_stats", "roam", "aprs", "aprs_set", "dmr_ip", "net", "snmp", "usrp",
                  "sfr", "tasks", "crash", "watchdog", "reset", "air", "net_svc", "net_link", "cps", "board", "audio", "t3",
-                 "t3_svc", "t3_roam", "voice_cap", "t3_msg", "t3_ra", "p25", "p25_trunk", "nxdn", "m17", "m17_cal"]
+                 "t3_svc", "t3_roam", "voice_cap", "t3_msg", "t3_ra", "p25", "p25_trunk", "nxdn", "m17", "m17_cal",
+                 "tasks_cpu"]
 
 OP_CHANNEL_STEP, OP_ZONE_POS, OP_ZONE, OP_VFO, OP_VFO_SET, OP_VFO_STEP, OP_POWER, OP_SQUELCH, OP_BANDWIDTH, \
     OP_TONE, OP_MONITOR, OP_CLEAR_TEMP, OP_REPLY_CANCEL, OP_HOTSPOT_EXIT, OP_DMR_TARGET, OP_DMR_CONTACT, \
@@ -336,7 +338,7 @@ def find_cables():
 
 
 # Commands (and their ops) that only read: everything else restarts the radio or changes it
-READ_ONLY = {"hwopt": None, "support": None, "reg": None, "ping": None, "version": None, "diag": None, "view": None, "screenshot": None, "log": None, "chip": None,
+READ_ONLY = {"hwopt": None, "support": None, "reg": None, "ping": None, "version": None, "diag": None, "view": None, "tasks": None, "screenshot": None, "log": None, "chip": None,
              "dump": None, "peek": None, "iddb": None, "crash": ("show",), "watchdog": ("show",), "rx2": ("info",),
              "air": ("status", "tap", "rx"), "storage": ("info", "dump"), "split": ("view",),
              "aprobe": ("status", "reg", "samples", "ram", "watch")}
@@ -1937,6 +1939,27 @@ def parse_counters(lines):
 
 # ── command line ────────────────────────────────────────────────────────────
 
+def cmd_tasks_cpu(link, window):
+    try:
+        link.view_section("tasks_cpu")
+    except DebugLinkError as e:
+        if e.status == ST_BAD_ARG:
+            raise DebugLinkError("tasks_cpu unavailable (build with CONFIG_TASK_CPU=y)", e.status) from e
+        raise
+    time.sleep(window)
+    _, _, sample = link.view_section("tasks_cpu")
+    cycles = int(sample["tasks_cpu.cycles"])
+    if cycles == 0:
+        raise DebugLinkError("empty or expired tasks_cpu window")
+    if sample.get("truncated") or int(sample["tasks_cpu.omitted"]):
+        raise DebugLinkError("incomplete tasks_cpu sample")
+    rows = [(key.removeprefix("tcpu."), int(value)) for key, value in sample.items() if key.startswith("tcpu.")]
+    print(f"Window {cycles:,} cycles")
+    print(f"{'Task':<12} {'CPU':>7} {'Run-time cycles (low 32 bits)':>29}")
+    for name, share in sorted(rows, key=lambda row: (-row[1], row[0])):
+        print(f"{name:<12} {share / 10:6.1f}% {int(sample['tcycles.' + name]):29d}")
+
+
 def cmd_diag(link, a):
     prev = None
     while True:
@@ -3062,6 +3085,9 @@ def main(argv=None):
     p = sub.add_parser("view")
     p.add_argument("--section", choices=VIEW_SECTIONS, action="append")
     p.add_argument("--json", action="store_true")
+    p = sub.add_parser("tasks", help="per-task CPU share (CONFIG_TASK_CPU builds)")
+    p.add_argument("op", choices=["cpu"])
+    p.add_argument("--window", type=float, metavar="S", default=2, help="sample seconds (default 2)")
     sub.add_parser("reset")
     p = sub.add_parser("screenshot")
     p.add_argument("-o", "--output", required=True)
@@ -3210,6 +3236,8 @@ def main(argv=None):
 
     if a.cmd == "ptt" and not 0 < a.seconds <= INJECT_MAX_S:
         ap.error(f"--seconds must be > 0 and <= {INJECT_MAX_S:g}")
+    if a.cmd == "tasks" and not 0 < a.window < float("inf"):
+        ap.error("--window must be a positive, finite number of seconds")
     try:
         port = a.port if a.port else pick_port(None, changes_radio(a))
         with DebugLink(port, a.timeout) as link:
@@ -3223,6 +3251,8 @@ def main(argv=None):
             elif a.cmd == "view":
                 v = link.view(a.section)
                 print(json.dumps(v, indent=1) if a.json else "\n".join(f"{k}={x}" for k, x in v.items()))
+            elif a.cmd == "tasks":
+                cmd_tasks_cpu(link, a.window)
             elif a.cmd == "reset":
                 print(f"counters reset at t={link.reset() / 1000:.3f} s")
             elif a.cmd == "screenshot":

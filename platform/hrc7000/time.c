@@ -140,6 +140,9 @@ void hrc_timer_stop(uint8_t n)
 
 void vApplicationTickHook(void)
 {
+#if CONFIG_TASK_CPU
+	(void)task_cpu_clock();
+#endif
 	fold();
 	hrc_irq_stack_check();
 }

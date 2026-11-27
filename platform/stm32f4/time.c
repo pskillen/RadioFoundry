@@ -115,6 +115,9 @@ void HAL_Delay(uint32_t Delay)
 
 void vApplicationTickHook(void)
 {
+#if CONFIG_TASK_CPU
+	(void)task_cpu_clock();
+#endif
 	fold();
 	stm32_irq_stack_check();
 }

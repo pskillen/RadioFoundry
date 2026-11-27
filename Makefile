@@ -173,6 +173,10 @@ endif
 ifneq ($(CONFIG_TASK_STACKS),y)
 APP_SRC := $(filter-out core/app/task_stack.c,$(APP_SRC))
 endif
+# Bench profiling has its own view to detect support and is opt-in on every build.
+ifneq ($(CONFIG_TASK_CPU),y)
+APP_SRC := $(filter-out core/app/task_cpu.c,$(APP_SRC))
+endif
 # The idle task's watchdog feed (core/app is always globbed): only with its switch, which also turns on the idle hook in
 # the platforms' FreeRTOSConfig.h
 ifneq ($(CONFIG_WATCHDOG),y)
@@ -360,8 +364,9 @@ codec: $(TARGET).bin $(if $(BOOT_STAGE),$(TARGET)_install.bin)
 # The switches this radio could have that the build left off (neither BOARD_UNSUPPORTED nor BOARD_NOT_WRITTEN): the
 # VERSION off= (either listener), so an installer updating the radio knows its exact build (features= names only some). A
 # change of either rebuilds build_info.o (the preset can change while the flags stay: a switch set to its default)
+# TASK_CPU is a bench option kept out of VERSION off= to preserve the default images.
 RFOUNDRY_EMPTY :=
-RFOUNDRY_OFF := $(subst $(RFOUNDRY_EMPTY) ,$(strip ,),$(sort $(foreach f,$(filter-out $(BOARD_UNSUPPORTED) $(BOARD_NOT_WRITTEN),$(FEATURES)),\
+RFOUNDRY_OFF := $(subst $(RFOUNDRY_EMPTY) ,$(strip ,),$(sort $(foreach f,$(filter-out $(BOARD_UNSUPPORTED) $(BOARD_NOT_WRITTEN) TASK_CPU,$(FEATURES)),\
 	$(if $(call feature_on,$(f)),,$(f)))))
 # The build's preset, VERSION preset=: the release variant (VARIANT, full without one), or custom when a
 # switch is set on the command line. The build service sets every switch, and passes RFOUNDRY_PRESET=<variant> when

@@ -66,3 +66,37 @@ void debuglink_view_tasks(dl_text_t *t)
 	dl_text(t, "tasks.built=0\n");
 #endif
 }
+
+#if CONFIG_TASK_CPU
+#include "app/task_cpu.h"
+
+static unsigned permille(const task_cpu_row_t *row, uint32_t window_cycles)
+{
+	if (window_cycles == 0) {
+		return 0;
+	}
+	uint32_t cycles = row->cycles - row->previous;
+
+	// The running task and the window clock are read a few instructions apart.
+	return cycles >= window_cycles ? 1000u : (unsigned)((uint64_t)cycles * 1000u / window_cycles);
+}
+
+void debuglink_view_tasks_cpu(dl_text_t *t)
+{
+	task_cpu_sample_t sample;
+	char key[TASK_STACK_NAME_LEN + 1];
+
+	task_cpu_snapshot(&sample);
+	dl_text(t, "tasks_cpu.cycles=%u\ntasks_cpu.omitted=%u\n", (unsigned)sample.window_cycles, sample.omitted);
+	if (sample.idle < sample.count) {
+		dl_text(t, "tasks_cpu.idle=%u\n", permille(&sample.rows[sample.idle], sample.window_cycles));
+	}
+	for (unsigned i = 0; i < sample.count; i++) {
+		const task_cpu_row_t *row = &sample.rows[i];
+
+		key_name(key, row->name);
+		dl_text(t, "tcpu.%s=%u\ntcycles.%s=%u\n", key, permille(row, sample.window_cycles), key,
+			(unsigned)row->cycles);
+	}
+}
+#endif

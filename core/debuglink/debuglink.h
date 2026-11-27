@@ -60,6 +60,9 @@ enum {
 	DL_VIEW_NXDN,		// NXDN on the channel: the call, settings, the provider's fit, engine counters (debuglink_view_nxdn.c)
 	DL_VIEW_M17,		// M17 on the channel: the call, CAN, BERT counters (debuglink_view_m17.c)
 	DL_VIEW_M17_CAL,		// M17 codec bench calibration (debuglink_m17_bench.c)
+#if CONFIG_TASK_CPU
+	DL_VIEW_TASKS_CPU,	// task run-time counters and window shares
+#endif
 	DL_VIEW_COUNT
 };
 #define DL_VIEW_VERSION		5	// bumped when a key changes meaning or goes away (new keys don't bump it)
@@ -165,6 +168,9 @@ size_t debuglink_cmd_snmp(const uint8_t *req, uint16_t len, uint8_t *out, size_t
 // apart from the snapshot (task_stack_snapshot) so the host tests can feed it
 void debuglink_view_tasks(dl_text_t *t);
 void debuglink_view_tasks_format(const task_stack_t *ts, unsigned n, unsigned untracked, dl_text_t *t);
+#if CONFIG_TASK_CPU
+void debuglink_view_tasks_cpu(dl_text_t *t);
+#endif
 
 #if defined(CONFIG_HOTSPOT_SPLIT) && CONFIG_HOTSPOT_SPLIT
 // The split duplex command SPLIT and its view text (debuglink_split.c, docs/spec/debuglink.md 3.15)
