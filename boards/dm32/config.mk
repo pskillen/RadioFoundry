@@ -44,4 +44,4 @@ BOARD_NOT_WRITTEN += AUDIO_PROBE	# no board.audio_tap yet
 BOARD_NOT_WRITTEN += NET_USRP	# USRP's 8 kHz PCM both ways needs more than the host link's 115200 baud
 
 # Static Codec 2 storage fits the maximal voice build with DMR Tier III off.
-MAXIMAL_VOICE_VARS := CONFIG_DMR_TRUNK=n CONFIG_DMR_TRUNK_TX=n CONFIG_DMR_TRUNK_SUPL=n CONFIG_DMR_TRUNK_GW=n
+MAXIMAL_M17_VOICE_VARS := CONFIG_DMR_TRUNK=n CONFIG_DMR_TRUNK_TX=n CONFIG_DMR_TRUNK_SUPL=n CONFIG_DMR_TRUNK_GW=n
