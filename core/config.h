@@ -359,6 +359,9 @@
 #ifndef CONFIG_M17_VOICE
 #define CONFIG_M17_VOICE		0
 #endif
+#ifndef CONFIG_M17_STATIC_CODEC
+#define CONFIG_M17_STATIC_CODEC	0
+#endif
 #ifndef CONFIG_AIR
 #define CONFIG_AIR			(CONFIG_P25 || CONFIG_NXDN || CONFIG_M17)
 #endif
@@ -593,6 +596,9 @@
 #endif
 #if CONFIG_M17_VOICE && !CONFIG_M17
 #error "CONFIG_M17_VOICE needs CONFIG_M17"
+#endif
+#if CONFIG_M17_STATIC_CODEC && !CONFIG_M17_VOICE
+#error "CONFIG_M17_STATIC_CODEC needs CONFIG_M17_VOICE"
 #endif
 #if CONFIG_M17 && !CONFIG_DMR
 #error "CONFIG_M17 needs CONFIG_DMR (its voice is the DMR vocoder's)"

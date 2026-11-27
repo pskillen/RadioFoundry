@@ -61,9 +61,17 @@ static void check_session(const void *engine, bool has_voice)
 
 	radio_m17_settings(&settings);
 	CHECK(radio_m17_begin(&settings, 0));
+#if CONFIG_M17_STATIC_CODEC
+	(void)engine;
+	CHECK(radio_m17_engine_mem() == voc_mem);
+#else
 	CHECK(radio_m17_engine_mem() == engine);
+#endif
 	radio_m17_poll(&view);
 	CHECK((view.flags & RADIO_M17_ON) != 0);
+#if CONFIG_M17_STATIC_CODEC
+	has_voice = true;
+#endif
 	CHECK(((view.flags & RADIO_M17_VOICE_MEM) != 0) == has_voice);
 #if CONFIG_DEBUGLINK
 	radio_m17_bench_service();
@@ -73,8 +81,14 @@ static void check_session(const void *engine, bool has_voice)
 	CHECK((audio_job != NULL) == has_voice);
 	if (has_voice) {
 		run_audio_job();
+#if CONFIG_M17_STATIC_CODEC
+		CHECK(last_scratch != NULL && last_dec != NULL);
+		CHECK(last_scratch != voc_mem && last_dec != voc_mem);
+		CHECK(((uintptr_t)last_scratch & 7u) == 0);
+#else
 		CHECK(last_scratch == voc_mem);
 		CHECK(last_dec == (uint8_t *)voc_mem + C2FX_SCRATCH_BYTES);
+#endif
 		armed = true;
 		radio_m17_bench_service();
 		CHECK(audio_job != NULL);

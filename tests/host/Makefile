@@ -494,10 +494,11 @@ radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
 		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ $(RCM17) -lm
 
-TESTS   += m17LendTestDecoder4504 m17LendTestEncoder5392
+TESTS   += m17LendTestDecoder4504 m17LendTestEncoder5392 m17LendTestStatic
 C2FX_HEADERS := $(patsubst -I%,%,$(call TP_INCLUDES,-I$(ROOT)/third_party/c2fx/include))
 m17LendTestDecoder4504: M17_LEND_FLAGS = -DC2FX_NO_ENCODER
-m17LendTestDecoder4504 m17LendTestEncoder5392: m17LendTest.c m17RadioTest.c $(M17RX) $(wildcard $(CORE)/radio/*.h) \
+m17LendTestStatic: M17_LEND_FLAGS = -DCONFIG_M17_STATIC_CODEC=1
+m17LendTestDecoder4504 m17LendTestEncoder5392 m17LendTestStatic: m17LendTest.c m17RadioTest.c $(M17RX) $(wildcard $(CORE)/radio/*.h) \
                        $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h) $(CORE)/nxdn/nxdn_engine.h \
                        $(C2FX_HEADERS)/c2fx.h $(C2FX_HEADERS)/c2fx_types.h $(CORE)/debuglink/debuglink_m17_bench.h
 	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -I$(C2FX_HEADERS) $(M17_LEND_FLAGS) -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \

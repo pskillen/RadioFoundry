@@ -340,9 +340,9 @@ endif
 BIN_SECTIONS ?= .isr_vector .text .rodata .ARM.extab .ARM .preinit_array .init_array .fini_array .data .ccmdata
 
 APP_OBJ := $(APP_SRC:%.c=$(BUILD)/%.o) $(APP_ASM:%.S=$(BUILD)/%.o)
-# c2fx 0.2.1 decoder-only external-DSP archive (the pin's Makefile defines this list).
+# c2fx 0.2.1 decoder external-DSP archive (the pin's Makefile defines this list).
 ifeq ($(CONFIG_M17_VOICE),y)
-C2FX_PUBLIC_FLAGS := -DC2FX_NO_ENCODER $(call TP_INCLUDES,-Ithird_party/c2fx/include)
+C2FX_PUBLIC_FLAGS := $(if $(filter y,$(CONFIG_M17_STATIC_CODEC)),,-DC2FX_NO_ENCODER) $(call TP_INCLUDES,-Ithird_party/c2fx/include)
 C2FX_SRC := $(addprefix third_party/c2fx/src/,c2fx_version.c tables/c2_3200_tab.c dsp/c2fx_exp2_tab.c \
 	c2fx_frame.c c2fx_quant.c c2fx_lpc.c c2fx_envelope.c c2fx_phase.c c2fx_synth.c c2fx_lost.c c2fx_decode.c)
 C2FX_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(C2FX_SRC))

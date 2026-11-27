@@ -55,6 +55,15 @@ static m17_block_t *blk;
 // audio task can finish the job without yielding to the radio task.
 static m17_block_t *bench_block;
 #endif
+#if CONFIG_M17_STATIC_CODEC
+// One shared workspace for the bench and the eventual voice path. The engine still uses a lend.
+static struct {
+	c2fx_scratch_t scratch;
+	c2fx_dec_t dec;
+	c2fx_enc_t enc;
+	uint8_t queues[RADIO_M17_VOICE_QUEUE_BYTES];
+} __attribute__((aligned(8))) static_codec;
+#endif
 static bool bert_on;			// a BERT count or transmission was asked for; cleared when the session ends
 static radio_m17_stats_t stats;
 static air_session_stats_t air_base;
@@ -589,7 +598,12 @@ bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst)
 	stats.begins++;
 	uint8_t n = radio_lend_gather(blocks);
 #if CONFIG_M17_VOICE
+#if CONFIG_M17_STATIC_CODEC
+	b = place_engine(blocks, n);
+	voice = (radio_m17_voice_mem_t){ &static_codec.scratch, &static_codec.dec };
+#else
 	b = radio_m17_lend_place(blocks, n, &voice);
+#endif
 #else
 	b = place_engine(blocks, n);
 #endif

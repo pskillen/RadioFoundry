@@ -146,7 +146,8 @@ below are for an STM32F4 radio.
 | `CONFIG_NXDN_SCRAMBLER` | = NXDN | 15-bit NXDN Scrambler for conventional voice calls. Needs `NXDN`. |
 | `CONFIG_M17` | = DMR | M17 conventional operation: stream, packet and BERT on the air interface, the VFO's mode and stored M17 channels, Home, the channel editor, Quick Talk to, and the shared messages inbox (`docs/spec/m17.md`, `docs/spec/m17-codeplug.md`, `docs/user/24-m17.md`). Voice (Codec 2 3200) not written; on-radio testing is pending. Needs `DMR` |
 | `CONFIG_M17_PACKET` | = M17 | M17 packet mode: compose, receive and reply to M17 text messages in the shared inbox (`docs/spec/m17.md` 8.2, `docs/user/10-messages-and-signaling.md#sending-and-replying-over-m17`). Needs `M17`. Off: M17 stream and BERT stay built; sending and receiving M17 text messages both become unavailable (**M17 message: not available**) |
-| `CONFIG_M17_VOICE` | n | M17 voice through Codec 2 3200 (c2fx 0.2.1; encoder compiled out until voice transmit). Needs `M17` |
+| `CONFIG_M17_VOICE` | n | M17 voice through Codec 2 3200 (c2fx 0.2.1; encoder code is not yet wired). Needs `M17` |
+| `CONFIG_M17_STATIC_CODEC` | n | Reserve full encoder and decoder workspace and queues in static RAM for the codec bench. Needs `M17_VOICE` |
 | `CONFIG_AIR_RAW` | n | diagnostics: debug link commands that open an air interface session and move raw symbols and tap samples, for bench tests (`docs/spec/debuglink.md`). Needs P25, NXDN or M17 (an air-framed mode) and DEBUGLINK |
 | `CONFIG_SFR` | = DMR (n where the modem can't) | single frequency repeater: MMDVM SFR (the hotspot, duplex with RX = TX) and Standalone SFR (the repeater and user roles of a channel, `docs/spec/sfr.md`) |
 | `CONFIG_SFR_CWID` | = SFR | the standalone SFR repeater's periodic CW ID: the callsign from the radio name in Morse, in FM on the channel (`sfr.md` 4). Off: the setting isn't offered |
