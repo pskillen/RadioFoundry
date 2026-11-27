@@ -17,6 +17,10 @@
 # FreeRTOS creates its idle task through a variable (tasks.c)
 task prvIdleTask configMINIMAL_STACK_SIZE
 
+# The audio job callback crosses the board HAL and the deferred dispatcher.
+ptr defer stm32_i2s_pcm_defer hrc_audio_pcm_defer
+call audio_job_service core/radio/radio_m17.c:bench_audio
+
 # The stock AMBE+2 codec runs on the calling task's stack. STM32: the largest stock codec's peak, 4046 bytes
 # measured (docs/spec/codec-md380.md), plus the veneer's 20 bytes of registers, up to 8 stack arguments
 # and 4 for alignment (platform/stm32f4/codec_call.c, assembly)

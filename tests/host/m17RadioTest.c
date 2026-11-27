@@ -75,7 +75,17 @@ static const hal_air_t fake_air = {
 	.fit = a_fit, .open = a_open, .close = a_close, .rx_restart = a_restart,
 };
 
-const board_t board = { .name = "m17-lend", .air = &fake_air, .vocoder = &fake_vocoder };
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+static bool defer_audio(void (*job)(void));
+static const hal_audio_t fake_audio = { .defer = defer_audio };
+#endif
+
+const board_t board = {
+	.name = "m17-lend", .air = &fake_air, .vocoder = &fake_vocoder,
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+	.audio = &fake_audio,
+#endif
+};
 
 bool m17_chan_load(uint16_t number, const channel_t *ch, m17_chan_t *out)
 {

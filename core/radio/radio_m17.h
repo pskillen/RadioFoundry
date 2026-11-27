@@ -226,6 +226,9 @@ typedef struct {
 // Plan placement in a gathered pool. Returns the engine block, or NULL when it cannot fit.
 // Both voice pointers are NULL when either voice region cannot fit.
 void *radio_m17_lend_place(const radio_lend_t *blocks, uint8_t n, radio_m17_voice_mem_t *voice);
+#if CONFIG_DEBUGLINK
+void radio_m17_bench_service(void);	// radio task, while the session owns its lend
+#endif
 #endif
 #endif
 

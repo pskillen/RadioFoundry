@@ -39,6 +39,10 @@ static bool start(audio_block_cb_t cb, void *ctx)
 }
 
 const hal_audio_t md380_audio = { .start = start, .stop = stm32_i2s_pcm_stop, .speaker_pcm = speaker_pcm,
-				  .stream_stats = stm32_i2s_pcm_stream_stats };
+				  .stream_stats = stm32_i2s_pcm_stream_stats,
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+	.defer = stm32_i2s_pcm_defer,
+#endif
+};
 
 #endif	// CONFIG_DMR

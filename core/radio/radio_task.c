@@ -10,6 +10,9 @@
 #include "radio/radio_trunk.h"
 #include "hal_time.h"
 #include "config.h"
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+#include "radio/radio_m17.h"
+#endif
 #if CONFIG_HOTSPOT
 #include "hotspot/hotspot.h"
 #include "radio/radio_hotspot.h"
@@ -361,6 +364,9 @@ static void radio_task(void *arg)
 		#endif
 		if ((int32_t)(now - next_poll) >= 0) {
 			radio_sm_poll(&sm, hal_millis());
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+			radio_m17_bench_service();
+#endif
 #if CONFIG_HOTSPOT
 			radio_hs_watch(&sm, hal_millis());
 #endif

@@ -9,6 +9,7 @@
 #include "hal_audio.h"
 
 uint8_t debuglink_m17_bench_run(void);
+bool debuglink_m17_bench_armed(void);
 void debuglink_m17_bench_view(dl_text_t *t);
 
 // Call on the audio task while the active session owns these regions.
