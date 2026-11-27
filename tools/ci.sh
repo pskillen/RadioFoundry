@@ -53,8 +53,8 @@
 #                           and the bench diagnostics (MAXIMAL_SKIP here: AUDIO_PROBE), with the board's MAXIMAL_VARS
 #                           (the DM-1701: LTO=1). A switch that needs one of those is off too (config/features.mk's
 #                           checks: all of DMR's family where DMR isn't written)
-#        maximal-m17-voice  if the board sets MAXIMAL_M17_VOICE_VARS, build a second maximal profile with those overrides
-#                           and leave M17 voice out of the first maximal profile so it keeps the other features
+#        maximal-m17       if the board sets MAXIMAL_M17_VARS, build a second maximal profile with M17 and those
+#                           overrides and leave the M17 feature family out of the first maximal profile
 #        <value>            each build option value but the first (board.toml [[build_options]], e.g. a band),
 #                           default config; not with --matrix
 #        <extra>            each board.toml [ci] extra configuration (e.g. a bench diagnostic with the variables it
@@ -460,7 +460,7 @@ build() {
 		bad "$b $name: warnings ($*; see $log)"
 	fi
 	# the static stack check (docs/dev/stack-check.md) on the default and maximal configurations
-	if [ "$name" = default ] || [ "$name" = maximal ] || [ "$name" = maximal-m17-voice ]; then
+	if [ "$name" = default ] || [ "$name" = maximal ] || [ "$name" = maximal-m17 ]; then
 		if make -s BOARD="$b" BUILD="$dir" "$@" stack-check > "$dir.stack.log" 2>&1; then
 			ok "$b $name: $(grep -E '^stack check .*: every task fits' "$dir.stack.log" | sed 's/^stack check [^:]*: //')"
 		else
@@ -469,7 +469,7 @@ build() {
 		fi
 	fi
 	# double and libm in a release image: a warning, not a failure (docs/spec/gotchas.md 13.12)
-	if [ "$name" = default ] || [ "$name" = maximal ] || [ "$name" = maximal-m17-voice ]; then
+	if [ "$name" = default ] || [ "$name" = maximal ] || [ "$name" = maximal-m17 ]; then
 		cross=$(make -s BOARD="$b" BUILD="$dir" "$@" print-vars VARS=CROSS | sed 's/^CROSS=//')
 		soft=$("${cross}nm" "$target.elf" 2>/dev/null | awk '$2 ~ /^[TtWw]$/ { print $3 }' |
 			grep -E '^(__aeabi_(d[a-z]+|[iu]?l?2d|f2d|d2[a-z]+)|__(add|sub|mul|div|extendsf|truncdf|float[a-z]*|fix[a-z]*)df[0-9]?|(sin|cos|tan|asin|acos|atan2?|sqrt|pow|exp|log|log10|floor|ceil|fmod|round|hypot)f?)$' |
@@ -578,13 +578,14 @@ for bm in boards/*/board.mk boards/*/; do
 	done
 	[ -n "$dropped" ] && echo "ci: $b maximal: off, their parent left out:$dropped"
 	# Maximal with --quick too: its flash and the stack check's deepest chains are where a pull request runs out first
-	maximal_m17_voice_vars=$(make -s BOARD="$b" print-maximal-m17-voice-vars)
-	if [ -n "$maximal_m17_voice_vars" ]; then
-		# Keep every pre-voice feature in maximal. The companion build covers voice on the same board.
+	maximal_m17_vars=$(make -s BOARD="$b" print-maximal-m17-vars)
+	if [ -n "$maximal_m17_vars" ]; then
+		# Put the M17 feature family in the companion build. Keep the other features in maximal.
 		# shellcheck disable=SC2086
-		build "$b" maximal $all_on $maximal_vars CONFIG_M17_VOICE=n CONFIG_M17_STATIC_CODEC=n
+		build "$b" maximal $all_on $maximal_vars \
+			CONFIG_M17=n CONFIG_M17_PACKET=n CONFIG_M17_VOICE=n CONFIG_M17_STATIC_CODEC=n
 		# shellcheck disable=SC2086
-		build "$b" maximal-m17-voice $all_on $maximal_vars $maximal_m17_voice_vars
+		build "$b" maximal-m17 $all_on $maximal_vars $maximal_m17_vars
 	else
 		# shellcheck disable=SC2086
 		build "$b" maximal $all_on $maximal_vars
