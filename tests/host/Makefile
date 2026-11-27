@@ -228,7 +228,7 @@ m17BenchTest: m17BenchTest.c $(M17BENCH) $(CORE)/m17/m17_bench.h $(CORE)/debugli
               $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/include/*.h $(C2FX_DIR)/src/*/*.h)
 	$(CC) $(CFLAGS) -Wshadow -DCONFIG_M17=1 -DCONFIG_M17_VOICE=1 \
 		-DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.0\" \
-		-Istubs/m17_bench_rtos -I$(ROOT)/hal -I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables \
+		-Istubs/m17_bench_rtos -I$(ROOT)/hal -I$(CORE)/mbe -I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables \
 		-I$(C2FX_DIR)/src/dsp -o $@ m17BenchTest.c $(M17BENCH) $(C2FX_DSP) $(C2FX_SRC)
 
 # The full-rate voice encoder (core/mbe): the quantizer against the dequantizer
