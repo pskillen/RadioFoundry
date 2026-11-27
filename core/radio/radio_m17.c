@@ -52,11 +52,12 @@ static m17_bert_count_t bert_done;	// sessions already closed; the open one's co
 static const radio_m17_inbox_ops_t *inbox_ops;
 static radio_m17_msg_store_t inbox;
 static uint32_t last_received_id;
-static radio_m17_packet_stats_t packet_stats;
-static m17_packet_rx_stats_t packet_base;	// last protocol counters folded into packet_stats
 static uint8_t packet_tx_status;		// radio task only; survives releasing the engine lend
-static RFOUNDRY_CPU_RAM radio_m17_packet_rx_snap_t packet_rx_snap;	// copied only by the CPU
-static radio_m17_packet_tx_snap_t packet_tx_snap;
+// Packet counters and debug snapshots are copied only by the CPU.
+static RFOUNDRY_CPU_RAM radio_m17_packet_stats_t packet_stats;
+static RFOUNDRY_CPU_RAM m17_packet_rx_stats_t packet_base;	// last protocol counters folded into packet_stats
+static RFOUNDRY_CPU_RAM radio_m17_packet_rx_snap_t packet_rx_snap;
+static RFOUNDRY_CPU_RAM radio_m17_packet_tx_snap_t packet_tx_snap;
 
 static void m17_tx_abort(void);
 
