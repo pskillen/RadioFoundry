@@ -1468,7 +1468,9 @@ class DebugLink:
             raise
         v = self.view(["m17"])
         keys = ("c2.dec_cycles", "c2.dec_crc", "c2.audio_free", "c2.scratch", "c2.dec_bytes", "c2.enc",
-                "m17.voice_mem")
+                "c2.dec_mean", "c2.prof_total", "c2.probe_cycles", "c2.cos_cycles", "c2.cos_calls",
+                "c2.exp2_cycles", "c2.exp2_calls", "c2.log2_cycles", "c2.log2_calls", "c2.rfft_cycles",
+                "c2.rfft_calls", "c2.irfft_cycles", "c2.irfft_calls", "m17.voice_mem")
         return {key: v[key] for key in keys}
 
     def vfo_sfr(self, role, inbound_ts=1, framing=0, hang=0):

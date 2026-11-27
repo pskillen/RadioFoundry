@@ -100,8 +100,15 @@ void debuglink_m17_bench_view(dl_text_t *t)
 	taskENTER_CRITICAL();
 	m17_bench_result_t result = last;
 	taskEXIT_CRITICAL();
-	dl_text(t, "c2.dec_cycles=%u\nc2.dec_crc=0x%08x\nc2.audio_free=%u\nc2.scratch=%u\nc2.dec_bytes=%u\nc2.enc=0\n",
+	dl_text(t, "c2.dec_cycles=%u\nc2.dec_crc=0x%08x\nc2.audio_free=%u\nc2.scratch=%u\nc2.dec_bytes=%u\nc2.enc=0\n"
+		   "c2.dec_mean=%u\nc2.prof_total=%u\nc2.probe_cycles=%u\nc2.cos_cycles=%u\nc2.cos_calls=%u\n"
+		   "c2.exp2_cycles=%u\nc2.exp2_calls=%u\nc2.log2_cycles=%u\nc2.log2_calls=%u\n"
+		   "c2.rfft_cycles=%u\nc2.rfft_calls=%u\nc2.irfft_cycles=%u\nc2.irfft_calls=%u\n",
 		(unsigned)result.dec_cycles, (unsigned)result.dec_crc, (unsigned)result.audio_free,
-		(unsigned)C2FX_SCRATCH_BYTES, (unsigned)C2FX_DEC_BYTES);
+		(unsigned)C2FX_SCRATCH_BYTES, (unsigned)C2FX_DEC_BYTES, (unsigned)result.dec_mean,
+		(unsigned)result.prof_total, (unsigned)result.probe_cycles, (unsigned)result.cos_cycles,
+		(unsigned)result.cos_calls, (unsigned)result.exp2_cycles, (unsigned)result.exp2_calls,
+		(unsigned)result.log2_cycles, (unsigned)result.log2_calls, (unsigned)result.rfft_cycles,
+		(unsigned)result.rfft_calls, (unsigned)result.irfft_cycles, (unsigned)result.irfft_calls);
 }
 #endif
