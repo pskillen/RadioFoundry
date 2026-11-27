@@ -649,9 +649,10 @@ boardBandTest: boardBandTest.c $(ROOT)/hal/board.h
 run: run-core
 run: run-m17-lend
 .PHONY: run-m17-lend
-run-m17-lend: m17LendTestDecoder4504 m17LendTestEncoder5392
+run-m17-lend: m17LendTestDecoder4504 m17LendTestEncoder5392 m17LendTestStatic
 	./m17LendTestDecoder4504
 	./m17LendTestEncoder5392
+	./m17LendTestStatic
 
 run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 m17MessageRadioTest m17MessageDebugTest m17MessageDebugTestNoPacket radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
           rx2LinkTest keyassignTest powerSwitchTest powerKeyTest boardBandTest batteryTest
