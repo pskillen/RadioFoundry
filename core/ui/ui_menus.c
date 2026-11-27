@@ -3398,6 +3398,9 @@ static bool ced_changed(uint8_t r)
 	if (r == CE_M17_CAN || r == CE_M17_SQ || r == CE_M17_DST) {
 		if (ced_step_of(&ced_ch) != ced_step_of(&ced_orig))
 			return true;
+		// CE_COUNT checks hidden rows too. The union holds M17 fields only for an M17 channel.
+		if (!ced_is_m17(&ced_ch))
+			return false;
 		if (r == CE_M17_CAN)
 			return ced_air.m17.can != ced_air_orig.m17.can;
 		if (r == CE_M17_SQ)
