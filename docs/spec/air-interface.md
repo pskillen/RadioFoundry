@@ -152,17 +152,19 @@ down to a hundredth of it).
 | Resampling | a polyphase interpolator (12 phases, 8 taps) to five samples per symbol |
 | Receive filter | an integrate and dump over one symbol for C4FM and square pulses, a shorter one otherwise |
 | Sync fit | the newest symbol-spaced samples are fitted to each pattern (level and offset, least squares). Where the error passes through a minimum under the limit, that sample is a symbol center; a parabola through the neighbors places it between samples |
-| Step gate | per sample phase the modem keeps one bit per symbol (this sample was above the one a symbol before). A pattern can start a fit when the steps of four levels or more among its last 17 symbols are all there but one |
+| Step gate | per sample phase the modem keeps one bit per symbol (this sample was above the one a symbol before). A pattern can start its own fit when the steps of four levels or more among its last 17 symbols are all there but one |
 | Output | symbols leave from the far end of a delay line 26 symbols long, sampled on the latest sync's timing and scaled by its level and offset, so a sync is sampled on the timing it gave |
 | Level | a tap of known scale starts at the profile's deviation. A tap of unknown scale follows the input's average magnitude until a sync gives the level, and the averages hold while that lock stands. They start fast and slow down. When a 16-sample average of the magnitude is off the held one by half or double — a carrier after discriminator noise, or the carrier leaving — the lock is dropped and both averages start fast again. A chance sync must not keep the noise level across that step: the next sync would be fitted on a clipped or starved line |
 
-An all-outer sync pattern with fewer than four large steps in the step gate also needs a sign match to start a
-fit. The newest symbol-spaced samples must all have the sign of their corresponding pattern symbols, relative
-to the tracked offset. M17's short sync patterns have so few large steps that the step gate alone starts fits
-on about 95% of filtered noise samples. The sign check rejects most of those samples without depending on the
-signal's scale.
+An all-outer sync pattern with fewer than four large steps also needs an exact sign match relative to the
+tracked offset. The eight-symbol gate keeps that sign history for each phase and rebuilds it when a sync
+changes the offset or rescales the line. For a long all-outer pattern that passes the step gate, disjoint
+pairs of equal expected levels bound the least-squares error. The squared difference in each pair contributes
+at least half that amount to the error. If their total rules out a fit, the modem skips it. This matters on
+alternating preambles, which regularly pass the step-direction check. The samples on either side of a timing
+candidate still use the full fit to locate the peak.
 
-The table gives host fits per second over 60 seconds of fixed-seed Gaussian noise at 300 counts RMS, with an
+The earlier sign-gate measurements count search calls per second over 60 seconds of fixed-seed Gaussian noise at 300 counts RMS, with an
 8 kHz tap and unknown scale.
 
 | Profile | Step gate alone | With sign check |
@@ -188,7 +190,8 @@ steps, 64-bit products for the voice codecs), each in plain C and with a core's 
 | No 64-bit product, no divide, no `%` on a ring index | a library call or a divide instruction per sample on a core without a long multiply |
 | `int` or `unsigned` counters and indexes | a narrower one costs an extend on every step on some cores |
 | The input history written twice, a filter's length apart | the interpolator reads its samples as one run, so a core with paired 16 x 16 multiply-accumulates takes them two at a time |
-| The fit behind the gate | it was nine tenths of the work |
+| Fits restricted to patterns that pass their own gates | an alternating preamble can repeatedly pass the step gate for a long pattern |
+| Timing and phase increments held within each block | the interpolator keeps its phase without dividing at every sample |
 
 Measured on the `hrc7000` platform (no paired multiplies, no long multiply without its HI/LO unit) with an 8 kHz
 tap and the P25 profile, receiving noise: 8.5 % of the CPU (`rx_load`), against 33 % with the fit at every sample,
@@ -243,6 +246,7 @@ before anything is queued: `tx_deny=air_no_tx` ("This mode: receive only").
 |---|---|
 | `tests/host/fecTest.c` | the shared codes against the standard's matrices |
 | `tests/host/airFramerTest.c` | sync search, levels, head hook, pieces, history, coasting, transmit packing |
+| `tests/host/airRxWorkTest.c` | 256-sample receive workload ceilings, the M17 sign table, and text delivery at two deviations with or without the first preamble half |
 | `tests/host/airSoftmodemTest.c` | the soft modem on a modeled tap: every tap phase, 8 to 48 kHz, scale and offset errors, noise, other pulse shapes, a P25 call end to end, step gate equivalence, and a noise fit rate below 15% for each shipped profile |
 | `tests/host/fxpTest.c` | the shared fixed-point kernels against wide arithmetic |
 | `tests/host/p25EngineTest.c` | the session under two P25 engines on made-up providers |

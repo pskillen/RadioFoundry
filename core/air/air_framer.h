@@ -54,6 +54,9 @@ typedef struct {
 	// A provider gap or an explicit RX reset, including while searching. flags are the chunk's
 	// AIR_CHUNK_* bits, or 0 for a reset, which has no chunk.
 	void (*rx_discontinuity)(void *ctx, uint8_t flags);
+	// Optional search filter. By the signs of the newest eight symbols, a mask of patterns whose suffix
+	// is within its error allowance. The full sync checks still run for every selected pattern.
+	const uint8_t *sync_tail_masks;
 } air_mode_t;
 
 typedef struct {
@@ -70,6 +73,7 @@ typedef struct {
 	uint8_t *hard;			// the mode's frame buffer: buf_syms dibits
 	int8_t *soft;			// buf_syms soft values, or NULL
 	uint16_t buf_syms;
+	uint16_t sync_due;		// last position for a recurring sync
 	uint64_t reg;			// the last 24 symbols as sliced, the newest in bits 1-0
 	int8_t hist[AIR_SYNC_SYMS_MAX];	// their soft values, a ring
 	uint8_t hist_at;		// where the next one goes

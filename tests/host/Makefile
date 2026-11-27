@@ -157,6 +157,11 @@ m17PacketRxTest: m17PacketRxTest.c $(M17ENG) $(wildcard $(CORE)/m17/*.h) $(wildc
                  $(CORE)/air/air_softmodem.c
 	$(CC) $(CFLAGS) -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -I$(ROOT)/hal -Wshadow -o $@ m17PacketRxTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
 
+TESTS   += airRxWorkTest
+airRxWorkTest: airRxWorkTest.c $(M17ENG) $(wildcard $(CORE)/air/*.h) $(wildcard $(CORE)/m17/*.h) $(CORE)/air/air_softmodem.c
+	$(CC) $(CFLAGS) $(if $(filter 1,$(COVERAGE) $(SANITIZE)),,-Os) -U_FORTIFY_SOURCE -DAIR_RX_WORK -DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 \
+		-I$(ROOT)/hal -Wshadow -o $@ airRxWorkTest.c $(M17ENG) $(CORE)/air/air_softmodem.c -lm
+
 M17DECODE := $(CORE)/radio/radio_m17_msg_decode.c
 M17MSG  := $(M17DECODE) $(CORE)/radio/radio_m17_msg.c
 M17MSG_HEADERS := $(CORE)/radio/radio_m17_msg.h $(CORE)/radio/radio_m17_msg_decode.h
@@ -322,6 +327,7 @@ run: $(TESTS)
 	./m17FrameTest
 	./m17EngineTest
 	./m17PacketRxTest
+	./airRxWorkTest
 	./m17RadioTest
 	./m17MessageDecodeTest
 	./m17MessageStoreTest

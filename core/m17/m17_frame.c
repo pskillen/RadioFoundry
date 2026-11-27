@@ -3,6 +3,7 @@
 // M17 frame codec (docs/spec/m17.md): CRC, addresses, puncturing, interleaving, randomizing, and LSF, stream, packet
 // and BERT payloads. No RTOS or board code.
 #include "m17.h"
+#include "../air/air_rx_work.h"
 
 #include <string.h>
 
@@ -296,6 +297,8 @@ static int conv_decode(const m17_conv_path_t *path, const uint8_t *plain368, uin
 	for (uint16_t i = 0; i < path->nkeep; i++)
 		bit_put(keep, i, bit_get(plain368, (uint16_t)(src_off + i)));
 	unpuncture_soft(path, keep, path->nkeep, w->soft);
+	AIR_RX_ADD(viterbi, 1);
+	AIR_RX_ADD(viterbi_bits, path->nbits);
 	return fec_conv_decode(&M17_CONV_CODE, w->soft, path->nbits, w->dec, out);
 }
 

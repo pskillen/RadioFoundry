@@ -20,11 +20,10 @@
 // Outside a call the hook still refuses it, and the signal ends there.
 #define M17_LOST_FRAMES		5
 
-static void payload_of(const air_frame_t *f, uint8_t pay[M17_PAYLOAD_BYTES])
+// Every M17 frame has a byte-aligned payload behind the eight-symbol sync.
+static const uint8_t *payload_of(const air_frame_t *f)
 {
-	memset(pay, 0, M17_PAYLOAD_BYTES);
-	for (uint16_t i = 0; i < M17_PAYLOAD_BITS / 2; i++)
-		air_sym_put(pay, i, air_sym_get(f->hard, (uint16_t)(M17_SYNC_SYMS + i)));
+	return f->hard + M17_SYNC_SYMS / 4;
 }
 
 // 0 when every Golay word was corrected in at most 2 bits, the counter is 0..5 and the reserved bits are 0.
@@ -225,7 +224,6 @@ static bool end_word_at(const air_frame_t *f, uint16_t at)
 static uint16_t rx_head(const air_frame_t *f, void *ctx)
 {
 	m17_rx_t *rx = ctx;
-	uint8_t pay[M17_PAYLOAD_BYTES];
 
 	if (f->nsyms < M17_FRAME_SYMS) {
 		rx->bert_run = 0;
@@ -238,7 +236,8 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 		rx->bert_run = 0;
 		return 0;
 	}
-	payload_of(f, pay);
+	const uint8_t *pay = payload_of(f);
+
 	if (f->sync_id == M17_SYNC_ID_BERT) {
 		// The 24-symbol BERT word counts as the first of the run; the second 8-symbol word confirms.
 		if (++rx->bert_run < 2 || !bert_prbs(rx, pay)) {
@@ -324,15 +323,13 @@ static void rx_frame(const air_frame_t *f, void *ctx)
 		return;
 	}
 	if (f->sync_id == M17_SYNC_ID_STREAM) {
-		uint8_t pay[M17_PAYLOAD_BYTES];
 		uint8_t lich, chunk[5], pl[16];
 		uint16_t fn = 0;
 		int lich_errs = 0;
 
 		if (!rx->hooks || !rx->hooks->rx_voice || !m17_rx_can_passes(rx))
 			return;
-		payload_of(f, pay);
-		if (m17_stream_decode(pay, &rx->work, &lich, chunk, &fn, pl, &lich_errs) >= 0)
+		if (m17_stream_decode(payload_of(f), &rx->work, &lich, chunk, &fn, pl, &lich_errs) >= 0)
 			rx->hooks->rx_voice(pl, fn, rx->ctx);
 		return;
 	}
@@ -359,6 +356,38 @@ static void rx_discontinuity(void *ctx, uint8_t flags)
 }
 #endif
 
+// The final eight dibits of each pattern in profile order. A prefix of a start-only word is
+// checked later by the framer. A hard dibit error also covers a sign error, so both inputs
+// can use this table. Build it from the same bytes and error allowances as the profile.
+#define STREAM_WORD	0xFF, 0x5D
+#define LSF_WORD	0x55, 0xF7
+#define PACKET_WORD	0x75, 0xFF
+#define BERT_WORD	0xDF, 0x55
+#define EOT_WORD	0x55, 0x5D
+#define SHORT_ERRS	1
+#define START_ERRS	2
+#define WORD_SIGNS(hi, lo) \
+	(((hi) & 0x80) | ((hi) & 0x20) << 1 | ((hi) & 0x08) << 2 | ((hi) & 0x02) << 3 \
+	 | ((lo) & 0x80) >> 4 | ((lo) & 0x20) >> 3 | ((lo) & 0x08) >> 2 | ((lo) & 0x02) >> 1)
+#define TAIL_MATCH(x, hi, lo, errs) (__builtin_popcount((x) ^ WORD_SIGNS(hi, lo)) <= (errs))
+#define WORD_MATCH(x, word, errs) TAIL_MATCH(x, word, errs)
+#define TAIL_MASK(x) \
+	(WORD_MATCH(x, STREAM_WORD, SHORT_ERRS) | WORD_MATCH(x, LSF_WORD, START_ERRS) << 1 \
+	 | WORD_MATCH(x, PACKET_WORD, SHORT_ERRS) << 2 | WORD_MATCH(x, BERT_WORD, START_ERRS) << 3 \
+	 | WORD_MATCH(x, BERT_WORD, SHORT_ERRS) << 4 | WORD_MATCH(x, EOT_WORD, SHORT_ERRS) << 5)
+#define TAIL_ROW(x) \
+	TAIL_MASK(x), TAIL_MASK((x) + 1), TAIL_MASK((x) + 2), TAIL_MASK((x) + 3), \
+	TAIL_MASK((x) + 4), TAIL_MASK((x) + 5), TAIL_MASK((x) + 6), TAIL_MASK((x) + 7), \
+	TAIL_MASK((x) + 8), TAIL_MASK((x) + 9), TAIL_MASK((x) + 10), TAIL_MASK((x) + 11), \
+	TAIL_MASK((x) + 12), TAIL_MASK((x) + 13), TAIL_MASK((x) + 14), TAIL_MASK((x) + 15)
+
+static const uint8_t sync_tail_masks[256] = {
+	TAIL_ROW(0x00), TAIL_ROW(0x10), TAIL_ROW(0x20), TAIL_ROW(0x30),
+	TAIL_ROW(0x40), TAIL_ROW(0x50), TAIL_ROW(0x60), TAIL_ROW(0x70),
+	TAIL_ROW(0x80), TAIL_ROW(0x90), TAIL_ROW(0xA0), TAIL_ROW(0xB0),
+	TAIL_ROW(0xC0), TAIL_ROW(0xD0), TAIL_ROW(0xE0), TAIL_ROW(0xF0),
+};
+
 const air_mode_t m17_air_mode = {
 	.name = "M17",
 	.profile = {
@@ -376,18 +405,18 @@ const air_mode_t m17_air_mode = {
 		.idle = 0x77,
 		.nsyncs = 6,
 		.sync = {
-			{ .id = M17_SYNC_ID_STREAM, .nsyms = 8, .max_errs = 1, .frame_at = 0,
-			  .syms = { 0xFF, 0x5D } },
-			{ .id = M17_SYNC_ID_LSF, .nsyms = 24, .max_errs = 2, .flags = AIR_SYNC_START_ONLY,
-			  .frame_at = 16, .syms = { 0x77, 0x77, 0x77, 0x77, 0x55, 0xF7 } },
-			{ .id = M17_SYNC_ID_PACKET, .nsyms = 8, .max_errs = 1, .frame_at = 0,
-			  .syms = { 0x75, 0xFF } },
-			{ .id = M17_SYNC_ID_BERT_PRE, .nsyms = 24, .max_errs = 2, .flags = AIR_SYNC_START_ONLY,
-			  .frame_at = 16, .syms = { 0xDD, 0xDD, 0xDD, 0xDD, 0xDF, 0x55 } },
-			{ .id = M17_SYNC_ID_BERT, .nsyms = 8, .max_errs = 1, .frame_at = 0,
-			  .syms = { 0xDF, 0x55 } },
-			{ .id = M17_SYNC_ID_EOT, .nsyms = 8, .max_errs = 1, .frame_at = 0,
-			  .syms = { 0x55, 0x5D } },
+			{ .id = M17_SYNC_ID_STREAM, .nsyms = 8, .max_errs = SHORT_ERRS, .frame_at = 0,
+			  .syms = { STREAM_WORD } },
+			{ .id = M17_SYNC_ID_LSF, .nsyms = 24, .max_errs = START_ERRS, .flags = AIR_SYNC_START_ONLY,
+			  .frame_at = 16, .syms = { 0x77, 0x77, 0x77, 0x77, LSF_WORD } },
+			{ .id = M17_SYNC_ID_PACKET, .nsyms = 8, .max_errs = SHORT_ERRS, .frame_at = 0,
+			  .syms = { PACKET_WORD } },
+			{ .id = M17_SYNC_ID_BERT_PRE, .nsyms = 24, .max_errs = START_ERRS, .flags = AIR_SYNC_START_ONLY,
+			  .frame_at = 16, .syms = { 0xDD, 0xDD, 0xDD, 0xDD, BERT_WORD } },
+			{ .id = M17_SYNC_ID_BERT, .nsyms = 8, .max_errs = SHORT_ERRS, .frame_at = 0,
+			  .syms = { BERT_WORD } },
+			{ .id = M17_SYNC_ID_EOT, .nsyms = 8, .max_errs = SHORT_ERRS, .frame_at = 0,
+			  .syms = { EOT_WORD } },
 		},
 	},
 	.frame_syms = M17_FRAME_SYMS,
@@ -396,6 +425,7 @@ const air_mode_t m17_air_mode = {
 	.head = rx_head,
 	.rx_frame = rx_frame,
 	.rx_lost = rx_lost,
+	.sync_tail_masks = sync_tail_masks,
 #if CONFIG_M17_PACKET
 	.rx_discontinuity = rx_discontinuity,
 #endif
