@@ -246,6 +246,27 @@
     "VFO_DMR"
    ]
   },
+  "m17_vfo_quick": {
+   "group": "home",
+   "needs": [
+    "M17",
+    "VFO"
+   ]
+  },
+  "m17_vfo_can": {
+   "group": "home",
+   "needs": [
+    "M17",
+    "VFO"
+   ]
+  },
+  "m17_vfo_can_squelch": {
+   "group": "home",
+   "needs": [
+    "M17",
+    "VFO"
+   ]
+  },
   "tx": {
    "group": "calls",
    "needs": []
