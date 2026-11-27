@@ -539,7 +539,7 @@ void m17_bert_encode(uint8_t payload[M17_PAYLOAD_BYTES])
 	m17_bert_encode_bits(in, payload);
 }
 
-int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BITS / 8])
+int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BYTES])
 {
 	uint8_t plain[M17_PAYLOAD_BYTES];
 	uint8_t dec[28];
@@ -549,7 +549,7 @@ int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w,
 	errs = conv_decode(&path_bert, plain, 0, w, dec);
 	if (errs < 0)
 		return errs;
-	memset(out, 0, M17_BERT_BITS / 8);
+	memset(out, 0, M17_BERT_BYTES);
 	for (uint16_t i = 0; i < M17_BERT_BITS; i++)
 		bit_put(out, i, bit_get(dec, i));
 	return errs;

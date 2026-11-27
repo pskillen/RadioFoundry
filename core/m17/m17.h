@@ -95,6 +95,7 @@
 
 // ── BERT (spec 3.7) ──
 #define M17_BERT_BITS		197
+#define M17_BERT_BYTES		((M17_BERT_BITS + 7) / 8)
 
 // ── Addresses (spec 7, app. A): base 40, big endian, six bytes ──
 #define M17_ADDR_BYTES		6
@@ -148,6 +149,6 @@ int m17_packet_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *
 void m17_bert_encode(uint8_t payload[M17_PAYLOAD_BYTES]);
 // The same coding as m17_bert_encode, for 197 bits the caller supplies (a running PRBS). The four tail bits stay 0.
 void m17_bert_encode_bits(const uint8_t bits[], uint8_t payload[M17_PAYLOAD_BYTES]);
-int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BITS / 8]);
+int m17_bert_decode(const uint8_t payload[M17_PAYLOAD_BYTES], m17_fec_work_t *w, uint8_t out[M17_BERT_BYTES]);
 
 #endif

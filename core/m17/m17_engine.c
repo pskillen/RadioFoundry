@@ -135,7 +135,7 @@ static void build_stream(m17_engine_t *e, bool last)
 
 static void build_bert(m17_engine_t *e)
 {
-	uint8_t bits[(M17_BERT_BITS + 7) / 8];
+	uint8_t bits[M17_BERT_BYTES];
 	uint8_t pay[M17_PAYLOAD_BYTES];
 	uint8_t sync[2];
 

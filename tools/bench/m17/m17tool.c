@@ -379,7 +379,7 @@ static int cmd_decode(int argc, char **argv)
 				decoded = 1;
 			}
 		} else if (k == FT_BERT) {
-			uint8_t bits[M17_BERT_BITS / 8];
+			uint8_t bits[M17_BERT_BYTES];
 
 			if (m17_bert_decode(pay, &w, bits) >= 0) {
 				bert_bits += M17_BERT_BITS;

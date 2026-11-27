@@ -63,7 +63,7 @@ typedef struct m17_rx {
 	bool can_squelch;
 	uint8_t bert_run;		// 8-symbol BERT syncs in a row presented to the head hook
 	// Bits bert_prbs decoded while proving the frame. Counted from here so the frame hook does not decode again.
-	uint8_t bert_bits[(M17_BERT_BITS + 7) / 8];
+	uint8_t bert_bits[M17_BERT_BYTES];
 	bool bert_have;
 	m17_bert_count_t bert;
 #if CONFIG_M17_PACKET

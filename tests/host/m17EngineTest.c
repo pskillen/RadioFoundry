@@ -677,7 +677,7 @@ static void test_bert_count(void)
 	m17_fec_work_t w;
 	m17_bert_count_t c;
 	m17_prbs9_t g;
-	uint8_t bits[25], pay[M17_PAYLOAD_BYTES], dec[25];
+	uint8_t bits[M17_BERT_BYTES], pay[M17_PAYLOAD_BYTES], dec[M17_BERT_BYTES];
 	int errs;
 
 	m17_prbs9_init(&g);
@@ -980,7 +980,7 @@ static m17_prbs9_t bert_g;
 
 static void emit_bert(bool pre)
 {
-	uint8_t bits[(M17_BERT_BITS + 7) / 8];
+	uint8_t bits[M17_BERT_BYTES];
 	uint8_t pay[M17_PAYLOAD_BYTES];
 
 	memset(bits, 0, sizeof bits);
