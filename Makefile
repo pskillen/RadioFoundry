@@ -336,7 +336,7 @@ endif
 BIN_SECTIONS ?= .isr_vector .text .rodata .ARM.extab .ARM .preinit_array .init_array .fini_array .data .ccmdata
 
 APP_OBJ := $(APP_SRC:%.c=$(BUILD)/%.o) $(APP_ASM:%.S=$(BUILD)/%.o)
-# c2fx 0.2.0 decoder-only external-DSP archive (the pin's Makefile defines this list).
+# c2fx 0.2.1 decoder-only external-DSP archive (the pin's Makefile defines this list).
 ifeq ($(CONFIG_M17_VOICE),y)
 C2FX_PUBLIC_FLAGS := -DC2FX_NO_ENCODER $(call TP_INCLUDES,-Ithird_party/c2fx/include)
 C2FX_SRC := $(addprefix third_party/c2fx/src/,c2fx_version.c tables/c2_3200_tab.c dsp/c2fx_exp2_tab.c \
@@ -423,7 +423,7 @@ $(APP_OBJ) $(TP_OBJ): $(BUILD)/flags
 $(C2FX_OBJ): CFLAGS_3P = $(CFLAGS_APP) $(C2FX_PUBLIC_FLAGS) -DC2FX_EXTERNAL_DSP \
 	$(call TP_INCLUDES,-Ithird_party/c2fx/src/tables -Ithird_party/c2fx/src/dsp) $(C2FX_OPT)
 $(BUILD)/core/mbe/c2fx_port.o $(BUILD)/core/mbe/mbe_dsp.o $(BUILD)/core/mbe/mbe_tab.o: CFLAGS_APP += $(C2FX_OPT)
-$(BUILD)/third_party/c2fx/src/c2fx_version.o: CFLAGS_3P += -DC2FX_VERSION=\"0.2.0\"
+$(BUILD)/third_party/c2fx/src/c2fx_version.o: CFLAGS_3P += -DC2FX_VERSION=\"0.2.1\"
 $(BUILD)/core/radio/radio_m17.o $(BUILD)/core/m17/m17_bench.o $(BUILD)/core/debuglink/debuglink_m17_bench.o: CFLAGS_APP += $(C2FX_PUBLIC_FLAGS)
 $(BUILD)/core/hostlink/build_info.o: CFLAGS_APP += -DRFOUNDRY_FEATURES_OFF=\"$(RFOUNDRY_OFF)\" -DRFOUNDRY_PRESET=\"$(RFOUNDRY_PRESET)\"
 $(VERSION_OBJ): $(BUILD)/version

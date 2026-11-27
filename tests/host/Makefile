@@ -225,7 +225,7 @@ run-mbe-fft: mbeFftTest mbeFftTestSplit16
 	./mbeFftTestSplit16
 .PHONY: run-mbe-fft
 
-# c2fx 0.2.0 decoder-only external-DSP sources, as in the firmware build.
+# c2fx 0.2.1 decoder-only external-DSP sources, as in the firmware build.
 C2FX := $(firstword $(wildcard $(ROOT)/third_party/c2fx/include/c2fx.h) $(RFOUNDRY_THIRD_PARTY)/c2fx/include/c2fx.h)
 C2FX_DIR := $(patsubst %/include/c2fx.h,%,$(C2FX))
 C2FX_SRC := $(addprefix $(C2FX_DIR)/src/,c2fx_version.c tables/c2_3200_tab.c dsp/c2fx_exp2_tab.c \
@@ -234,7 +234,7 @@ C2FX_DSP := $(addprefix $(CORE)/mbe/,c2fx_port.c mbe_dsp.c mbe_tab.c)
 TESTS += c2fxSeamTest
 c2fxSeamTest: c2fxSeamTest.c $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/include/*.h $(C2FX_DIR)/src/*/*.h) \
               $(CORE)/mbe/mbe_dsp.h $(CORE)/dsp/fxp.h $(C2FX_DIR)/vectors/chirp_80_400hz.c2
-	$(CC) $(CFLAGS) -Wshadow -DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.0\" \
+	$(CC) $(CFLAGS) -Wshadow -DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.1\" \
 		-DC2FX_VECTOR=\"$(abspath $(C2FX_DIR)/vectors/chirp_80_400hz.c2)\" \
 		-I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables -I$(C2FX_DIR)/src/dsp -o $@ c2fxSeamTest.c $(C2FX_DSP) $(C2FX_SRC)
 
@@ -244,7 +244,7 @@ m17BenchTest: m17BenchTest.c $(M17BENCH) $(CORE)/m17/m17_bench.h $(CORE)/debugli
               $(ROOT)/hal/hal_time.h $(CORE)/app/audio_job.h $(wildcard stubs/m17_bench_rtos/*.h) \
               $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/include/*.h $(C2FX_DIR)/src/*/*.h)
 	$(CC) $(CFLAGS) -Wshadow -DCONFIG_M17=1 -DCONFIG_M17_VOICE=1 \
-		-DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.0\" \
+		-DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.1\" \
 		-Istubs/m17_bench_rtos -I$(ROOT)/hal -I$(CORE)/mbe -I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables \
 		-I$(C2FX_DIR)/src/dsp -o $@ m17BenchTest.c $(M17BENCH) $(C2FX_DSP) $(C2FX_SRC)
 
