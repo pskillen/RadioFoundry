@@ -59,6 +59,7 @@ enum {
 	DL_VIEW_P25_TRUNK,	// a trunked P25 channel's follower: system, channels, call followed, counters (the same file)
 	DL_VIEW_NXDN,		// NXDN on the channel: the call, settings, the provider's fit, engine counters (debuglink_view_nxdn.c)
 	DL_VIEW_M17,		// M17 on the channel: the call, CAN, BERT counters (debuglink_view_m17.c)
+	DL_VIEW_M17_CAL,		// M17 codec bench calibration (debuglink_m17_bench.c)
 	DL_VIEW_COUNT
 };
 #define DL_VIEW_VERSION		5	// bumped when a key changes meaning or goes away (new keys don't bump it)

@@ -6,6 +6,7 @@
 #include "board.h"
 #include "hal_time.h"
 #include "debuglink/debuglink.h"
+#include "debuglink/debuglink_m17_bench.h"
 #include "hostlink/hostlink.h"
 #include "input/input.h"
 #include "ui/ui.h"
@@ -599,7 +600,7 @@ static const char *const section_names[DL_VIEW_COUNT] = { "core", "channel", "dm
 						  "dmr_data_stats", "roam", "aprs", "aprs_set", "dmr_ip", "net", "snmp", "usrp",
 						  "sfr", "tasks", "crash", "watchdog", "reset", "air", "net_svc",
 						  "net_link", "cps", "board", "audio", "t3", "t3_svc", "t3_roam", "voice_cap", "t3_msg",
-						  "t3_ra", "p25", "p25_trunk", "nxdn", "m17" };
+						  "t3_ra", "p25", "p25_trunk", "nxdn", "m17", "m17_cal" };
 
 const char *debuglink_view_name(uint8_t section)
 {
@@ -739,6 +740,11 @@ void debuglink_view_section(uint8_t section, const radio_view_t *v, dl_text_t *t
 		break;
 	case DL_VIEW_M17:
 		debuglink_view_m17(v, t);
+		break;
+	case DL_VIEW_M17_CAL:
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+		debuglink_m17_cal_view(t);
+#endif
 		break;
 	case DL_VIEW_USRP:
 #if CONFIG_NET_USRP

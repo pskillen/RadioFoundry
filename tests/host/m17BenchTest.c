@@ -32,6 +32,44 @@ static unsigned audio_wakes, audio_jobs;
 static c2fx_dec_t dec;
 static c2fx_scratch_t *scratch;
 static int16_t pcm[C2FX_FRAME_LEN];
+static int16_t first_frame_pcm[C2FX_FRAME_LEN];
+static bool check_calibration;
+static unsigned suspends, resumes, critical_enters, critical_exits;
+
+void vTaskSuspendAll(void)
+{
+	if (check_calibration) {
+		suspends++;
+		memset(pcm, 0, sizeof pcm);
+	}
+}
+
+int xTaskResumeAll(void)
+{
+	if (check_calibration) {
+		if (memcmp(pcm, first_frame_pcm, sizeof pcm) != 0)
+			abort();
+		resumes++;
+	}
+	return 0;
+}
+
+void test_enter_critical(void)
+{
+	if (check_calibration) {
+		critical_enters++;
+		memset(pcm, 0, sizeof pcm);
+	}
+}
+
+void test_exit_critical(void)
+{
+	if (check_calibration) {
+		if (memcmp(pcm, first_frame_pcm, sizeof pcm) != 0)
+			abort();
+		critical_exits++;
+	}
+}
 
 uint32_t hal_cycles(void)
 {
@@ -187,6 +225,38 @@ static bool profile_checks(void)
 	return strtoul(prof_total, NULL, 10) >= hook_sum;
 }
 
+static bool calibration_checks(void)
+{
+	static const uint8_t frame[C2FX_BITS_BYTES] = { 0xc8, 0xa0, 0x61, 0x72, 0x94, 0xac, 0xe7, 0x19 };
+	char buf[512];
+	dl_text_t text;
+	m17_bench_result_t result;
+
+	// The previous checks verify the CRC of this frame decoded from fresh state.
+	c2fx_dec_init(&dec);
+	c2fx_decode(&dec, frame, first_frame_pcm, scratch);
+	check_calibration = true;
+	bool ran = m17_bench_run(&dec, scratch, pcm, &result);
+	check_calibration = false;
+	if (!ran || result.dec_crc != 0xb012ff9eu ||
+	    suspends != 1 || resumes != 1 || critical_enters != 1 || critical_exits != 1 ||
+	    result.loop_cycles != 1 || result.dec_nosched != 1 || result.dec_masked != 1 ||
+	    m17_bench_loop_sink != 0x3988c820u)
+		return false;
+
+	dl_text_init(&text, buf, sizeof buf);
+	debuglink_m17_bench_view(&text);
+	const char *line = strstr(buf, "c2.irfft_calls=");
+	const char *end = line != NULL ? strchr(line, '\n') : NULL;
+
+	if (text.full || end == NULL || end[1] != '\0')
+		return false;
+	dl_text_init(&text, buf, sizeof buf);
+	debuglink_m17_cal_view(&text);
+	return !text.full &&
+	       strcmp(buf, "c2.loop_cycles=1\nc2.dec_nosched=1\nc2.dec_masked=1\n") == 0;
+}
+
 int main(void)
 {
 	scratch = malloc(sizeof *scratch);
@@ -194,11 +264,13 @@ int main(void)
 		return 1;
 	reads = 0;
 	bool passed = measurements_match() && command_completes() && profile_checks();
+	passed = passed && calibration_checks();
 	free(scratch);
 	if (!passed) {
 		fputs("m17BenchTest: bench check failed\n", stderr);
 		return 1;
 	}
 	puts("m17BenchTest: PCM CRC b012ff9e, 50 timed decodes, missing scratch refused, command and view passed");
+	puts("m17BenchTest: bit-exact calibration decodes, balanced RTOS calls, loop result 3988c820, separate view keys passed");
 	return 0;
 }

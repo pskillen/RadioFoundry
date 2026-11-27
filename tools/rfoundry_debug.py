@@ -203,7 +203,7 @@ PRESS, LONG, REPEAT, DOWN, UP = range(5)
 VIEW_SECTIONS = ["core", "channel", "dmr", "dmr_call", "dmr_stats", "hotspot", "link", "features", "dmr_data",
                  "storage", "dmr_ext", "dmr_data_stats", "roam", "aprs", "aprs_set", "dmr_ip", "net", "snmp", "usrp",
                  "sfr", "tasks", "crash", "watchdog", "reset", "air", "net_svc", "net_link", "cps", "board", "audio", "t3",
-                 "t3_svc", "t3_roam", "voice_cap", "t3_msg", "t3_ra", "p25", "p25_trunk", "nxdn", "m17"]
+                 "t3_svc", "t3_roam", "voice_cap", "t3_msg", "t3_ra", "p25", "p25_trunk", "nxdn", "m17", "m17_cal"]
 
 OP_CHANNEL_STEP, OP_ZONE_POS, OP_ZONE, OP_VFO, OP_VFO_SET, OP_VFO_STEP, OP_POWER, OP_SQUELCH, OP_BANDWIDTH, \
     OP_TONE, OP_MONITOR, OP_CLEAR_TEMP, OP_REPLY_CANCEL, OP_HOTSPOT_EXIT, OP_DMR_TARGET, OP_DMR_CONTACT, \
@@ -1471,7 +1471,17 @@ class DebugLink:
                 "c2.dec_mean", "c2.prof_total", "c2.probe_cycles", "c2.cos_cycles", "c2.cos_calls",
                 "c2.exp2_cycles", "c2.exp2_calls", "c2.log2_cycles", "c2.log2_calls", "c2.rfft_cycles",
                 "c2.rfft_calls", "c2.irfft_cycles", "c2.irfft_calls", "m17.voice_mem")
-        return {key: v[key] for key in keys}
+        result = {key: v[key] for key in keys}
+        try:
+            calibration = self.view(["m17_cal"])
+        except DebugLinkError as e:
+            if e.status not in (ST_BAD_ARG, ST_UNAVAILABLE):
+                raise
+            return result
+        for key in ("c2.loop_cycles", "c2.dec_nosched", "c2.dec_masked"):
+            if key in calibration:
+                result[key] = calibration[key]
+        return result
 
     def vfo_sfr(self, role, inbound_ts=1, framing=0, hang=0):
         """The VFO's SFR role (RADIO op 38; sfr.md 4), saved with the VFO: role a SFR_ROLES name or 0..4, the inbound
@@ -2879,7 +2889,7 @@ def cmd_reboot(link, a):
 
 
 def self_test():
-    """The packed screenshot reader against a simulated radio (the firmware's side is tests/host/debuglinkTest)."""
+    """Check packed screenshots, port selection and M17 bench replies with simulated radios."""
     stubtool = stubtool_module()
     ok = True
 
@@ -3003,6 +3013,36 @@ def self_test():
         g["find_ports"], g["find_cables"], g["find_network_radios"] = saved[:3]
         if saved[3] is not None:
             os.environ["RFOUNDRY_PORT"] = saved[3]
+
+    class BenchRadio(DebugLink):
+        timeout = 1.0
+
+        def __init__(self, calibration):
+            self.calibration = calibration
+
+        def request(self, cmd, payload=b"", timeout=None):
+            if cmd == RADIO and payload == bytes([OP_M17, 5]):
+                return ST_OK, b""
+            assert cmd == GET_VIEW
+            if payload == bytes([39]):
+                keys = ("dec_cycles dec_crc audio_free scratch dec_bytes enc dec_mean prof_total probe_cycles "
+                        "cos_cycles cos_calls exp2_cycles exp2_calls log2_cycles log2_calls rfft_cycles rfft_calls "
+                        "irfft_cycles irfft_calls").split()
+                text = "m17.on=1\nm17.voice_mem=1\n" + "".join(f"c2.{key}=1\n" for key in keys)
+                return ST_OK, struct.pack("<IB", 0, 40) + text.encode("ascii")
+            assert payload == bytes([40])
+            if self.calibration is None:
+                raise DebugLinkError("unknown view", ST_BAD_ARG)
+            return ST_OK, struct.pack("<IB", 0, 0xFF) + self.calibration
+
+    legacy = BenchRadio(None).m17_bench()
+    check(len(legacy) == 20 and legacy["c2.dec_mean"] == "1", "M17 bench accepts firmware without m17_cal")
+    check(BenchRadio(b"section=m17_cal\n").m17_bench() == legacy, "M17 bench accepts an empty m17_cal view")
+    partial = BenchRadio(b"c2.dec_masked=2\n").m17_bench()
+    check(len(partial) == 21 and partial["c2.dec_masked"] == "2", "M17 bench accepts partial calibration results")
+    check(BenchRadio(b"c2.loop_cycles=5\nc2.dec_nosched=3\nc2.dec_masked=2\n").m17_bench() ==
+          dict(legacy, **{"c2.loop_cycles": "5", "c2.dec_nosched": "3", "c2.dec_masked": "2"}),
+          "M17 bench reads calibration from view 40")
     print("rfoundry_debug self-test:", "ok" if ok else "FAILED")
     return 0 if ok else 1
 

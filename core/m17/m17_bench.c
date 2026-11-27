@@ -10,6 +10,7 @@
 #include "hal_time.h"
 
 volatile bool m17_bench_count_hal_reads;
+volatile uint32_t m17_bench_loop_sink;
 
 // Frame 0 of the pinned c2fx 3200 chirp vector used by c2fxSeamTest.
 static const uint8_t frame[C2FX_BITS_BYTES] = { 0xc8, 0xa0, 0x61, 0x72, 0x94, 0xac, 0xe7, 0x19 };
@@ -44,6 +45,18 @@ static uint32_t measure_probe_cost(void)
 			min = cost;
 	}
 	return min == UINT32_MAX ? 0 : min;
+}
+
+static __attribute__((noinline)) uint32_t measure_loop_cycles(void)
+{
+	uint32_t x = 0;
+	uint32_t start = hal_cycles();
+
+	for (uint32_t i = 0; i < 1000000u; i++)
+		x = x * 3u + i;
+	uint32_t cycles = hal_cycles() - start;
+	m17_bench_loop_sink = x;
+	return cycles;
 }
 
 static void store_hook_means(m17_bench_result_t *result)
@@ -102,6 +115,26 @@ bool m17_bench_run(c2fx_dec_t *dec, c2fx_scratch_t *scratch, int16_t pcm[C2FX_FR
 
 	result->prof_total = (uint32_t)(prof_sum / PROFILE_DECODES);
 	store_hook_means(result);
+
+	result->loop_cycles = measure_loop_cycles();
+
+	// Reset the decoder history before each probe to match the first plain decode.
+	c2fx_dec_init(dec);
+	vTaskSuspendAll();
+	uint32_t start = hal_cycles();
+	c2fx_decode(dec, frame, pcm, scratch);
+	uint32_t cycles = hal_cycles() - start;
+	xTaskResumeAll();
+	result->dec_nosched = cycles;
+
+	// Mask interrupts for one decode only to bound latency and stay within the audio hang check.
+	c2fx_dec_init(dec);
+	taskENTER_CRITICAL();
+	start = hal_cycles();
+	c2fx_decode(dec, frame, pcm, scratch);
+	cycles = hal_cycles() - start;
+	taskEXIT_CRITICAL();
+	result->dec_masked = cycles;
 
 	result->audio_free = (uint32_t)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t);
 	return true;

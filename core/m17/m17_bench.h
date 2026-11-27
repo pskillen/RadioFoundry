@@ -26,10 +26,16 @@ typedef struct {
 	uint32_t rfft_calls;
 	uint32_t irfft_cycles;
 	uint32_t irfft_calls;
+	uint32_t loop_cycles;
+	uint32_t dec_nosched;
+	uint32_t dec_masked;
 } m17_bench_result_t;
 
 // When set, hal_cycles() read sampling for the plain-decode loop only counts toward external tallies (host test).
 extern volatile bool m17_bench_count_hal_reads;
+
+// Retains the calibration loop's final value for the host test.
+extern volatile uint32_t m17_bench_loop_sink;
 
 // Run from the audio task with exclusive use of the lent decoder state and scratch.
 // The caller supplies temporary PCM storage. False means no codec memory.

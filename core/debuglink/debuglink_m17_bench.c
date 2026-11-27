@@ -111,4 +111,15 @@ void debuglink_m17_bench_view(dl_text_t *t)
 		(unsigned)result.log2_cycles, (unsigned)result.log2_calls, (unsigned)result.rfft_cycles,
 		(unsigned)result.rfft_calls, (unsigned)result.irfft_cycles, (unsigned)result.irfft_calls);
 }
+
+void debuglink_m17_cal_view(dl_text_t *t)
+{
+	taskENTER_CRITICAL();
+	unsigned loop_cycles = last.loop_cycles;
+	unsigned dec_nosched = last.dec_nosched;
+	unsigned dec_masked = last.dec_masked;
+	taskEXIT_CRITICAL();
+	dl_text(t, "c2.loop_cycles=%u\nc2.dec_nosched=%u\nc2.dec_masked=%u\n",
+		loop_cycles, dec_nosched, dec_masked);
+}
 #endif
