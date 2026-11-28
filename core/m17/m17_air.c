@@ -326,11 +326,31 @@ static void rx_frame(const air_frame_t *f, void *ctx)
 		uint8_t lich, chunk[5], pl[16];
 		uint16_t fn = 0;
 		int lich_errs = 0;
+#if CONFIG_M17_VOICE
+		const m17_engine_hooks_t *hk = rx->hooks;
+		int errs;
 
+		// Voice off keeps the success-only callback, so a default image does not carry this dispatch
+		if (hk == NULL || !m17_rx_can_passes(rx))
+			return;
+		if (hk->rx_voice == NULL && hk->rx_voice_fec == NULL)
+			return;
+		errs = m17_stream_decode(payload_of(f), &rx->work, &lich, chunk, &fn, pl, &lich_errs);
+		// A failed decode's frame number and payload are not meaningful
+		if (hk->rx_voice_fec != NULL) {
+			if (errs < 0)
+				hk->rx_voice_fec(NULL, 0, errs, rx->ctx);
+			else
+				hk->rx_voice_fec(pl, fn, errs, rx->ctx);
+		}
+		if (errs >= 0 && hk->rx_voice != NULL)
+			hk->rx_voice(pl, fn, rx->ctx);
+#else
 		if (!rx->hooks || !rx->hooks->rx_voice || !m17_rx_can_passes(rx))
 			return;
 		if (m17_stream_decode(payload_of(f), &rx->work, &lich, chunk, &fn, pl, &lich_errs) >= 0)
 			rx->hooks->rx_voice(pl, fn, rx->ctx);
+#endif
 		return;
 	}
 	if ((f->sync_id == M17_SYNC_ID_BERT || f->sync_id == M17_SYNC_ID_BERT_PRE) && rx->bert_have) {

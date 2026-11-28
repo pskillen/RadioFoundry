@@ -36,6 +36,10 @@ typedef struct {
 	void (*rx_packet)(const uint8_t *data, uint16_t len, void *ctx);
 	// Two codec frames for the next stream frame. False: none ready, so silence goes out.
 	bool (*tx_voice)(uint8_t c2[2][8], void *ctx);
+	// One stream frame after CAN squelch, including a failed m17_stream_decode. errs is that
+	// return. voice and frame_num are valid only when errs >= 0; a failure passes NULL and 0.
+	// Dispatched on its own. NULL keeps the legacy rx_voice callback, success only.
+	void (*rx_voice_fec)(const uint8_t *voice, uint16_t frame_num, int errs, void *ctx);
 } m17_engine_hooks_t;
 
 typedef struct {

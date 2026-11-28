@@ -429,7 +429,7 @@ $(C2FX_OBJ): CFLAGS_3P = $(CFLAGS_APP) $(C2FX_PUBLIC_FLAGS) -DC2FX_EXTERNAL_DSP 
 	$(call TP_INCLUDES,-Ithird_party/c2fx/src/tables -Ithird_party/c2fx/src/dsp) $(C2FX_OPT)
 $(BUILD)/core/mbe/c2fx_port.o $(BUILD)/core/mbe/mbe_dsp.o $(BUILD)/core/mbe/mbe_tab.o: CFLAGS_APP += $(C2FX_OPT)
 $(BUILD)/third_party/c2fx/src/c2fx_version.o: CFLAGS_3P += -DC2FX_VERSION=\"0.2.1\"
-$(BUILD)/core/radio/radio_m17.o $(BUILD)/core/m17/m17_bench.o $(BUILD)/core/debuglink/debuglink_m17_bench.o: CFLAGS_APP += $(C2FX_PUBLIC_FLAGS)
+$(BUILD)/core/radio/radio_m17.o $(BUILD)/core/m17/m17_bench.o $(BUILD)/core/m17/m17Voice.o $(BUILD)/core/debuglink/debuglink_m17_bench.o $(BUILD)/core/debuglink/debuglink_view_m17.o: CFLAGS_APP += $(C2FX_PUBLIC_FLAGS)
 $(BUILD)/core/hostlink/build_info.o: CFLAGS_APP += -DRFOUNDRY_FEATURES_OFF=\"$(RFOUNDRY_OFF)\" -DRFOUNDRY_PRESET=\"$(RFOUNDRY_PRESET)\"
 $(VERSION_OBJ): $(BUILD)/version
 $(VERSION_OBJ): CFLAGS_APP += -DRFOUNDRY_GIT=\"$(RFOUNDRY_VERSION)\" -DRFOUNDRY_GIT_ID=$(RFOUNDRY_GIT_ID) -DRFOUNDRY_GIT_DIRTY=$(RFOUNDRY_GIT_DIRTY) \

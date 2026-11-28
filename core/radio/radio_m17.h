@@ -221,6 +221,7 @@ size_t radio_m17_engine_bytes(void);
 typedef struct {
 	void *scratch;
 	void *state;
+	void *queues;		// codec-frame queue, 8-byte aligned, after the encoder reservation
 } radio_m17_voice_mem_t;
 
 // Plan placement in a gathered pool. Returns the engine block, or NULL when it cannot fit.

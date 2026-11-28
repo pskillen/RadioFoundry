@@ -10,6 +10,9 @@
 #if CONFIG_DEBUGLINK && CONFIG_M17_VOICE
 #include "debuglink/debuglink_m17_bench.h"
 #endif
+#if CONFIG_M17_VOICE
+#include "m17/m17Voice.h"
+#endif
 #endif
 
 #if CONFIG_M17 && CONFIG_M17_PACKET
@@ -50,8 +53,15 @@ void debuglink_view_m17(const radio_view_t *v, dl_text_t *t)
 	dl_text(t, "m17.built=1\nm17.on=%u\nm17.fit=%u\nm17.src=%s\nm17.dst=%s\nm17.can=%u\nm17.late=%u\n",
 		(m->flags & RADIO_M17_ON) != 0, m->fit, m->caller, m->dest, m->can, (m->flags & RADIO_M17_LATE) != 0);
 #if CONFIG_M17_VOICE
-	dl_text(t, "m17.voice_mem=%u\nm17.engine_bytes=%u\n",
-		(m->flags & RADIO_M17_VOICE_MEM) != 0 ? 1u : 0u, (unsigned)radio_m17_engine_bytes());
+	{
+		m17_voice_counts_t vc;
+
+		m17VoiceGetCounts(&vc);
+		dl_text(t, "m17.voice_mem=%u\nm17.engine_bytes=%u\n",
+			(m->flags & RADIO_M17_VOICE_MEM) != 0 ? 1u : 0u, (unsigned)radio_m17_engine_bytes());
+		dl_text(t, "m17v.rx_frames=%u\nm17v.rx_lost=%u\nm17v.rx_underruns=%u\n",
+			(unsigned)vc.rx_frames, (unsigned)vc.rx_lost, (unsigned)vc.rx_underruns);
+	}
 #endif
 	if (radio_m17_in_force(&s)) {
 		uint8_t raw[M17_ADDR_BYTES];

@@ -4,10 +4,26 @@
 #include "m17RadioTest.c"
 #undef main
 
+#include <string.h>
 #include "c2fx.h"
 #include "debuglink/debuglink_m17_bench.h"
 #include "nxdn/nxdn_engine.h"
 #include "radio/radio_nxdn.h"
+
+// m17Voice.c calls the codec. This test checks placement, not samples
+void c2fx_dec_init(c2fx_dec_t *d)
+{
+	(void)d;
+}
+
+void c2fx_decode(c2fx_dec_t *d, const uint8_t *bits, int16_t pcm[C2FX_FRAME_LEN], c2fx_scratch_t *scratch)
+{
+	(void)d;
+	(void)bits;
+	(void)scratch;
+	if (pcm != NULL)
+		memset(pcm, 0, C2FX_FRAME_LEN * sizeof(int16_t));
+}
 
 static uint64_t nxdn_mem[(sizeof(nxdn_engine_t) + 7u) / 8u];
 static bool nxdn_lends;

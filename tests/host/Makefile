@@ -276,6 +276,14 @@ TESTS   += p25VoiceTest
 p25VoiceTest: p25VoiceTest.c $(CORE)/p25/p25Voice.c $(CORE)/p25/p25Voice.h $(MBE) $(wildcard $(CORE)/mbe/*.h)
 	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -DCONFIG_P25=1 -o $@ p25VoiceTest.c $(CORE)/p25/p25Voice.c $(MBE) -lm
 
+# M17 voice receive (core/m17/m17Voice.c). A fake c2fx stands in so the test does not link the library
+TESTS   += m17VoiceTest
+m17VoiceTest: m17VoiceTest.c $(CORE)/m17/m17Voice.c $(CORE)/m17/m17Voice.h $(CORE)/m17/m17_rx.c $(M17FEC) \
+              $(wildcard $(CORE)/m17/*.h) $(C2FX_DIR)/include/c2fx.h
+	$(CC) $(CFLAGS) -I$(ROOT)/hal -I$(C2FX_DIR)/include -Wshadow -DCONFIG_M17=1 -DCONFIG_M17_VOICE=1 \
+		-DCONFIG_M17_PACKET=0 -DC2FX_NO_ENCODER -o $@ m17VoiceTest.c $(CORE)/m17/m17Voice.c \
+		$(CORE)/m17/m17_rx.c $(M17FEC) -lm
+
 # The fixed-point kernels the signal code shares (core/dsp/fxp.h)
 TESTS   += fxpTest
 fxpTest: fxpTest.c $(CORE)/dsp/fxp.h
@@ -378,6 +386,7 @@ run: $(TESTS)
 	./nxdnEngineTest | tail -1
 	./p25TrunkTest
 	./p25VoiceTest
+	./m17VoiceTest
 	./hrc6000AirTest
 	./radioKeysTest
 	./zoneShareTest
@@ -498,12 +507,13 @@ TESTS   += m17LendTestDecoder4504 m17LendTestEncoder5392 m17LendTestStatic
 C2FX_HEADERS := $(patsubst -I%,%,$(call TP_INCLUDES,-I$(ROOT)/third_party/c2fx/include))
 m17LendTestDecoder4504: M17_LEND_FLAGS = -DC2FX_NO_ENCODER
 m17LendTestStatic: M17_LEND_FLAGS = -DCONFIG_M17_STATIC_CODEC=1
-m17LendTestDecoder4504 m17LendTestEncoder5392 m17LendTestStatic: m17LendTest.c m17RadioTest.c $(M17RX) $(wildcard $(CORE)/radio/*.h) \
+m17LendTestDecoder4504 m17LendTestEncoder5392 m17LendTestStatic: m17LendTest.c m17RadioTest.c $(M17RX) \
+                       $(CORE)/m17/m17Voice.c $(wildcard $(CORE)/radio/*.h) \
                        $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h) $(CORE)/nxdn/nxdn_engine.h \
                        $(C2FX_HEADERS)/c2fx.h $(C2FX_HEADERS)/c2fx_types.h $(CORE)/debuglink/debuglink_m17_bench.h
 	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -I$(C2FX_HEADERS) $(M17_LEND_FLAGS) -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
 		-DCONFIG_P25=1 -DCONFIG_NXDN=1 -DCONFIG_NXDN_SCRAMBLER=1 -DCONFIG_M17_VOICE=1 \
-		-o $@ m17LendTest.c $(M17RX) -lm
+		-o $@ m17LendTest.c $(M17RX) $(CORE)/m17/m17Voice.c -lm
 
 # M17 message state tests include the radio core test harness.
 TESTS   += m17MessageRadioTest

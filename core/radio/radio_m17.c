@@ -17,6 +17,7 @@
 #include "air/air_session.h"
 #if CONFIG_M17_VOICE
 #include "c2fx.h"
+#include "m17/m17Voice.h"
 #include "debuglink/debuglink_m17_bench.h"
 #endif
 
@@ -38,6 +39,7 @@ typedef struct {
 	int8_t soft[M17_FRAME_SYMS];
 #if CONFIG_M17_VOICE
 	radio_m17_voice_mem_t voice;
+	m17_engine_hooks_t hooks;	// packet and voice, merged for this session; the pointer must outlive it
 #endif
 } m17_block_t;
 
@@ -56,13 +58,25 @@ static m17_block_t *blk;
 static m17_block_t *bench_block;
 #endif
 #if CONFIG_M17_STATIC_CODEC
-// One shared workspace for the bench and the eventual voice path. The engine still uses a lend.
-static struct {
+// One shared workspace for the bench and the voice path. The engine still uses a lend.
+// The queue member is aligned(8) itself: C-SKY aligns uint64_t to 4, so the union would
+// otherwise sit 4 off an 8-aligned object. A runtime check of that address folds false and
+// the linker drops the whole workspace.
+typedef struct {
 	c2fx_scratch_t scratch;
 	c2fx_dec_t dec;
-	c2fx_enc_t enc;
-	uint8_t queues[RADIO_M17_VOICE_QUEUE_BYTES];
-} __attribute__((aligned(8))) static_codec;
+	c2fx_enc_t enc;		// reserved ahead of the queue; receive does not call the encoder
+	union {
+		uint64_t align;		// keeps the queue 8-aligned where the attribute is stripped
+		uint8_t bytes[RADIO_M17_VOICE_QUEUE_BYTES];
+	} __attribute__((aligned(8))) queues;
+} radio_m17_static_codec_t;
+static radio_m17_static_codec_t static_codec;
+_Static_assert(_Alignof(radio_m17_static_codec_t) >= 8, "M17 static codec is not 8-aligned");
+_Static_assert(offsetof(radio_m17_static_codec_t, scratch) % 8 == 0, "M17 scratch is not 8-aligned");
+_Static_assert(offsetof(radio_m17_static_codec_t, dec) % 8 == 0, "M17 decoder state is not 8-aligned");
+_Static_assert(offsetof(radio_m17_static_codec_t, queues) % 8 == 0, "M17 voice queue is not 8-aligned");
+_Static_assert(sizeof(m17_voice_queue_t) <= RADIO_M17_VOICE_QUEUE_BYTES, "M17 voice queue does not fit");
 #endif
 static bool bert_on;			// a BERT count or transmission was asked for; cleared when the session ends
 static radio_m17_stats_t stats;
@@ -250,6 +264,32 @@ static void rx_packet(const uint8_t *data, uint16_t len, void *ctx)
 static const m17_engine_hooks_t rx_hooks = { .rx_packet = rx_packet };
 #endif
 
+#if CONFIG_M17_VOICE
+// Packet and voice, merged into the session block. Voice off keeps the const table above.
+static const m17_engine_hooks_t *session_hooks(m17_block_t *b, bool voice)
+{
+	if (voice) {
+		const m17_engine_hooks_t *vh = m17VoiceHooks();
+
+		b->hooks = (m17_engine_hooks_t){ 0 };
+#if CONFIG_M17_PACKET
+		b->hooks.rx_packet = rx_packet;
+#endif
+		b->hooks.rx_start = vh->rx_start;
+		b->hooks.rx_end = vh->rx_end;
+		b->hooks.rx_lost = vh->rx_lost;
+		b->hooks.rx_voice_fec = vh->rx_voice_fec;
+		return &b->hooks;
+	}
+#if CONFIG_M17_PACKET
+	return &rx_hooks;
+#else
+	(void)b;
+	return NULL;
+#endif
+}
+#endif
+
 void radio_m17_init(void)
 {
 	radio_m17_end();
@@ -265,6 +305,9 @@ void radio_m17_init(void)
 #endif
 	set = defaults;
 	applied = defaults;
+#if CONFIG_M17_VOICE
+	m17VoiceInit(board.audio);
+#endif
 }
 
 void radio_m17_settings(radio_m17_settings_t *out)
@@ -541,10 +584,28 @@ static void *reserve(radio_lend_t blocks[RADIO_LEND_MAX], uint8_t n, size_t byte
 	return NULL;
 }
 
+// The queue sits in the state reservation, after the decoder and any encoder reservation, 8-byte aligned.
+static bool map_queues(void *state, size_t region, void **queues)
+{
+	size_t cursor = C2FX_DEC_BYTES;
+	size_t aligned;
+
+#ifndef C2FX_NO_ENCODER
+	cursor += C2FX_ENC_BYTES;
+#endif
+	aligned = (cursor + 7u) & ~(size_t)7u;
+	if (state == NULL || ((uintptr_t)state & 7u) != 0 || aligned < cursor || aligned > region ||
+	    region - aligned < sizeof(m17_voice_queue_t))
+		return false;
+	*queues = (uint8_t *)state + aligned;
+	return ((uintptr_t)*queues & 7u) == 0;
+}
+
 void *radio_m17_lend_place(const radio_lend_t *blocks, uint8_t n, radio_m17_voice_mem_t *voice)
 {
 	radio_lend_t left[RADIO_LEND_MAX];
 	size_t state_bytes = C2FX_DEC_BYTES + RADIO_M17_VOICE_QUEUE_BYTES;
+	void *queues = NULL;
 #ifndef C2FX_NO_ENCODER
 	state_bytes += C2FX_ENC_BYTES;
 #endif
@@ -556,8 +617,9 @@ void *radio_m17_lend_place(const radio_lend_t *blocks, uint8_t n, radio_m17_voic
 	void *engine = reserve(left, n, sizeof(m17_block_t));
 	void *state = reserve(left, n, state_bytes);
 
-	if (scratch != NULL && engine != NULL && state != NULL) {
-		*voice = (radio_m17_voice_mem_t){ scratch, state };
+	if (scratch != NULL && engine != NULL && state != NULL && ((uintptr_t)scratch & 7u) == 0 &&
+	    map_queues(state, state_bytes, &queues)) {
+		*voice = (radio_m17_voice_mem_t){ scratch, state, queues };
 		return engine;
 	}
 	*voice = (radio_m17_voice_mem_t){ 0 };
@@ -571,7 +633,15 @@ static void bench_audio(void)
 	m17_block_t *b = __atomic_load_n(&bench_block, __ATOMIC_ACQUIRE);
 	int16_t pcm[AUDIO_BLOCK_SAMPLES];
 
-	debuglink_m17_bench_audio(b != NULL ? b->voice.state : NULL, b != NULL ? b->voice.scratch : NULL, pcm);
+	if (b == NULL || b->voice.state == NULL || b->voice.scratch == NULL) {
+		debuglink_m17_bench_audio(NULL, NULL, pcm);
+		return;
+	}
+	// A live call holds the decoder for the whole call. Retry on the next service if it does
+	if (!m17VoiceBenchEnter())
+		return;
+	debuglink_m17_bench_audio(b->voice.state, b->voice.scratch, pcm);
+	m17VoiceBenchLeave();
 }
 
 void radio_m17_bench_service(void)
@@ -600,7 +670,8 @@ bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst)
 #if CONFIG_M17_VOICE
 #if CONFIG_M17_STATIC_CODEC
 	b = place_engine(blocks, n);
-	voice = (radio_m17_voice_mem_t){ &static_codec.scratch, &static_codec.dec };
+	voice = (radio_m17_voice_mem_t){ &static_codec.scratch, &static_codec.dec,
+					 static_codec.queues.bytes };
 #else
 	b = radio_m17_lend_place(blocks, n, &voice);
 #endif
@@ -614,7 +685,15 @@ bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst)
 	memset(b, 0, sizeof *b);
 	params(base, dst, &cfg);
 	m17_engine_init(&b->tx, &cfg, NULL, NULL);
-#if CONFIG_M17_PACKET
+#if CONFIG_M17_VOICE
+	{
+		bool voice_on = voice.scratch != NULL && voice.state != NULL && voice.queues != NULL;
+
+		m17_rx_init(&b->rx, session_hooks(b, voice_on), b);
+		if (voice_on)
+			m17VoiceBegin(voice.scratch, voice.state, voice.queues, &b->rx);
+	}
+#elif CONFIG_M17_PACKET
 	m17_rx_init(&b->rx, &rx_hooks, b);
 #else
 	m17_rx_init(&b->rx, NULL, NULL);
@@ -623,6 +702,9 @@ bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst)
 	if (!air_session_open(&b->session, board.air, &m17_air_mode, &b->rx, b->hard, b->soft, M17_FRAME_SYMS,
 			      &session_ops, b)) {
 		stats.begin_fails++;
+#if CONFIG_M17_VOICE
+		m17VoiceEnd();
+#endif
 #if CONFIG_M17_PACKET
 		inbox_lock();
 		packet_capture(&b->rx.pkt_stats);
@@ -672,6 +754,8 @@ void radio_m17_end(void)
 #endif
 	air_session_close(&b->session);
 #if CONFIG_M17_VOICE
+	// The provider is closed, so no hook runs. Stop the stream before the pointers go
+	m17VoiceEnd();
 	b->voice = (radio_m17_voice_mem_t){ 0 };
 #endif
 #if CONFIG_M17_PACKET
@@ -754,6 +838,9 @@ void radio_m17_retuned(void)
 #else
 	m17_rx_reset(&blk->rx);
 	air_session_retuned(&blk->session);
+#endif
+#if CONFIG_M17_VOICE
+	m17VoiceHalt();
 #endif
 }
 
@@ -928,7 +1015,8 @@ bool radio_m17_poll(radio_m17_view_t *v)
 		memset(&n, 0, sizeof n);
 		n.flags = RADIO_M17_ON;
 #if CONFIG_M17_VOICE
-		if (blk->voice.scratch != NULL && blk->voice.state != NULL)
+		m17VoicePoll();
+		if (blk->voice.scratch != NULL && blk->voice.state != NULL && blk->voice.queues != NULL)
 			n.flags |= RADIO_M17_VOICE_MEM;
 #endif
 		n.tx = (uint8_t)air_session_tx_state(&blk->session);
