@@ -112,7 +112,9 @@ source = ["core/m17", "core/radio/radio_m17_msg.c", "core/radio/radio_m17_msg_de
 [feature.m17_voice]
 switch = "M17_VOICE"
 spec = "docs/spec/m17.md"
-source = ["core/m17", "core/m17/m17_bench.c", "core/debuglink/debuglink_m17_bench.c", "third_party/c2fx"]
+source = ["core/m17", "core/radio/radio_m17.c", "core/radio/radio_m17.h", "core/debuglink/debuglink_m17_bench.c",
+          "core/debuglink/debuglink_view_m17.c", "third_party/c2fx"]
+manual = "Play known speech in a compatible M17 voice stream and confirm intelligible speaker audio after the receive counters pass."
 
 [feature.m17_static_codec]
 switch = "M17_STATIC_CODEC"
