@@ -39,6 +39,9 @@
 #if CONFIG_M17
 #include "m17/m17.h"
 #include "radio/radio.h"
+#if CONFIG_DEBUGLINK && CONFIG_M17_VOICE
+#include "debuglink/debuglink_m17_bench.h"
+#endif
 #if CONFIG_M17_PACKET
 #include "radio/radio_m17_msg_tx.h"
 #endif
@@ -594,6 +597,10 @@ uint8_t debuglink_radio_feature_op(uint8_t op, const uint8_t *a, uint16_t len)
 	}
 	case DL_OP_M17:
 #if CONFIG_M17
+#if CONFIG_DEBUGLINK && CONFIG_M17_VOICE
+		if (len != 0 && a[0] == 5)
+			return len == 1 ? debuglink_m17_bench_run() : DL_ST_BAD_ARG;
+#endif
 		return debuglink_radio_m17_op(a, len);
 #else
 		return DL_ST_UNAVAILABLE;

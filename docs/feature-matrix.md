@@ -52,12 +52,13 @@ is `tools/bringup.py list --radio <id>`.
 | `bcast_fm` | not recorded | ✕ | not recorded | not written | ✕ | ✕ | ✕ | ✕ |
 | `rx_ext` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not written | not recorded |
 | `p25` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | partial, needs re-run |
-| `p25_trunk` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
+| `p25_trunk` | not recorded | off | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
 | `nxdn` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | partial, needs re-run |
 | `nxdn_scrambler` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
 | `m17` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
 | `m17_packet` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
 | `m17_voice` | off | off | off | off | not written | off | off | off |
+| `m17_static_codec` | off | off | off | off | off | off | off | off |
 | `dmr_voice` | pass (seed) | pass (seed) | pass (seed) | pass (seed) | pass (seed) | not recorded | partial, needs re-run | partial, needs re-run |
 | `dmr_privacy` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | pass, needs re-run | partial, needs re-run |
 | `dmr_aes` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |
@@ -111,9 +112,10 @@ is `tools/bringup.py list --radio <id>`.
 | `usb` | ✕ | pass (seed) | ✕ | ✕ | not recorded | not recorded | not recorded | ✕ |
 | `hostlink` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |
 | `hotspot` | pass (seed) | pass (seed) | pass (seed) | pass (seed) | not recorded | not recorded | pass, needs re-run | off |
-| `split_duplex` | pass (seed) | pass (seed) | pass (seed) | not written | not written | not recorded | partial, needs re-run | not written |
+| `split_duplex` | pass (seed) | off | pass (seed) | not written | not written | not recorded | partial, needs re-run | not written |
 | `debuglink` | pass (seed) | pass (seed) | pass (seed) | pass (seed) | pass (seed) | not recorded | pass | partial |
 | `task_stacks` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | pass | pass |
+| `task_cpu` | off | off | off | off | off | off | off | off |
 | `cps_openfw` | not recorded | pass (seed) | not recorded | pass (seed) | pass (seed) | not recorded | pass, needs re-run | pass, needs re-run |
 | `cps_fast` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |
 | `stub_entry` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |
@@ -242,12 +244,13 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | `SFR_DUALPATH_RX` | ● | ● | ● | ● | ✕ | ● | ● | ● |
 | `SFR_CWID` | ● | ● | ● | ● | ✕ | ● | ● | ● |
 | `TASK_STACKS` | ● | ● | ● | ● | ● | ● | ● | ● |
+| `TASK_CPU` | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | `USB` | ✕ | ● | ✕ | ✕ | ● | ● | ● | ✕ |
 | `HOSTLINK` | ● | ● | ● | ● | ● | ● | ● | ● |
 | `USB_NETWORK` | ✕ | ● | ✕ | ✕ | ● | ● | ● | ✕ |
 | `NET_PPP` | ● | ○ | ● | ● | ○ | ○ | ○ | ○ |
 | `HOTSPOT` | ● | ● | ● | ● | ● | ● | ● | ○ |
-| `HOTSPOT_SPLIT` | ● | ● | ● | … | … | ● | ● | … |
+| `HOTSPOT_SPLIT` | ● | ○ | ● | … | … | ● | ● | … |
 | `DEBUGLINK` | ● | ● | ● | ● | ● | ● | ● | ● |
 | `CPS_OPENFW` | ● | ● | ● | ● | ● | ● | ● | ● |
 | `CPS_FAST` | ● | ● | ● | ● | ● | ● | ● | ● |
@@ -307,12 +310,13 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | `CONTACT_EDIT` | ● | ● | ● | ● | ● | ● | ● | ✕ |
 | `VOLUME_BAR` | ● | ● | ● | ● | ● | ● | ● | ● |
 | `P25` | ● | ● | ● | ● | … | ● | ● | ● |
-| `P25_TRUNK` | ● | ● | ● | ● | … | ● | ● | ● |
+| `P25_TRUNK` | ● | ○ | ● | ● | … | ● | ● | ● |
 | `NXDN` | ● | ● | ● | ● | … | ● | ● | ● |
 | `NXDN_SCRAMBLER` | ● | ● | ● | ● | … | ● | ● | ● |
 | `M17` | ● | ● | ● | ● | … | ● | ● | ● |
 | `M17_PACKET` | ● | ● | ● | ● | … | ● | ● | ● |
 | `M17_VOICE` | ○ | ○ | ○ | ○ | … | ○ | ○ | ○ |
+| `M17_STATIC_CODEC` | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | `AIR_RAW` | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | Voltage reading (board, no switch) | Battery | Battery | Battery | None | Battery | Battery | Supply | Battery |
 | Clock kept through power-off (board, no switch) | Yes | ? | Yes | ? | ? | ? | ? | No (only while on) |
@@ -339,6 +343,7 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | M17 conventional (stream, packet, BERT): air-interface framing, CAN filtering, VFO and stored channels, own callsign, temporary Talk to, incoming call details on Home, and the shared messages inbox (compose, reply). Host tests cover protocol and simulated UI. On-radio UI and over-the-air operation in this firmware await hardware verification. | `M17` | — | — | Needs `DMR`. On with `DMR` ([spec](spec/m17.md), [codeplug spec](spec/m17-codeplug.md), [manual](user/24-m17.md)) |
 | M17 packet mode: text messages received into the shared inbox and sent from it, with CSMA channel access. Host tests cover protocol and simulated UI; on-radio and over-the-air testing await hardware verification. | `M17_PACKET` | — | — | Needs `M17`. Off: M17 stays built without packet text messaging (sending or receiving) |
 | M17 voice (Codec 2 3200) | `M17_VOICE` | — | — | Needs `M17` |
+| Static Codec 2 workspace | `M17_STATIC_CODEC` | — | — | Needs `M17_VOICE`. Reserves encoder and decoder workspace and queues in static RAM |
 | Basic privacy (Motorola / Anytone BP) | `DMR_PRIVACY` | 1,936 | 1,992 |  |
 | AES-256 DMR voice, PI header and late-entry signaling | `DMR_AES` | 3,992 | — | Requires `DMR_PRIVACY`. DM-1701: 3,992 B flash and 480 B RAM with `DMR_AES` on versus off. TX to a receiver of another make needs the modem driver's burst F field (`set_burst_f`, [dmr-voice.md](spec/dmr-voice.md) 5.1): only the HR_C7000 driver has it (DM-32UV); on the HR_C6000 and other radios our AES overs reach radios running RadioFoundry only (#864). |
 | Talker alias receive and send | `DMR_TALKER_ALIAS` | 984 | 1,300 |  |
@@ -351,7 +356,7 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | Trunked supplementary data and the short data poll | `DMR_TRUNK_SUPL` | 724 | 684 | Needs `DMR_TRUNK_TX` |
 | Trunked calls through a system's telephone, line and dispatcher gateways: dialed digits sent with the call | `DMR_TRUNK_GW` | 1,552 | 1,732 | Needs `DMR_TRUNK_TX` |
 | P25 channels in the codeplug: the conventional codec | `P25` | 56 | — | The codec only: a P25 channel is shown as a mode not in this build ([p25-codeplug.md](spec/p25-codeplug.md)). A stored P25 channel runs on its own parameters ([p25.md](spec/p25.md) 7) |
-| P25 trunked systems in the codeplug: the codec | `P25_TRUNK` | 13,300* | — | Needs `P25`; on top of it. Off on the MD-380 with `P25`. A trunked channel hunts its system's control channel and follows voice grants for its talk group; where the system allows transmit it registers, affiliates, asks for a voice channel on PTT and transmits on the grant ([p25-trunking.md](spec/p25-trunking.md)). Run on the DM-1701 and the DM-32UV against a control channel the SDR bench plays, not on a live system. RAM: 1,232 B on the DM-1701 |
+| P25 trunked systems in the codeplug: the codec | `P25_TRUNK` | 13,300* | — | Needs `P25`; on top of it. Off on the MD-380 with `P25`. A trunked channel hunts its system's control channel and follows voice grants for its talk group; where the system allows transmit it registers, affiliates, asks for a voice channel on PTT and transmits on the grant ([p25-trunking.md](spec/p25-trunking.md)). Run on the DM-1701 and the DM-32UV against a control channel the SDR bench plays, not on a live system. RAM: 1,232 B on the DM-1701. Off by default on the DM-1701 to make room for M17; with LTO it costs 14,124 B there (2273e30e) |
 | VFO (hand-tuned frequency) | `VFO` | 656 | 516 | Includes the DMR VFO; `VFO` and `VFO_DMR` re-measured 2026-10-17 (DM-1701 plain build, MD-380 with LTO). Copy to VFO ([dmr-voice.md](spec/dmr-voice.md) 2.2) is on top of that figure, behind the same switch: about 630 B on the DM-1701 and 730 B on the MD-380 (default builds, LTO as each has it), 750 B on the C-SKY radios |
 | FM VFO | `VFO_FM` | 504 | 452 |  |
 | DMR VFO (color code, slot, talk target typed in; mode change FM / DMR) | `VFO_DMR` | 144 | 104 | The VFO's mode, color code, slot and talk target are settings of the VFO, kept across power cycles ([dmr-voice.md](spec/dmr-voice.md) 2.1) |
@@ -395,7 +400,7 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | USB device | `USB` | 127,300 | 87,848 | DM-32 has no USB (host link on the programming cable's UART). Includes everything on USB |
 | Host link: hotspot, CPS, debug link on the host port | `HOSTLINK` | 115,640 | 77,644 | Includes its children |
 | MMDVM hotspot | `HOTSPOT` | 34,196 | ~12,400 | Includes split duplex and MMDVM SFR where built. MD-380: size estimated |
-| Split duplex repeater (two radios, one duplex modem) | `HOTSPOT_SPLIT` | 12,584 | — | MD-380: HR_C6000-only glue. DM-1701, DM-32UV, DM-1801 Pro: each half checked alone on the SDR bench; one pair (DM-1801 Pro TX, DM-32UV RX) with a subscriber: 29 of 31 calls on the right slot |
+| Split duplex repeater (two radios, one duplex modem) | `HOTSPOT_SPLIT` | 12,584 | — | MD-380: HR_C6000-only glue. DM-1701, DM-32UV, DM-1801 Pro: each half checked alone on the SDR bench; one pair (DM-1801 Pro TX, DM-32UV RX) with a subscriber: 29 of 31 calls on the right slot. Off by default on the DM-1701 to make room for M17; with LTO it costs 19,424 B there (2273e30e) |
 | Debug link | `DEBUGLINK` | 32,376 | 29,084 |  |
 | Task stacks in the debug link view | `TASK_STACKS` | 536 | 560 | Each task's least free stack, the `tasks` view section ([debuglink](spec/debuglink.md) 3.7) |
 | Open-firmware CPS protocol (qdmr) | `CPS_OPENFW` | 3,064 | 3,008 |  |
@@ -467,6 +472,7 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | Audio path probe (debug link 0x10) | `AUDIO_PROBE` | 1,176* | — | Bench only, never in a release |
 | Air interface bench: raw symbols and tap samples (debug link 0x24) | `AIR_RAW` | 2,780* | — | Bench only, never in a release ([debuglink.md](spec/debuglink.md) 3.28) |
 | Voice capture for receive tests: the next 32 voice frames received, read over the debug link | `VOICE_CAPTURE` | 256* | 344* | Bench only, never in a release ([debuglink](spec/debuglink.md)) |
+| Per-task CPU profiling | `TASK_CPU` | — | — | Needs `DEBUGLINK`. Bench CPU accounting in the `tasks_cpu` view section ([debuglink](spec/debuglink.md) 3.7) |
 
 ## Whole images
 

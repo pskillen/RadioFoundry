@@ -173,6 +173,10 @@ endif
 ifneq ($(CONFIG_TASK_STACKS),y)
 APP_SRC := $(filter-out core/app/task_stack.c,$(APP_SRC))
 endif
+# Bench profiling has its own view to detect support and is opt-in on every build.
+ifneq ($(CONFIG_TASK_CPU),y)
+APP_SRC := $(filter-out core/app/task_cpu.c,$(APP_SRC))
+endif
 # The idle task's watchdog feed (core/app is always globbed): only with its switch, which also turns on the idle hook in
 # the platforms' FreeRTOSConfig.h
 ifneq ($(CONFIG_WATCHDOG),y)
@@ -336,12 +340,19 @@ endif
 BIN_SECTIONS ?= .isr_vector .text .rodata .ARM.extab .ARM .preinit_array .init_array .fini_array .data .ccmdata
 
 APP_OBJ := $(APP_SRC:%.c=$(BUILD)/%.o) $(APP_ASM:%.S=$(BUILD)/%.o)
-TP_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(filter %.c,$(PLATFORM_3P_SRC))) $(patsubst %.s,$(BUILD)/%.o,$(filter %.s,$(PLATFORM_3P_SRC)))
+# c2fx 0.2.1 decoder external-DSP archive (the pin's Makefile defines this list).
+ifeq ($(CONFIG_M17_VOICE),y)
+C2FX_PUBLIC_FLAGS := $(if $(filter y,$(CONFIG_M17_STATIC_CODEC)),,-DC2FX_NO_ENCODER) $(call TP_INCLUDES,-Ithird_party/c2fx/include)
+C2FX_SRC := $(addprefix third_party/c2fx/src/,c2fx_version.c tables/c2_3200_tab.c dsp/c2fx_exp2_tab.c \
+	c2fx_frame.c c2fx_quant.c c2fx_lpc.c c2fx_envelope.c c2fx_phase.c c2fx_synth.c c2fx_lost.c c2fx_decode.c)
+C2FX_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(C2FX_SRC))
+endif
+TP_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(filter %.c,$(PLATFORM_3P_SRC))) $(patsubst %.s,$(BUILD)/%.o,$(filter %.s,$(PLATFORM_3P_SRC))) $(C2FX_OBJ)
 OBJ := $(APP_OBJ) $(TP_OBJ)
 
 # No built-in suffix rules (the .S -> .s rule deletes sources on case-insensitive file systems, gotchas 13.3)
 .SUFFIXES:
-.PHONY: all codec clean size stack-check test print-config print-cc print-unsupported print-not-written print-required print-maximal-skip print-maximal-vars
+.PHONY: all codec clean size stack-check test print-config print-cc print-unsupported print-not-written print-required print-maximal-skip print-maximal-vars print-maximal-m17-vars
 all: $(REGISTRY_JSON) $(TARGET).bin $(if $(BOOT_STAGE),$(TARGET)_install.bin) codec
 
 # The codec: merged into $(TARGET)_codec.bin when the radio's stock firmware is in codecs/ (codecs/README.md)
@@ -353,8 +364,9 @@ codec: $(TARGET).bin $(if $(BOOT_STAGE),$(TARGET)_install.bin)
 # The switches this radio could have that the build left off (neither BOARD_UNSUPPORTED nor BOARD_NOT_WRITTEN): the
 # VERSION off= (either listener), so an installer updating the radio knows its exact build (features= names only some). A
 # change of either rebuilds build_info.o (the preset can change while the flags stay: a switch set to its default)
+# TASK_CPU is a bench option kept out of VERSION off= to preserve the default images.
 RFOUNDRY_EMPTY :=
-RFOUNDRY_OFF := $(subst $(RFOUNDRY_EMPTY) ,$(strip ,),$(sort $(foreach f,$(filter-out $(BOARD_UNSUPPORTED) $(BOARD_NOT_WRITTEN),$(FEATURES)),\
+RFOUNDRY_OFF := $(subst $(RFOUNDRY_EMPTY) ,$(strip ,),$(sort $(foreach f,$(filter-out $(BOARD_UNSUPPORTED) $(BOARD_NOT_WRITTEN) TASK_CPU,$(FEATURES)),\
 	$(if $(call feature_on,$(f)),,$(f)))))
 # The build's preset, VERSION preset=: the release variant (VARIANT, full without one), or custom when a
 # switch is set on the command line. The build service sets every switch, and passes RFOUNDRY_PRESET=<variant> when
@@ -368,7 +380,7 @@ $(if $(filter $(RFOUNDRY_PRESET),full custom $(basename $(notdir $(wildcard conf
 # are removed outright, because make's 1 s timestamps can't order a stamp written in the same second as an object
 # (and a file removed by a recipe would still be in make's cache)
 VERSION_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(shell grep -lE 'RFOUNDRY_(GIT|RELEASE)' $(APP_SRC) 2>/dev/null))
-ifeq ($(filter clean test print-config print-cc print-unsupported print-not-written print-required print-maximal-skip print-maximal-vars \
+ifeq ($(filter clean test print-config print-cc print-unsupported print-not-written print-required print-maximal-skip print-maximal-vars print-maximal-m17-vars \
 	print-vars,$(MAKECMDGOALS)),)
 $(shell mkdir -p $(BUILD); echo '$(CFLAGS_APP) $(CFLAGS_3P) $(LDFLAGS)' | cmp -s - $(BUILD)/flags || \
 	{ echo '$(CFLAGS_APP) $(CFLAGS_3P) $(LDFLAGS)' > $(BUILD)/flags; \
@@ -412,6 +424,12 @@ $(shell python3 tools/gen_http_assets.py $(if $(filter y,$(CONFIG_NET_HTTP_GZIP)
 endif
 endif
 $(APP_OBJ) $(TP_OBJ): $(BUILD)/flags
+# Unlike the other third-party code, c2fx builds with firmware warnings enabled.
+$(C2FX_OBJ): CFLAGS_3P = $(CFLAGS_APP) $(C2FX_PUBLIC_FLAGS) -DC2FX_EXTERNAL_DSP \
+	$(call TP_INCLUDES,-Ithird_party/c2fx/src/tables -Ithird_party/c2fx/src/dsp) $(C2FX_OPT)
+$(BUILD)/core/mbe/c2fx_port.o $(BUILD)/core/mbe/mbe_dsp.o $(BUILD)/core/mbe/mbe_tab.o: CFLAGS_APP += $(C2FX_OPT)
+$(BUILD)/third_party/c2fx/src/c2fx_version.o: CFLAGS_3P += -DC2FX_VERSION=\"0.2.1\"
+$(BUILD)/core/radio/radio_m17.o $(BUILD)/core/m17/m17_bench.o $(BUILD)/core/debuglink/debuglink_m17_bench.o: CFLAGS_APP += $(C2FX_PUBLIC_FLAGS)
 $(BUILD)/core/hostlink/build_info.o: CFLAGS_APP += -DRFOUNDRY_FEATURES_OFF=\"$(RFOUNDRY_OFF)\" -DRFOUNDRY_PRESET=\"$(RFOUNDRY_PRESET)\"
 $(VERSION_OBJ): $(BUILD)/version
 $(VERSION_OBJ): CFLAGS_APP += -DRFOUNDRY_GIT=\"$(RFOUNDRY_VERSION)\" -DRFOUNDRY_GIT_ID=$(RFOUNDRY_GIT_ID) -DRFOUNDRY_GIT_DIRTY=$(RFOUNDRY_GIT_DIRTY) \
@@ -433,6 +451,9 @@ $(TARGET).bin: $(TARGET).elf
 ifneq ($(BOOT_STAGE),)
 include boot/boot.mk
 endif
+
+# Extra optimization for the c2fx decoder and its MBE glue (bench experiments; empty leaves default flags).
+C2FX_OPT ?=
 
 # Hot code builds $(OPT_HOT) where the rest is $(OPT): DSP and FEC kernels that run per sample or per burst, where
 # unrolling and scheduling pay for their flash. LTO keeps each function's level
@@ -496,6 +517,8 @@ print-maximal-skip:
 # Make variables ci's maximal configuration adds for this board (boards/<board>/config.mk MAXIMAL_VARS)
 print-maximal-vars:
 	@echo '$(MAXIMAL_VARS)'
+print-maximal-m17-vars:
+	@echo '$(MAXIMAL_M17_VARS)'
 # NAME=value for each make variable in VARS, as this build resolves it (tools/boards.py reads board.mk through it, so
 # conditionals and config.mk count)
 print-build-options:

@@ -15,6 +15,10 @@
 #include "m17/m17_bert.h"
 #include "m17/m17_codeplug.h"
 #include "air/air_session.h"
+#if CONFIG_M17_VOICE
+#include "c2fx.h"
+#include "debuglink/debuglink_m17_bench.h"
+#endif
 
 _Static_assert(RADIO_M17_CALL_LEN == M17_CP_CALL_LEN, "M17 callsign buffers must match");
 _Static_assert(RADIO_M17_META_LEN == M17_META_TEXT_BYTES + 1, "M17 META buffers must match");
@@ -32,6 +36,9 @@ typedef struct {
 #endif
 	uint8_t hard[(M17_FRAME_SYMS + 3) / 4];
 	int8_t soft[M17_FRAME_SYMS];
+#if CONFIG_M17_VOICE
+	radio_m17_voice_mem_t voice;
+#endif
 } m17_block_t;
 
 _Static_assert(sizeof(m17_block_t) <= 4096, "M17 engine block does not fit a lend block");
@@ -43,6 +50,20 @@ static radio_m17_settings_t set;
 static radio_m17_settings_t applied;	// what the running engine was given
 static char radio_name[CODEPLUG_RADIO_NAME_LEN + 1];
 static m17_block_t *blk;
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+// Published by the radio task and revoked before it releases the lend. The higher-priority
+// audio task can finish the job without yielding to the radio task.
+static m17_block_t *bench_block;
+#endif
+#if CONFIG_M17_STATIC_CODEC
+// One shared workspace for the bench and the eventual voice path. The engine still uses a lend.
+static struct {
+	c2fx_scratch_t scratch;
+	c2fx_dec_t dec;
+	c2fx_enc_t enc;
+	uint8_t queues[RADIO_M17_VOICE_QUEUE_BYTES];
+} __attribute__((aligned(8))) static_codec;
+#endif
 static bool bert_on;			// a BERT count or transmission was asked for; cleared when the session ends
 static radio_m17_stats_t stats;
 static air_session_stats_t air_base;
@@ -489,11 +510,8 @@ static void bert_sum(const m17_bert_count_t *live)
 	stats.bert_lost = bert_done.lost + (live != NULL ? live->lost : 0);
 }
 
-static m17_block_t *place(void)
+static m17_block_t *place_engine(const radio_lend_t *blocks, uint8_t n)
 {
-	radio_lend_t blocks[RADIO_LEND_MAX];
-	uint8_t n = radio_lend_gather(blocks);
-
 	for (uint8_t i = 0; i < n; i++) {
 		if (blocks[i].len >= sizeof(m17_block_t) && ((uintptr_t)blocks[i].p & 7u) == 0)
 			return blocks[i].p;
@@ -501,14 +519,94 @@ static m17_block_t *place(void)
 	return NULL;
 }
 
+#if CONFIG_M17_VOICE
+static void *reserve(radio_lend_t blocks[RADIO_LEND_MAX], uint8_t n, size_t bytes)
+{
+	for (uint8_t i = 0; i < n; i++) {
+		radio_lend_t *b = &blocks[i];
+
+		if (b->len >= bytes) {
+			void *p = b->p;
+			size_t used = (bytes + 7u) & ~(size_t)7u;
+
+			if (used < b->len) {
+				b->p = (uint8_t *)p + used;
+				b->len -= used;
+			} else {
+				b->len = 0;
+			}
+			return p;
+		}
+	}
+	return NULL;
+}
+
+void *radio_m17_lend_place(const radio_lend_t *blocks, uint8_t n, radio_m17_voice_mem_t *voice)
+{
+	radio_lend_t left[RADIO_LEND_MAX];
+	size_t state_bytes = C2FX_DEC_BYTES + RADIO_M17_VOICE_QUEUE_BYTES;
+#ifndef C2FX_NO_ENCODER
+	state_bytes += C2FX_ENC_BYTES;
+#endif
+
+	// Reserve the scratch before the engine so the largest block can hold the scratch and a smaller one
+	// can hold the engine. If voice cannot fit, give the engine the original pool.
+	memcpy(left, blocks, n * sizeof *left);
+	void *scratch = reserve(left, n, C2FX_SCRATCH_BYTES);
+	void *engine = reserve(left, n, sizeof(m17_block_t));
+	void *state = reserve(left, n, state_bytes);
+
+	if (scratch != NULL && engine != NULL && state != NULL) {
+		*voice = (radio_m17_voice_mem_t){ scratch, state };
+		return engine;
+	}
+	*voice = (radio_m17_voice_mem_t){ 0 };
+	return place_engine(blocks, n);
+}
+#endif
+
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+static void bench_audio(void)
+{
+	m17_block_t *b = __atomic_load_n(&bench_block, __ATOMIC_ACQUIRE);
+	int16_t pcm[AUDIO_BLOCK_SAMPLES];
+
+	debuglink_m17_bench_audio(b != NULL ? b->voice.state : NULL, b != NULL ? b->voice.scratch : NULL, pcm);
+}
+
+void radio_m17_bench_service(void)
+{
+	if (!debuglink_m17_bench_armed() || blk == NULL || blk->voice.scratch == NULL ||
+	    board.audio == NULL || board.audio->defer == NULL)
+		return;
+
+	__atomic_store_n(&bench_block, blk, __ATOMIC_RELEASE);
+	board.audio->defer(bench_audio);
+}
+#endif
+
 bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst)
 {
 	m17_engine_cfg_t cfg;
+	radio_lend_t blocks[RADIO_LEND_MAX];
 	m17_block_t *b;
+#if CONFIG_M17_VOICE
+	radio_m17_voice_mem_t voice;
+#endif
 
 	radio_m17_end();
 	stats.begins++;
-	b = place();
+	uint8_t n = radio_lend_gather(blocks);
+#if CONFIG_M17_VOICE
+#if CONFIG_M17_STATIC_CODEC
+	b = place_engine(blocks, n);
+	voice = (radio_m17_voice_mem_t){ &static_codec.scratch, &static_codec.dec };
+#else
+	b = radio_m17_lend_place(blocks, n, &voice);
+#endif
+#else
+	b = place_engine(blocks, n);
+#endif
 	if (b == NULL || (radio_m17_fit() & (AIR_FIT_RX | AIR_FIT_TX)) == 0) {
 		stats.begin_fails++;
 		return false;
@@ -534,6 +632,9 @@ bool radio_m17_begin(const radio_m17_settings_t *base, uint64_t dst)
 		return false;
 	}
 	memset(&air_base, 0, sizeof air_base);
+#if CONFIG_M17_VOICE
+	b->voice = voice;
+#endif
 #if CONFIG_M17_PACKET
 	inbox_lock();
 #endif
@@ -549,6 +650,9 @@ void radio_m17_end(void)
 	m17_block_t *b = blk;
 
 	bert_on = false;
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+	__atomic_store_n(&bench_block, NULL, __ATOMIC_RELEASE);
+#endif
 	if (b == NULL)
 		return;
 	// The provider is closed before the pointer goes: nothing it calls can touch the block after this
@@ -567,6 +671,9 @@ void radio_m17_end(void)
 	}
 #endif
 	air_session_close(&b->session);
+#if CONFIG_M17_VOICE
+	b->voice = (radio_m17_voice_mem_t){ 0 };
+#endif
 #if CONFIG_M17_PACKET
 	if (b->tx.cfg.tx_kind == M17_TX_PACKET)
 		packet_tx_restore(b);
@@ -820,6 +927,10 @@ bool radio_m17_poll(radio_m17_view_t *v)
 #endif
 		memset(&n, 0, sizeof n);
 		n.flags = RADIO_M17_ON;
+#if CONFIG_M17_VOICE
+		if (blk->voice.scratch != NULL && blk->voice.state != NULL)
+			n.flags |= RADIO_M17_VOICE_MEM;
+#endif
 		n.tx = (uint8_t)air_session_tx_state(&blk->session);
 		if (rx->in_call) {
 			n.flags |= RADIO_M17_RX;

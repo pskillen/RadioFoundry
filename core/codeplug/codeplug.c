@@ -1564,7 +1564,7 @@ bool codeplug_contact(uint16_t index, contact_t *out)
 }
 
 
-bool codeplug_contacts_each(codeplug_contact_fn fn, void *ctx)
+static inline __attribute__((always_inline)) bool contacts_each(codeplug_contact_fn fn, void *ctx)
 {
 	if (source != CODEPLUG_OPENFW) {
 		return false;
@@ -1588,6 +1588,11 @@ bool codeplug_contacts_each(codeplug_contact_fn fn, void *ctx)
 		storage_unlock();
 	}
 	return ok;
+}
+
+bool codeplug_contacts_each(codeplug_contact_fn fn, void *ctx)
+{
+	return contacts_each(fn, ctx);
 }
 
 bool codeplug_set_contact(uint16_t index, const contact_t *c)
@@ -1717,14 +1722,16 @@ static bool find_one(uint16_t index, const contact_t *c, void *ctx)
 	return false;
 }
 
-uint16_t codeplug_contact_find_index(uint32_t id, bool group, contact_t *out)
+// Keep the scan frame out of callers and specialize its callback here. Otherwise the stack checker can
+// follow other contact visitors (including the UI lists) from a lookup that only calls find_one.
+__attribute__((noinline)) uint16_t codeplug_contact_find_index(uint32_t id, bool group, contact_t *out)
 {
 	if (id == 0 || id > 0xFFFFFFu) {
 		return 0;
 	}
 	// Locked like every other reader: the radio task and the UI task both search, and an edit may be writing
 	find_t f = { .id = id, .group = group, .out = out };
-	codeplug_contacts_each(find_one, &f);
+	contacts_each(find_one, &f);
 	return f.index;
 }
 

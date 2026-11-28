@@ -8,6 +8,7 @@
     rfoundry_debug.py version
     rfoundry_debug.py diag [--watch N] [--raw]       radio summary + voice path + board diagnostics lines, with rates
     rfoundry_debug.py view [--section NAME] [--json] the radio state as key=value (all sections)
+    rfoundry_debug.py tasks cpu [--window S]          per-task CPU share over S seconds (default 2)
     rfoundry_debug.py reset                          zero the diagnostics counters
     rfoundry_debug.py screenshot -o FILE.png [--scale N] [--crop] [--tries N]
     rfoundry_debug.py key NAME [--long | --hold MS | --repeat N | --down | --up | --steps N]
@@ -203,7 +204,8 @@ PRESS, LONG, REPEAT, DOWN, UP = range(5)
 VIEW_SECTIONS = ["core", "channel", "dmr", "dmr_call", "dmr_stats", "hotspot", "link", "features", "dmr_data",
                  "storage", "dmr_ext", "dmr_data_stats", "roam", "aprs", "aprs_set", "dmr_ip", "net", "snmp", "usrp",
                  "sfr", "tasks", "crash", "watchdog", "reset", "air", "net_svc", "net_link", "cps", "board", "audio", "t3",
-                 "t3_svc", "t3_roam", "voice_cap", "t3_msg", "t3_ra", "p25", "p25_trunk", "nxdn", "m17"]
+                 "t3_svc", "t3_roam", "voice_cap", "t3_msg", "t3_ra", "p25", "p25_trunk", "nxdn", "m17", "m17_cal",
+                 "tasks_cpu"]
 
 OP_CHANNEL_STEP, OP_ZONE_POS, OP_ZONE, OP_VFO, OP_VFO_SET, OP_VFO_STEP, OP_POWER, OP_SQUELCH, OP_BANDWIDTH, \
     OP_TONE, OP_MONITOR, OP_CLEAR_TEMP, OP_REPLY_CANCEL, OP_HOTSPOT_EXIT, OP_DMR_TARGET, OP_DMR_CONTACT, \
@@ -336,7 +338,7 @@ def find_cables():
 
 
 # Commands (and their ops) that only read: everything else restarts the radio or changes it
-READ_ONLY = {"hwopt": None, "support": None, "reg": None, "ping": None, "version": None, "diag": None, "view": None, "screenshot": None, "log": None, "chip": None,
+READ_ONLY = {"hwopt": None, "support": None, "reg": None, "ping": None, "version": None, "diag": None, "view": None, "tasks": None, "screenshot": None, "log": None, "chip": None,
              "dump": None, "peek": None, "iddb": None, "crash": ("show",), "watchdog": ("show",), "rx2": ("info",),
              "air": ("status", "tap", "rx"), "storage": ("info", "dump"), "split": ("view",),
              "aprobe": ("status", "reg", "samples", "ram", "watch")}
@@ -1449,6 +1451,40 @@ class DebugLink:
         payload += raw
         self.radio(OP_M17, bytes(payload))
 
+    def m17_bench(self):
+        """Run the receive codec bench (RADIO op 44 cmd 5) and read its result."""
+        v = self.view(["m17"])
+        if "c2.scratch" not in v:
+            raise DebugLinkError("M17 codec bench is unavailable", ST_UNAVAILABLE)
+        if v.get("m17.on") != "1":
+            raise DebugLinkError("M17 is not running on the selected channel", ST_REFUSED)
+        if v.get("m17.voice_mem") != "1":
+            raise DebugLinkError("M17 has no codec memory", ST_UNAVAILABLE)
+        try:
+            self.request(RADIO, bytes([OP_M17, 5]), timeout=max(self.timeout, 3.0))
+        except DebugLinkError as e:
+            if e.status == ST_UNAVAILABLE:
+                raise DebugLinkError("M17 has no codec memory", e.status) from e
+            if e.status == ST_REFUSED:
+                raise DebugLinkError("M17 codec bench did not complete on the audio task", e.status) from e
+            raise
+        v = self.view(["m17"])
+        keys = ("c2.dec_cycles", "c2.dec_crc", "c2.audio_free", "c2.scratch", "c2.dec_bytes", "c2.enc",
+                "c2.dec_mean", "c2.prof_total", "c2.probe_cycles", "c2.cos_cycles", "c2.cos_calls",
+                "c2.exp2_cycles", "c2.exp2_calls", "c2.log2_cycles", "c2.log2_calls", "c2.rfft_cycles",
+                "c2.rfft_calls", "c2.irfft_cycles", "c2.irfft_calls", "m17.voice_mem")
+        result = {key: v[key] for key in keys}
+        try:
+            calibration = self.view(["m17_cal"])
+        except DebugLinkError as e:
+            if e.status not in (ST_BAD_ARG, ST_UNAVAILABLE):
+                raise
+            return result
+        for key in ("c2.loop_cycles", "c2.dec_nosched", "c2.dec_masked"):
+            if key in calibration:
+                result[key] = calibration[key]
+        return result
+
     def vfo_sfr(self, role, inbound_ts=1, framing=0, hang=0):
         """The VFO's SFR role (RADIO op 38; sfr.md 4), saved with the VFO: role a SFR_ROLES name or 0..4, the inbound
         slot 1 / 2, framing 0..3, hang 0..3: a codeplug channel's SFR byte A. The outbound color code is the VFO's own.
@@ -1903,6 +1939,27 @@ def parse_counters(lines):
 
 # ── command line ────────────────────────────────────────────────────────────
 
+def cmd_tasks_cpu(link, window):
+    try:
+        link.view_section("tasks_cpu")
+    except DebugLinkError as e:
+        if e.status == ST_BAD_ARG:
+            raise DebugLinkError("tasks_cpu unavailable (build with CONFIG_TASK_CPU=y)", e.status) from e
+        raise
+    time.sleep(window)
+    _, _, sample = link.view_section("tasks_cpu")
+    cycles = int(sample["tasks_cpu.cycles"])
+    if cycles == 0:
+        raise DebugLinkError("empty or expired tasks_cpu window")
+    if sample.get("truncated") or int(sample["tasks_cpu.omitted"]):
+        raise DebugLinkError("incomplete tasks_cpu sample")
+    rows = [(key.removeprefix("tcpu."), int(value)) for key, value in sample.items() if key.startswith("tcpu.")]
+    print(f"Window {cycles:,} cycles")
+    print(f"{'Task':<12} {'CPU':>7} {'Run-time cycles (low 32 bits)':>29}")
+    for name, share in sorted(rows, key=lambda row: (-row[1], row[0])):
+        print(f"{name:<12} {share / 10:6.1f}% {int(sample['tcycles.' + name]):29d}")
+
+
 def cmd_diag(link, a):
     prev = None
     while True:
@@ -2084,9 +2141,9 @@ def cmd_radio(link, a):
             else:
                 raise SystemExit(usage)
         link.nxdn_settings_update(**kw)
-    elif op == "m17":                 # m17 ... | m17 bert rx|tx|stop | m17 message DST TEXT...
+    elif op == "m17":
         usage = ("m17 [can=N] [squelch=0|1] [dst=CALL] [call=CALL] | m17 bert rx|tx|stop | "
-                 "m17 message DST TEXT...")
+                 "m17 message DST TEXT... | m17 bench")
         if args[:1] == ["bert"]:
             if len(args) != 2 or args[1] not in ("rx", "tx", "stop"):
                 raise SystemExit(usage)
@@ -2095,6 +2152,11 @@ def cmd_radio(link, a):
             if len(args) < 3:
                 raise SystemExit(usage)
             link.m17_message(args[1], " ".join(args[2:]))
+        elif args[:1] == ["bench"]:
+            if len(args) != 1:
+                raise SystemExit(usage)
+            for key, value in link.m17_bench().items():
+                print(f"{key}={value}")
         else:
             kw = {}
             for a in args:
@@ -2850,7 +2912,7 @@ def cmd_reboot(link, a):
 
 
 def self_test():
-    """The packed screenshot reader against a simulated radio (the firmware's side is tests/host/debuglinkTest)."""
+    """Check packed screenshots, port selection and M17 bench replies with simulated radios."""
     stubtool = stubtool_module()
     ok = True
 
@@ -2974,6 +3036,36 @@ def self_test():
         g["find_ports"], g["find_cables"], g["find_network_radios"] = saved[:3]
         if saved[3] is not None:
             os.environ["RFOUNDRY_PORT"] = saved[3]
+
+    class BenchRadio(DebugLink):
+        timeout = 1.0
+
+        def __init__(self, calibration):
+            self.calibration = calibration
+
+        def request(self, cmd, payload=b"", timeout=None):
+            if cmd == RADIO and payload == bytes([OP_M17, 5]):
+                return ST_OK, b""
+            assert cmd == GET_VIEW
+            if payload == bytes([39]):
+                keys = ("dec_cycles dec_crc audio_free scratch dec_bytes enc dec_mean prof_total probe_cycles "
+                        "cos_cycles cos_calls exp2_cycles exp2_calls log2_cycles log2_calls rfft_cycles rfft_calls "
+                        "irfft_cycles irfft_calls").split()
+                text = "m17.on=1\nm17.voice_mem=1\n" + "".join(f"c2.{key}=1\n" for key in keys)
+                return ST_OK, struct.pack("<IB", 0, 40) + text.encode("ascii")
+            assert payload == bytes([40])
+            if self.calibration is None:
+                raise DebugLinkError("unknown view", ST_BAD_ARG)
+            return ST_OK, struct.pack("<IB", 0, 0xFF) + self.calibration
+
+    legacy = BenchRadio(None).m17_bench()
+    check(len(legacy) == 20 and legacy["c2.dec_mean"] == "1", "M17 bench accepts firmware without m17_cal")
+    check(BenchRadio(b"section=m17_cal\n").m17_bench() == legacy, "M17 bench accepts an empty m17_cal view")
+    partial = BenchRadio(b"c2.dec_masked=2\n").m17_bench()
+    check(len(partial) == 21 and partial["c2.dec_masked"] == "2", "M17 bench accepts partial calibration results")
+    check(BenchRadio(b"c2.loop_cycles=5\nc2.dec_nosched=3\nc2.dec_masked=2\n").m17_bench() ==
+          dict(legacy, **{"c2.loop_cycles": "5", "c2.dec_nosched": "3", "c2.dec_masked": "2"}),
+          "M17 bench reads calibration from view 40")
     print("rfoundry_debug self-test:", "ok" if ok else "FAILED")
     return 0 if ok else 1
 
@@ -2993,6 +3085,9 @@ def main(argv=None):
     p = sub.add_parser("view")
     p.add_argument("--section", choices=VIEW_SECTIONS, action="append")
     p.add_argument("--json", action="store_true")
+    p = sub.add_parser("tasks", help="per-task CPU share (CONFIG_TASK_CPU builds)")
+    p.add_argument("op", choices=["cpu"])
+    p.add_argument("--window", type=float, metavar="S", default=2, help="sample seconds (default 2)")
     sub.add_parser("reset")
     p = sub.add_parser("screenshot")
     p.add_argument("-o", "--output", required=True)
@@ -3032,6 +3127,9 @@ def main(argv=None):
                                   "usb-settings", "ppp", "vibrate", "mode", "cc", "ts", "sfr", "copy-vfo", "voice-test", "dtmf",
                                   "tx-limit", "tx-drive", "pa-keyup", "pa-sweep", "pa-keyrun", "p25", "nxdn", "m17"])
     p.add_argument("args", nargs="*")
+    p = sub.add_parser("m17", help="M17 codec bench (selected M17 channel, receive only)")
+    p.add_argument("op", choices=["bench"])
+    p.set_defaults(args=[])
     p = sub.add_parser("data", help="DMR data: sms, call alert, radio check, settings, inbox")
     p.add_argument("op", choices=["sms", "alert", "check", "settings", "inbox", "read", "emergency", "em-settings",
                                   "ip-settings", "ip-send", "tx-spacing"])
@@ -3138,6 +3236,8 @@ def main(argv=None):
 
     if a.cmd == "ptt" and not 0 < a.seconds <= INJECT_MAX_S:
         ap.error(f"--seconds must be > 0 and <= {INJECT_MAX_S:g}")
+    if a.cmd == "tasks" and not 0 < a.window < float("inf"):
+        ap.error("--window must be a positive, finite number of seconds")
     try:
         port = a.port if a.port else pick_port(None, changes_radio(a))
         with DebugLink(port, a.timeout) as link:
@@ -3151,6 +3251,8 @@ def main(argv=None):
             elif a.cmd == "view":
                 v = link.view(a.section)
                 print(json.dumps(v, indent=1) if a.json else "\n".join(f"{k}={x}" for k, x in v.items()))
+            elif a.cmd == "tasks":
+                cmd_tasks_cpu(link, a.window)
             elif a.cmd == "reset":
                 print(f"counters reset at t={link.reset() / 1000:.3f} s")
             elif a.cmd == "screenshot":
@@ -3164,6 +3266,8 @@ def main(argv=None):
                 print(f"PTT held {a.seconds:g} s, released")
             elif a.cmd == "radio":
                 return cmd_radio(link, a)
+            elif a.cmd == "m17":
+                return cmd_radio(link, argparse.Namespace(op="m17", args=[a.op]))
             elif a.cmd == "volume":
                 return cmd_volume(link, a)
             elif a.cmd == "data":

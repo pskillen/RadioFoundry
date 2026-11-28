@@ -239,6 +239,9 @@ layout.
   and powers it only while **Settings > Location > GPS** is on.
 - APRS receive needs the squelch open: the radio hears packets strong enough to open the squelch, not weaker ones.
 - No APRS iGate (passing heard packets to APRS-IS) in the default image: `CONFIG_APRS_IGATE` is off by default.
+- No split duplex repeater and no P25 trunking in the default image: both are left out to make room for M17.
+  Conventional P25 stays. To have them, pick **Custom** in the
+  [web installer](02-installing.md#install-with-the-web-installer) and turn them on.
 - No vibration motor: **Settings > Sound > Vibrate** isn't in the image.
 
 ### Verified on the DM-1701
@@ -260,7 +263,8 @@ Tested on one DM-1701, on air against the SDR bench where RF is involved:
 | USB network | The switch to network mode, the address from the computer (macOS) and ping |
 
 Partly checked: VOX. Silence and the radio's own beeps don't key it. Keying on a voice hasn't been checked.
-Each half of the split duplex repeater passes on air with one radio; a real pair of radios hasn't been tested.
+With split duplex built in (a custom build), each half of the split duplex repeater passes on air with one radio;
+a real pair of radios hasn't been tested.
 Host-tested only: IP over DMR to another radio and the services in USB network mode, control station mode, roaming,
 ARS and LRRP.
 

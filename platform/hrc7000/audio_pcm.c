@@ -38,6 +38,7 @@
 #include "dmr_glue.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "app/audio_job.h"
 #if CONFIG_VOX
 #include "audio/miclevel/miclevel.h"
 #endif
@@ -204,6 +205,9 @@ static void audio_task(void *arg)
 		// Gated without the speaker stream only the gate's opening is waited for: 10 ms late is fine for the beep
 		// after TX, and a hotspot keeps the gate closed for hours
 		ulTaskNotifyTake(pdTRUE, tx_gated ? pdMS_TO_TICKS(10) : portMAX_DELAY);
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+		audio_job_service();
+#endif
 		gate_check();
 		uint32_t s = hrc_irq_save();
 		int8_t idx = mic_ready;
@@ -381,15 +385,34 @@ static void isr_register(void)
 	hrc_irq_restore(s);
 }
 
+static bool create_audio_task(void)
+{
+	if (xTaskCreate(audio_task, "audio", AUDIO_TASK_STACK, NULL, AUDIO_TASK_PRIORITY, &task) != pdPASS) {
+		task = NULL;
+		return false;
+	}
+	return true;
+}
+
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+bool hrc_audio_pcm_defer(void (*job)(void))
+{
+	return (task != NULL || create_audio_task()) && audio_job_submit(task, job);
+}
+#endif
+
 bool hrc_audio_pcm_start(audio_block_cb_t cb, void *ctx)
 {
 	if (task == NULL) {
 		isr_register();
-		if (xTaskCreate(audio_task, "audio", AUDIO_TASK_STACK, NULL, AUDIO_TASK_PRIORITY, &task) != pdPASS) {
-			task = NULL;
+		if (!create_audio_task())
 			return false;
-		}
 	}
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+	else if (!isr_registered) {
+		isr_register();
+	}
+#endif
 	uint32_t irq = hrc_irq_save();
 	block_ctx = ctx;
 	block_cb = cb;

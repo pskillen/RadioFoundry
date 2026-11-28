@@ -74,7 +74,7 @@ command there.
 | `make BOARD=<b> BAND=vhf` | A build option (`board.toml` `[[build_options]]`) on a board that has one: the VHF image, in `build/<b>-vhf` (one image per band) |
 | `make BOARD=<b> size` | Section sizes and the space left before the codec |
 | `make BOARD=<b> stack-check` | Each task's worst-case stack depth against its stack ([stack-check.md](stack-check.md)) |
-| `make test` | The host tests (the same as `make -C tests/host`); needs no `BOARD` |
+| `make test` | The host tests (the same as `make -C tests/host`). The M17 lend tests read the pinned c2fx headers from `third_party/c2fx` |
 | `make BOARD=<b> print-config` | The feature switches this board builds with, as `NAME=y/n` |
 | `make BOARD=<b> print-cc` | The compiler the board uses (ci.sh checks it is installed) |
 | `make BOARD=<b> print-unsupported`, `print-not-written`, `print-maximal-vars` | `BOARD_UNSUPPORTED`, `BOARD_NOT_WRITTEN` and `MAXIMAL_VARS` from the board's `config.mk`, for ci.sh's maximal build |

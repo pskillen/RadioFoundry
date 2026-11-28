@@ -190,6 +190,11 @@ The maximal build turns on every switch except the board's `BOARD_UNSUPPORTED` (
 they add code that doesn't run on the radio but still takes its flash and RAM, so a shared addition could push one
 radio over and fail CI on unrelated pull requests.
 
+When an all-on M17 voice image exceeds the board's flash or RAM budget, its board config can set
+`MAXIMAL_M17_VARS`. CI then checks the maximal feature set with the M17 feature family off and also checks
+a `maximal-m17` build with M17 packets, voice, and those board overrides. Both builds run in quick and full CI and must
+pass the linker, warning and stack checks.
+
 One job per toolchain runs its boards one after another (artifacts `matrix-arm`, `matrix-csky`). A job per board would finish each board sooner, but it
 repeats the checkout, the submodules and the toolchain set-up for every board, and a 4-core runner is kept busy by
 one board's builds anyway. Nobody waits on the nightly, so the fewer jobs win.

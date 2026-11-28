@@ -9,6 +9,9 @@
 
 ROOT    := ../..
 CORE    := $(ROOT)/core
+TP_ROOT := $(ROOT)
+include $(ROOT)/platform/third_party.mk
+
 CC      ?= cc
 PYTHON  ?= python3
 # COVERAGE=1: gcov instrumentation (GCC and clang both take --coverage); each test writes its .gcda files here
@@ -210,6 +213,41 @@ TESTS   += mbeTest
 mbeTest: mbeTest.c $(MBE) $(wildcard $(CORE)/mbe/*.h) $(CORE)/dsp/fxp.h
 	$(CC) $(CFLAGS) -Wshadow -o $@ mbeTest.c $(MBE) -lm
 
+# The original FFT uses signed two's-complement wrapping. Keep that behavior in the reference.
+MBE_FFT := mbeFftTest.c $(CORE)/mbe/mbe_dsp.c $(CORE)/mbe/mbe_tab.c
+TESTS   += mbeFftTest mbeFftTestSplit16
+mbeFftTest mbeFftTestSplit16: $(MBE_FFT) $(CORE)/mbe/mbe_dsp.h $(CORE)/dsp/fxp.h
+	$(CC) $(CFLAGS) -Wshadow -fwrapv $(if $(filter mbeFftTestSplit16,$@),-DFXP_SPLIT16) -o $@ $(MBE_FFT)
+
+run: run-mbe-fft
+run-mbe-fft: mbeFftTest mbeFftTestSplit16
+	./mbeFftTest
+	./mbeFftTestSplit16
+.PHONY: run-mbe-fft
+
+# c2fx 0.2.1 decoder-only external-DSP sources, as in the firmware build.
+C2FX := $(firstword $(wildcard $(ROOT)/third_party/c2fx/include/c2fx.h) $(RFOUNDRY_THIRD_PARTY)/c2fx/include/c2fx.h)
+C2FX_DIR := $(patsubst %/include/c2fx.h,%,$(C2FX))
+C2FX_SRC := $(addprefix $(C2FX_DIR)/src/,c2fx_version.c tables/c2_3200_tab.c dsp/c2fx_exp2_tab.c \
+	c2fx_frame.c c2fx_quant.c c2fx_lpc.c c2fx_envelope.c c2fx_phase.c c2fx_synth.c c2fx_lost.c c2fx_decode.c)
+C2FX_DSP := $(addprefix $(CORE)/mbe/,c2fx_port.c mbe_dsp.c mbe_tab.c)
+TESTS += c2fxSeamTest
+c2fxSeamTest: c2fxSeamTest.c $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/include/*.h $(C2FX_DIR)/src/*/*.h) \
+              $(CORE)/mbe/mbe_dsp.h $(CORE)/dsp/fxp.h $(C2FX_DIR)/vectors/chirp_80_400hz.c2
+	$(CC) $(CFLAGS) -Wshadow -DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.1\" \
+		-DC2FX_VECTOR=\"$(abspath $(C2FX_DIR)/vectors/chirp_80_400hz.c2)\" \
+		-I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables -I$(C2FX_DIR)/src/dsp -o $@ c2fxSeamTest.c $(C2FX_DSP) $(C2FX_SRC)
+
+TESTS += m17BenchTest
+M17BENCH := $(CORE)/app/audio_job.c $(CORE)/m17/m17_bench.c $(CORE)/debuglink/debuglink_m17_bench.c $(CORE)/debuglink/dl_fmt.c
+m17BenchTest: m17BenchTest.c $(M17BENCH) $(CORE)/m17/m17_bench.h $(CORE)/debuglink/debuglink_m17_bench.h \
+              $(ROOT)/hal/hal_time.h $(CORE)/app/audio_job.h $(wildcard stubs/m17_bench_rtos/*.h) \
+              $(C2FX_SRC) $(C2FX_DSP) $(wildcard $(C2FX_DIR)/include/*.h $(C2FX_DIR)/src/*/*.h)
+	$(CC) $(CFLAGS) -Wshadow -DCONFIG_M17=1 -DCONFIG_M17_VOICE=1 \
+		-DC2FX_NO_ENCODER -DC2FX_EXTERNAL_DSP -DC2FX_VERSION=\"0.2.1\" \
+		-Istubs/m17_bench_rtos -I$(ROOT)/hal -I$(CORE)/mbe -I$(C2FX_DIR)/include -I$(C2FX_DIR)/src/tables \
+		-I$(C2FX_DIR)/src/dsp -o $@ m17BenchTest.c $(M17BENCH) $(C2FX_DSP) $(C2FX_SRC)
+
 # The full-rate voice encoder (core/mbe): the quantizer against the dequantizer
 TESTS   += imbeEncTest
 imbeEncTest: imbeEncTest.c $(MBE) $(wildcard $(CORE)/mbe/*.h) $(CORE)/dsp/fxp.h
@@ -319,6 +357,8 @@ run: $(TESTS)
 	./p25Test
 	./fxpTest
 	./mbeTest | tail -1
+	./c2fxSeamTest
+	./m17BenchTest
 	./imbeEncTest | tail -1
 	for v in $(VOICE_SETS); do ./imbeVoiceGen --check $(VOICE)/$$v.pcm $(VOICE)/$$v.imbe || exit 1; done
 	./airSoftmodemTest | tail -1
@@ -453,6 +493,17 @@ radioCoreTestM17: $(RCM17) $(wildcard $(CORE)/radio/*.h) $(wildcard $(CORE)/dmr/
                   $(CORE)/ui/ui_svc.h $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h)
 	$(CC) $(CFLAGS) $(CORE_HAL) -I. -DDMR_RX_TRACE=0 -DCONFIG_DMR_IP_GATEWAY=0 -DCONFIG_SFR=1 -DCONFIG_APRS=0 \
 		-DCONFIG_M17=1 -DCONFIG_M17_PACKET=1 -DHAL_VOCODER_LEND_BYTES=0x1C00 -o $@ $(RCM17) -lm
+
+TESTS   += m17LendTestDecoder4504 m17LendTestEncoder5392 m17LendTestStatic
+C2FX_HEADERS := $(patsubst -I%,%,$(call TP_INCLUDES,-I$(ROOT)/third_party/c2fx/include))
+m17LendTestDecoder4504: M17_LEND_FLAGS = -DC2FX_NO_ENCODER
+m17LendTestStatic: M17_LEND_FLAGS = -DCONFIG_M17_STATIC_CODEC=1
+m17LendTestDecoder4504 m17LendTestEncoder5392 m17LendTestStatic: m17LendTest.c m17RadioTest.c $(M17RX) $(wildcard $(CORE)/radio/*.h) \
+                       $(wildcard $(CORE)/m17/*.h) $(wildcard $(CORE)/air/*.h) $(CORE)/nxdn/nxdn_engine.h \
+                       $(C2FX_HEADERS)/c2fx.h $(C2FX_HEADERS)/c2fx_types.h $(CORE)/debuglink/debuglink_m17_bench.h
+	$(CC) $(CFLAGS) $(M17MSG_FLAGS) -I$(C2FX_HEADERS) $(M17_LEND_FLAGS) -DCONFIG_AM_RX=0 -DCONFIG_BCAST_FM=0 \
+		-DCONFIG_P25=1 -DCONFIG_NXDN=1 -DCONFIG_NXDN_SCRAMBLER=1 -DCONFIG_M17_VOICE=1 \
+		-o $@ m17LendTest.c $(M17RX) -lm
 
 # M17 message state tests include the radio core test harness.
 TESTS   += m17MessageRadioTest
@@ -596,6 +647,13 @@ boardBandTest: boardBandTest.c $(ROOT)/hal/board.h
 	$(CC) $(CFLAGS) -I$(ROOT)/hal -Wshadow -o $@ boardBandTest.c
 
 run: run-core
+run: run-m17-lend
+.PHONY: run-m17-lend
+run-m17-lend: m17LendTestDecoder4504 m17LendTestEncoder5392 m17LendTestStatic
+	./m17LendTestDecoder4504
+	./m17LendTestEncoder5392
+	./m17LendTestStatic
+
 run-core: radioCoreTest radioCoreTestNoVfoDmr radioCoreTestP25 radioCoreTestP25T radioCoreTestNxdn radioCoreTestP25Nxdn radioCoreTestM17 m17MessageRadioTest m17MessageDebugTest m17MessageDebugTestNoPacket radioCoreTestAprs radioCoreTestAprsDmr radioFeaturesTest radioFeaturesTestNoDual roamTest radioListenBandsTest inputTest switchFollowTest aprsRadioTest quadratureTest serialmicTest miclevelTest resampleTest \
           rx2LinkTest keyassignTest powerSwitchTest powerKeyTest boardBandTest batteryTest
 	./aprsRadioTest
@@ -1219,6 +1277,18 @@ run: run-taskStack
 run-taskStack: taskStackTest
 	./taskStackTest
 .PHONY: run-taskStack
+
+# Task run-time stats and debug link formatting, with a fake RTOS and hardware clock.
+TCPU    := taskCpuTest.c $(CORE)/app/task_cpu.c $(CORE)/debuglink/debuglink_view_tasks.c $(CORE)/debuglink/dl_fmt.c
+TESTS   += taskCpuTest
+taskCpuTest: $(TCPU) $(CORE)/app/task_cpu.h $(CORE)/app/task_stack.h $(CORE)/debuglink/debuglink.h \
+             $(wildcard stubs/task_cpu/*.h)
+	$(CC) $(CFLAGS) -Istubs/task_cpu -I$(ROOT)/hal -Wshadow -DCONFIG_TASK_CPU=1 -DCONFIG_TASK_STACKS=0 -o $@ $(TCPU)
+
+run: run-taskCpu
+run-taskCpu: taskCpuTest
+	./taskCpuTest
+.PHONY: run-taskCpu
 
 # The hardware watchdog's portable side: the idle task's feed, the longest idle gap, the bench starve (core/app/
 # watchdog.c), the debug link's watchdog section and DL_CMD_WATCHDOG (core/debuglink/debuglink_watchdog.c). The

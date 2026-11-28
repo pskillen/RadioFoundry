@@ -192,9 +192,21 @@ static uint32_t encode_flags(void)
 	return enc_flags;
 }
 
+#if CONFIG_M17
+static void *lend(size_t *len)
+{
+	held = HELD_NONE;	// the next codec call must rebuild its state
+	*len = sizeof state;
+	return state;
+}
+#endif
+
 const hal_vocoder_t stm32_vocoder = {
 	.present = present, .reset = reset, .encode = encode, .decode = decode, .profile = profile,
 	.options = options, .set_options = set_options, .encode_flags = encode_flags,
+#if CONFIG_M17
+	.lend = lend,
+#endif
 };
 
 #endif	// CONFIG_DMR

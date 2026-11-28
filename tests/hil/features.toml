@@ -112,7 +112,12 @@ source = ["core/m17", "core/radio/radio_m17_msg.c", "core/radio/radio_m17_msg_de
 [feature.m17_voice]
 switch = "M17_VOICE"
 spec = "docs/spec/m17.md"
-source = ["core/m17"]
+source = ["core/m17", "core/m17/m17_bench.c", "core/debuglink/debuglink_m17_bench.c", "third_party/c2fx"]
+
+[feature.m17_static_codec]
+switch = "M17_STATIC_CODEC"
+spec = "docs/spec/m17.md"
+source = ["core/radio/radio_m17.c", "core/radio/radio_m17.h"]
 
 [feature.dmr_voice]
 switch = "DMR"
@@ -373,6 +378,11 @@ spec = "docs/spec/debuglink.md"
 [feature.task_stacks]
 switch = "TASK_STACKS"
 spec = "docs/spec/debuglink.md"
+
+[feature.task_cpu]
+switch = "TASK_CPU"
+spec = "docs/spec/debuglink.md"
+source = ["core/app/task_cpu.c", "core/app/task_cpu.h", "core/debuglink/debuglink_view_tasks.c"]
 
 [feature.cps_openfw]
 switch = "CPS_OPENFW"

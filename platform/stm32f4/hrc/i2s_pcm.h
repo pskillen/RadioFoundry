@@ -41,6 +41,9 @@ typedef struct {
 bool stm32_i2s_pcm_start(const stm32_i2s_pcm_cfg_t *cfg, audio_block_cb_t cb, void *ctx);
 // hal_audio_t.stop. Safe from the block callback itself: streaming stops, the task stays for the next start
 void stm32_i2s_pcm_stop(void);
+#if CONFIG_M17_VOICE && CONFIG_DEBUGLINK
+bool stm32_i2s_pcm_defer(void (*job)(void));
+#endif
 bool stm32_i2s_pcm_running(void);
 void stm32_i2s_pcm_stats(stm32_i2s_pcm_stats_t *out);
 void stm32_i2s_pcm_reset_stats(void);

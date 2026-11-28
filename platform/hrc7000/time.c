@@ -70,6 +70,11 @@ uint32_t hal_micros(void)
 	return now_us;
 }
 
+uint32_t hal_cycles(void)
+{
+	return hrc_cycles();
+}
+
 void hal_delay_us(uint32_t n)
 {
 	while (n > 0) {
@@ -135,6 +140,9 @@ void hrc_timer_stop(uint8_t n)
 
 void vApplicationTickHook(void)
 {
+#if CONFIG_TASK_CPU
+	(void)task_cpu_clock();
+#endif
 	fold();
 	hrc_irq_stack_check();
 }

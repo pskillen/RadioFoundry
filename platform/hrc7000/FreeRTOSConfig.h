@@ -46,7 +46,15 @@
 #define configTIMER_TASK_PRIORITY		(configMAX_PRIORITIES - 1)
 #define configTIMER_QUEUE_LENGTH		8
 #define configTIMER_TASK_STACK_DEPTH		256
-#define configUSE_TRACE_FACILITY		0
+#define configUSE_TRACE_FACILITY		CONFIG_TASK_CPU
+#if CONFIG_TASK_CPU && !defined(__ASSEMBLER__)
+#include "app/task_cpu.h"
+#define configGENERATE_RUN_TIME_STATS		1
+#define configRUN_TIME_COUNTER_TYPE		uint64_t
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()	task_cpu_clock_start()
+#define portGET_RUN_TIME_COUNTER_VALUE()		task_cpu_clock()
+#define INCLUDE_xTaskGetIdleTaskHandle		1
+#endif
 #define configUSE_STATS_FORMATTING_FUNCTIONS	0
 
 // Every task's handle for the debug link's tasks view, its least free stack (core/app/task_stack.c)

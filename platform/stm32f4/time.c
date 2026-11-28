@@ -62,6 +62,11 @@ uint32_t hal_micros(void)
 	return now_us;
 }
 
+uint32_t hal_cycles(void)
+{
+	return DWT->CYCCNT;
+}
+
 void hal_delay_us(uint32_t n)
 {
 	uint32_t per_us = SystemCoreClock / 1000000u;
@@ -110,6 +115,9 @@ void HAL_Delay(uint32_t Delay)
 
 void vApplicationTickHook(void)
 {
+#if CONFIG_TASK_CPU
+	(void)task_cpu_clock();
+#endif
 	fold();
 	stm32_irq_stack_check();
 }
