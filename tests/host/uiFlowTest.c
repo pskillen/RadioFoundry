@@ -441,6 +441,17 @@ static const flow_t flows[] = {
 	  "screen=home shows=M17:_set_your_callsign", 0, false },
 	{ "M17 PTT: receive only", "m17 dlmode:m17 m17deny:rx", "",
 	  "screen=home shows=M17:_receive_only", 0, false },
+#if CONFIG_M17_VOICE
+	{ "M17 receive: no voice memory", SIM_M17_STORED_ECHO " m17rx:AB1CD,ALL,3,nomem",
+	  "", "screen=home shows=No_memory_for_voice", 0, false },
+	{ "M17 PTT: no voice memory", "m17 dlmode:m17 m17voicemem:0",
+	  "pttdown", "screen=home shows=No_memory_for_voice", 1, false },
+	{ "M17 PTT: callsign before voice memory", "m17 dlmode:m17 m17nocall m17voicemem:0",
+	  "pttdown", "screen=home shows=M17:_set_your_callsign", 1, false },
+	{ "M17 compose: packet without voice memory",
+	  "aprs:off m17 m17stored:3,ECHO m17txfit m17voicemem:0 ok 2 ok", "2 ok ok",
+	  "screen=home toast=Sending_to_ECHOA m17dest=ECHOA m17body=OK m17via=m17 m17q=1 m17done=0 sent=0", 3, false },
+#endif
 	{ "M17 dual watch: one side", "m17 dlmode:m17 m17tx:3,M17-M17_A", "quick 7",
 	  "screen=home dual=1 shows=M17", 2, false },
 #endif

@@ -89,6 +89,22 @@ static void check_session(const void *engine, bool has_voice)
 	has_voice = true;
 #endif
 	CHECK(((view.flags & RADIO_M17_VOICE_MEM) != 0) == has_voice);
+	{
+		uint8_t lsf[M17_LSF_BYTES];
+
+		make_lsf(lsf, M17_TYPE_STREAM | M17_TYPE_VOICE, 0, NULL);
+		inject_lsf(lsf);
+		radio_m17_poll(&view);
+		CHECK(view.rx_state == (has_voice ? RADIO_M17_RX_VOICE : RADIO_M17_RX_NO_MEM));
+	}
+	if (!has_voice) {
+		CHECK(!radio_m17_air.tx_prepare());
+		CHECK(radio_m17_prepare_deny() == M17_PREPARE_DENY_CALL);
+		strcpy(settings.callsign, "AB1CD");
+		CHECK(radio_m17_apply(&settings, 0));
+		CHECK(!radio_m17_air.tx_prepare());
+		CHECK(radio_m17_prepare_deny() == M17_PREPARE_DENY_NO_MEM);
+	}
 #if CONFIG_DEBUGLINK
 	radio_m17_bench_service();
 	CHECK(audio_job == NULL);	// no request

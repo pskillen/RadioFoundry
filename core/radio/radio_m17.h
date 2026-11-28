@@ -45,7 +45,16 @@ typedef enum {
 	RADIO_M17_RX_VOICE_DATA,
 	RADIO_M17_RX_DATA,
 	RADIO_M17_RX_VOICE,
+#if CONFIG_M17_VOICE
+	RADIO_M17_RX_NO_MEM,	// voice TYPE heard, no codec memory to play it
+#endif
 } radio_m17_rx_state_t;
+
+#define M17_PREPARE_DENY_NONE	0u
+#define M17_PREPARE_DENY_CALL	1u	// radio_sm maps to TXDENY_M17_CALL
+#if CONFIG_M17_VOICE
+#define M17_PREPARE_DENY_NO_MEM	2u	// radio_sm maps to TXDENY_M17_NO_MEM
+#endif
 
 #define RADIO_M17_META_LEN	53	// four 13-byte META blocks and a NUL
 

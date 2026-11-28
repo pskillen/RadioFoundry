@@ -71,6 +71,9 @@ typedef enum {
 	TXDENY_BENCH, TXDENY_TRUNK, TXDENY_AIR_NO_TX, TXDENY_AES_KEY,
 	TXDENY_AES_WAIT,	// AES: the MI reservation is not saved yet (dmrAesSeq_t)
 	TXDENY_M17_CALL,	// M17 voice or packet with no callsign (BERT is exempt)
+#if CONFIG_M17_VOICE
+	TXDENY_M17_NO_MEM,	// M17 voice PTT with no codec memory (packets and BERT are exempt)
+#endif
 } tx_deny_t;
 
 // Busy channel lockout (FM): CARRIER refuses PTT while anything is heard on the channel; WRONG_TONE only while a

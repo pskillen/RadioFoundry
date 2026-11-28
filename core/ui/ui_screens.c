@@ -1440,6 +1440,9 @@ static const char *deny_reason(const radio_view_t *v, char *buf, size_t len)
 			TR(DENY_WHY_AIR_NO_TX, "This mode: receive only"));
 		break;
 	case TXDENY_M17_CALL: sb_str(&b, TR(M17_DENY_CALLSIGN, "M17: set your callsign")); break;
+#if CONFIG_M17_VOICE
+	case TXDENY_M17_NO_MEM: sb_str(&b, TR(M17_STATE_NO_MEM, "No memory for voice")); break;
+#endif
 #if CONFIG_P25_TRUNK || CONFIG_DMR_TRUNK
 	case TXDENY_TRUNK:
 		switch (trunk_why(v)) {
@@ -2251,6 +2254,9 @@ static const char *m17_rx_status(uint8_t state)
 	case RADIO_M17_RX_VOICE_DATA: return TR(M17_STATE_VOICE_DATA, "Voice + data");
 	case RADIO_M17_RX_DATA: return TR(M17_STATE_DATA, "Data");
 	case RADIO_M17_RX_VOICE: return TR(M17_STATE_VOICE, "Voice");
+#if CONFIG_M17_VOICE
+	case RADIO_M17_RX_NO_MEM: return TR(M17_STATE_NO_MEM, "No memory for voice");
+#endif
 	default: return GLYPH_ELLIPSIS;
 	}
 }
@@ -2307,8 +2313,11 @@ static int __attribute__((noinline)) m17_rx_lines(const radio_m17_view_t *m, boo
 		x = 0;
 	}
 	gfx_text_fit(f, status, w - x, fit, sizeof fit);
-	gfx_text(f, x, y, fit, m->rx_state == RADIO_M17_RX_OTHER_CAN || m->rx_state == RADIO_M17_RX_ENCRYPTED ?
-		ui_col.warn : ui_col.fg);
+	gfx_text(f, x, y, fit, m->rx_state == RADIO_M17_RX_OTHER_CAN || m->rx_state == RADIO_M17_RX_ENCRYPTED
+#if CONFIG_M17_VOICE
+				|| m->rx_state == RADIO_M17_RX_NO_MEM
+#endif
+			? ui_col.warn : ui_col.fg);
 	if (m->meta[0]) {
 		fit_end(f, m->meta, w, fit, sizeof fit);
 		gfx_text(f, 0, y + f->h, fit, ui_col.fg);

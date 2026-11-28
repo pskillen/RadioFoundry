@@ -1695,6 +1695,30 @@ static void ptt(bool down)
 			changed();
 			return;
 		}
+#if CONFIG_M17 && CONFIG_M17_VOICE
+		if (view.ch.mode == RADIO_MODE_M17) {
+			char call[10];
+
+			if ((view.m17.fit & AIR_FIT_TX) == 0) {
+				view.state = RS_TX_DENIED;
+				view.tx_deny = TXDENY_AIR_NO_TX;
+				changed();
+				return;
+			}
+			if (!ui_svc_m17_call_show(call, NULL)) {
+				view.state = RS_TX_DENIED;
+				view.tx_deny = TXDENY_M17_CALL;
+				changed();
+				return;
+			}
+			if ((view.m17.flags & RADIO_M17_VOICE_MEM) == 0) {
+				view.state = RS_TX_DENIED;
+				view.tx_deny = TXDENY_M17_NO_MEM;
+				changed();
+				return;
+			}
+		}
+#endif
 		view.state = RS_TX;
 		view.tx_elapsed_ms = 0;
 		if (view.scan != 3)
@@ -3949,9 +3973,16 @@ static bool run_token(char *t, char *err, size_t len)
 		return true;
 	}
 	if (strcmp(t, "dlmode") == 0 && arg != NULL) {	// the debug link sets the mode (DMR_FIELDS): fm, dmr, p25, nxdn or m17
-		ui_svc_mode(strcmp(arg, "p25") == 0 ? RADIO_MODE_P25 : strcmp(arg, "nxdn") == 0 ? RADIO_MODE_NXDN :
-			    strcmp(arg, "m17") == 0 ? RADIO_MODE_M17 : strcmp(arg, "dmr") == 0 ? RADIO_MODE_DMR :
-			    RADIO_MODE_FM);
+		uint8_t mode = strcmp(arg, "p25") == 0 ? RADIO_MODE_P25 : strcmp(arg, "nxdn") == 0 ? RADIO_MODE_NXDN :
+				 strcmp(arg, "m17") == 0 ? RADIO_MODE_M17 : strcmp(arg, "dmr") == 0 ? RADIO_MODE_DMR :
+				 RADIO_MODE_FM;
+		ui_svc_mode(mode);
+#if CONFIG_M17 && CONFIG_M17_VOICE
+		if (mode == RADIO_MODE_M17) {
+			view.m17.flags = RADIO_M17_ON | RADIO_M17_VOICE_MEM;
+			view.m17.fit = (uint16_t)(AIR_FIT_RX | AIR_FIT_TX);
+		}
+#endif
 		advance(100);
 		return true;
 	}
@@ -3963,6 +3994,9 @@ static bool run_token(char *t, char *err, size_t len)
 			{ "voice", RADIO_M17_RX_VOICE }, { "other", RADIO_M17_RX_OTHER_CAN },
 			{ "encrypted", RADIO_M17_RX_ENCRYPTED }, { "voice-data", RADIO_M17_RX_VOICE_DATA },
 			{ "data", RADIO_M17_RX_DATA }, { "late", RADIO_M17_RX_UNKNOWN }, { "bert", RADIO_M17_RX_NONE },
+#if CONFIG_M17_VOICE
+			{ "nomem", RADIO_M17_RX_NO_MEM },
+#endif
 		};
 		if (sscanf(arg, "%9[^,],%9[^,],%u,%15s", src, dst, &can, flags) != 4 || can > RADIO_M17_CAN_MAX) {
 			snprintf(err, len, "bad %s", t);
@@ -4115,6 +4149,21 @@ static bool run_token(char *t, char *err, size_t len)
 		advance(100);
 		return true;
 	}
+#if CONFIG_M17_VOICE
+	if (strcmp(t, "m17voicemem") == 0 && arg != NULL) {
+		if (strcmp(arg, "0") == 0)
+			view.m17.flags &= (uint8_t)~RADIO_M17_VOICE_MEM;
+		else if (strcmp(arg, "1") == 0)
+			view.m17.flags |= RADIO_M17_VOICE_MEM;
+		else {
+			snprintf(err, len, "bad %s", t);
+			return false;
+		}
+		changed();
+		advance(100);
+		return true;
+	}
+#endif
 #endif
 	if (strcmp(t, "dlvfo") == 0) {	// the debug link tunes the VFO
 		char *end = NULL;

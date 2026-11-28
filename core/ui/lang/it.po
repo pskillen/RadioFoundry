@@ -5033,6 +5033,11 @@ msgid "This mode: receive only"
 msgstr "Questo modo: solo RX"
 
 #: core/ui/ui_screens.c
+msgctxt "M17_STATE_NO_MEM"
+msgid "No memory for voice"
+msgstr "Nessuna memoria per la voce"
+
+#: core/ui/ui_screens.c
 msgctxt "DENY_WHY_P25T_NO_CC"
 msgid "No control channel"
 msgstr "Nessun canale controllo"

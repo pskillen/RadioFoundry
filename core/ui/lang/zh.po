@@ -5035,6 +5035,11 @@ msgid "This mode: receive only"
 msgstr "此模式：仅接收"
 
 #: core/ui/ui_screens.c
+msgctxt "M17_STATE_NO_MEM"
+msgid "No memory for voice"
+msgstr "语音内存不足"
+
+#: core/ui/ui_screens.c
 msgctxt "DENY_WHY_P25T_NO_CC"
 msgid "No control channel"
 msgstr "未找到网络"

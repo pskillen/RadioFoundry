@@ -7006,11 +7006,22 @@ static void air_key(radio_sm_t *sm, uint32_t now_ms, uint32_t hz)
 	if (!primed) {
 		o->tx_abort();
 #if CONFIG_M17
-		if (sm->view.ch.mode == RADIO_MODE_M17 && radio_m17_prepare_deny() != 0)
-			deny(sm, TXDENY_M17_CALL);
-		else
+		if (sm->view.ch.mode == RADIO_MODE_M17) {
+			switch (radio_m17_prepare_deny()) {
+			case M17_PREPARE_DENY_CALL:
+				deny(sm, TXDENY_M17_CALL);
+				return;
+#if CONFIG_M17_VOICE
+			case M17_PREPARE_DENY_NO_MEM:
+				deny(sm, TXDENY_M17_NO_MEM);
+				return;
 #endif
-			deny(sm, TXDENY_REFUSED);
+			default:
+				break;
+			}
+		}
+#endif
+		deny(sm, TXDENY_REFUSED);
 		return;
 	}
 	sm->view.state = RS_TX;		// speaker off, red LED on, before keying

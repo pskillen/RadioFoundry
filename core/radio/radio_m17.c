@@ -1027,6 +1027,10 @@ bool radio_m17_poll(radio_m17_view_t *v)
 			if (rx->link) {
 				uint16_t type = m17_rx_type(rx);
 				n.rx_state = (uint8_t)rx_state(rx, type);
+#if CONFIG_M17_VOICE
+				if (n.rx_state == RADIO_M17_RX_VOICE && (n.flags & RADIO_M17_VOICE_MEM) == 0)
+					n.rx_state = RADIO_M17_RX_NO_MEM;
+#endif
 				n.rx_can = rx->type_known ? (type & M17_TYPE_CAN_MASK) >> M17_TYPE_CAN_SHIFT : UINT8_MAX;
 				if (rx->crc_ok) {
 					show_addr(rx->lsf + M17_ADDR_BYTES, n.caller);
@@ -1055,12 +1059,12 @@ uint8_t radio_m17_prepare_deny(void)
 }
 
 // A voice or packet transmission needs a callsign. BERT does not, and a session with none still runs.
-// A missing callsign is named. A failed engine start stays unnamed: there is no separate voice-memory failure yet.
+// A missing callsign is named; no voice memory is named when voice would be keyed. Other failures stay unnamed.
 static bool m17_tx_prepare(void)
 {
 	m17_block_t *b = blk;
 
-	prepare_deny = 0;
+	prepare_deny = M17_PREPARE_DENY_NONE;
 	if (b == NULL || !air_session_is_open(&b->session))
 		return false;
 #if CONFIG_M17_PACKET
@@ -1072,9 +1076,16 @@ static bool m17_tx_prepare(void)
 	}
 #endif
 	if (b->tx.cfg.tx_kind != M17_TX_BERT && !callsign_ok()) {
-		prepare_deny = 1;
+		prepare_deny = M17_PREPARE_DENY_CALL;
 		return false;
 	}
+#if CONFIG_M17_VOICE
+	if (b->tx.cfg.tx_kind == M17_TX_VOICE && (b->voice.scratch == NULL || b->voice.state == NULL ||
+	    b->voice.queues == NULL)) {
+		prepare_deny = M17_PREPARE_DENY_NO_MEM;
+		return false;
+	}
+#endif
 	if (!m17_engine_tx_start(&b->tx, 0, NULL, 0))
 		return false;
 	return air_session_tx_prime(&b->session);
