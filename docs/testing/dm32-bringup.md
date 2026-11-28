@@ -194,6 +194,22 @@ The HR_C7000 copies its FM receive audio to the CPU (`modem-hrc7000.md` 8.5). AP
 | An FM signal on 144.390 with the squelch open | heard on the speaker, through the C7000's FM playback | AUDIO_CONTROL bit 6, the codec line out |
 | A packet sent at level 50, recorded by the SDR bench (`aprs.md` 13) | decodes with a valid FCS, about 3 kHz peak deviation, mark about 4 dB under space (`hardware-dm32.md` 9.1) | no tones: AUDIO_CONTROL bit 7 during the transmission, Timer 4 (vector 36) not firing. Voice on the tones or the deviation far off: GPIO 0x2E not 0 while the tones play. Deviation: `amp_per_level` in `radio_dm32.c` |
 
+## M17 voice receive
+
+Build the selected receive profile:
+
+```sh
+make BOARD=dm32 CONFIG_M17_VOICE=y CONFIG_M17_STATIC_CODEC=y CONFIG_DMR_TRUNK=n
+```
+
+This profile retains conventional DMR, P25, NXDN, and M17 packets. The verified receive image linked without
+warnings and passed the static stack check with 123,040 B flash, 5,832 B RAM, and 1,608 B audio-task stack
+headroom. Real-time decode timing and on-air speech are still pending.
+
+On an approved test setup, use a compatible source playing known plain M17 speech. Match the VFO's CAN if
+CAN squelch is on. Verify that the receive counters advance, the radio returns to idle, and speech is
+intelligible. For bench input and opt-in HIL details, see [the M17 spec](../spec/m17.md#11-tests).
+
 ## NXDN Scrambler interoperability
 
 Manual on-air testing with build `21bf5df8` (firmware source matching `c11d6e83`) confirmed scrambled NXDN voice
